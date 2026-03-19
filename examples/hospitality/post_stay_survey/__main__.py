@@ -1,0 +1,173 @@
+import guava
+import os
+import logging
+import json
+import argparse
+from datetime import datetime
+
+logging.basicConfig(level=logging.INFO)
+
+
+class PostStaySurveyController(guava.CallController):
+    def __init__(self, name, reservation_number, checkout_date):
+        super().__init__()
+        self.name = name
+        self.reservation_number = reservation_number
+        self.checkout_date = checkout_date
+
+        self.set_persona(
+            organization_name="The Grand Meridian Hotel",
+            agent_name="Sophie",
+            agent_purpose=(
+                "follow up with a recent guest to gather honest feedback about their stay, "
+                "celebrate what went well, and understand where the hotel can do even better"
+            ),
+        )
+
+        self.reach_person(
+            contact_full_name=self.name,
+            on_success=self.begin_survey,
+            on_failure=self.recipient_unavailable,
+        )
+
+    def begin_survey(self):
+        self.set_task(
+            objective=(
+                f"You are following up with {self.name} following their checkout on {self.checkout_date} "
+                f"(reservation {self.reservation_number}). Conduct a warm, conversational post-stay survey. "
+                "Collect numerical ratings on a scale of 1 to 5 for overall stay, room cleanliness, "
+                "staff service, and amenities. Also ask whether they would return, invite them to share "
+                "highlights, and ask about any areas for improvement. Be gracious and genuinely appreciative "
+                "of their feedback — every response helps the hotel maintain its commitment to excellence."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Thank {self.name} warmly for choosing The Grand Meridian Hotel and for taking "
+                    f"a moment to share feedback about their stay, which ended on {self.checkout_date}. "
+                    "Explain that the survey takes only a couple of minutes and that their insights are "
+                    "deeply valued by the entire hotel team."
+                ),
+                guava.Field(
+                    key="overall_stay_rating",
+                    description=(
+                        "On a scale of 1 to 5, with 5 being exceptional, how would the guest "
+                        "rate their overall stay at The Grand Meridian Hotel?"
+                    ),
+                    field_type="integer",
+                    required=True,
+                ),
+                guava.Field(
+                    key="room_cleanliness_rating",
+                    description=(
+                        "On a scale of 1 to 5, how would the guest rate the cleanliness "
+                        "and presentation of their room?"
+                    ),
+                    field_type="integer",
+                    required=True,
+                ),
+                guava.Field(
+                    key="staff_service_rating",
+                    description=(
+                        "On a scale of 1 to 5, how would the guest rate the attentiveness "
+                        "and professionalism of the hotel staff?"
+                    ),
+                    field_type="integer",
+                    required=True,
+                ),
+                guava.Field(
+                    key="amenities_rating",
+                    description=(
+                        "On a scale of 1 to 5, how would the guest rate the hotel's amenities, "
+                        "such as the restaurant, spa, fitness centre, or pool?"
+                    ),
+                    field_type="integer",
+                    required=True,
+                ),
+                guava.Field(
+                    key="would_return",
+                    description="Would the guest consider returning to The Grand Meridian Hotel for a future stay?",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="highlights",
+                    description=(
+                        "Were there any particular highlights or standout moments during the guest's "
+                        "stay that they would like to mention?"
+                    ),
+                    field_type="text",
+                    required=False,
+                ),
+                guava.Field(
+                    key="areas_for_improvement",
+                    description=(
+                        "Is there anything the hotel could have done differently to make "
+                        "the guest's experience even better?"
+                    ),
+                    field_type="text",
+                    required=False,
+                ),
+            ],
+            on_complete=self.save_results,
+        )
+
+    def save_results(self):
+        results = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "use_case": "post_stay_survey",
+            "guest_name": self.name,
+            "reservation_number": self.reservation_number,
+            "checkout_date": self.checkout_date,
+            "fields": {
+                "overall_stay_rating": self.get_field("overall_stay_rating"),
+                "room_cleanliness_rating": self.get_field("room_cleanliness_rating"),
+                "staff_service_rating": self.get_field("staff_service_rating"),
+                "amenities_rating": self.get_field("amenities_rating"),
+                "would_return": self.get_field("would_return"),
+                "highlights": self.get_field("highlights"),
+                "areas_for_improvement": self.get_field("areas_for_improvement"),
+            },
+        }
+        print(json.dumps(results, indent=2))
+        logging.info("Post-stay survey results saved for %s", self.name)
+        self.hangup(
+            final_instructions=(
+                f"Thank {self.name} sincerely for their candid feedback and for being a valued guest "
+                "of The Grand Meridian Hotel. Let them know their responses will be shared with the "
+                "hotel leadership team. If they expressed any dissatisfaction, acknowledge it with "
+                "genuine empathy and assure them the team will act on it. Close by wishing them well "
+                "and expressing hope to welcome them back in the future."
+            )
+        )
+
+    def recipient_unavailable(self):
+        logging.warning("Could not reach %s for post-stay survey.", self.name)
+        self.hangup(
+            final_instructions=(
+                "Leave a warm voicemail as Sophie from The Grand Meridian Hotel, thanking the guest "
+                "for their recent stay and letting them know you were hoping to gather a few minutes "
+                "of feedback. Invite them to call back or reach out via the hotel's website if they "
+                "would like to share their experience."
+            )
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Outbound post-stay survey call — The Grand Meridian Hotel"
+    )
+    parser.add_argument("phone", help="Guest phone number to call")
+    parser.add_argument("--name", required=True, help="Full name of the guest")
+    parser.add_argument("--reservation-number", required=True, help="Reservation reference number")
+    parser.add_argument("--checkout-date", required=True, help="Date the guest checked out")
+    args = parser.parse_args()
+
+    guava.Client().create_outbound(
+        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        to_number=args.phone,
+        call_controller=PostStaySurveyController(
+            name=args.name,
+            reservation_number=args.reservation_number,
+            checkout_date=args.checkout_date,
+        ),
+    )
