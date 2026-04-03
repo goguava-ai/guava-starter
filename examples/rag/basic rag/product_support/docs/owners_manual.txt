@@ -1,0 +1,149 @@
+APEX HOME APPLIANCES
+BREWMASTER PRO — OWNER'S MANUAL
+Model: AX-BMP-900 | Software Version: 3.2
+
+================================================================================
+
+WHAT'S IN THE BOX
+
+  - BrewMaster Pro unit
+  - Permanent gold-tone filter basket
+  - Removable 72 oz water reservoir with handle
+  - Thermal carafe (12 cup capacity)
+  - Carafe lid
+  - Measuring scoop
+  - Quick-start guide
+  - Power cord (attached, 36 in.)
+
+If any item is missing or damaged, contact Apex support at 1-800-555-0400
+within 30 days of purchase.
+
+
+GETTING STARTED
+
+1. PLACEMENT
+   Place the BrewMaster Pro on a flat, stable, heat-resistant surface. Leave at
+   least 6 inches of clearance above and 2 inches on each side for ventilation.
+   Do not place near the edge of a counter or under low cabinets that restrict
+   the lid opening.
+
+2. FIRST USE — RINSE CYCLE
+   Before brewing coffee for the first time, run a full rinse cycle using plain
+   water. Fill the reservoir to the MAX line, insert the empty filter basket
+   (no coffee or paper filter), place the carafe, and press BREW. Discard the
+   water when complete. This removes manufacturing residue and primes the system.
+
+3. FILLING THE RESERVOIR
+   Lift the reservoir straight up to remove it. Fill under the tap to anywhere
+   between the MIN (4-cup) and MAX (12-cup) lines. Reattach by aligning the
+   rear tabs and pressing firmly until it clicks into place.
+
+4. ADDING COFFEE
+   Open the top lid to access the filter basket. For best results use a medium
+   grind. Recommended ratio: 1 level tablespoon per 6 oz of water (roughly
+   1 scoop per 2 cups). Place the permanent gold-tone filter in the basket
+   before adding grounds. Do not overfill — grounds should sit no higher than
+   1/2 inch below the rim of the basket.
+
+   Paper filters: #4 basket-style filters are compatible if preferred. Using
+   paper filters will slightly reduce extraction speed but produces a cleaner cup.
+
+
+CONTROL PANEL
+
+  BREW         — Start a brew cycle; press again to pause mid-brew.
+  STRENGTH     — Cycles through Regular, Bold, and Extra Bold brew strengths.
+                 Bold and Extra Bold extend the bloom and steep time.
+  TEMP         — Sets brew temperature: 185°F, 195°F (default), or 205°F.
+  SCHEDULE     — Program a delayed brew start (see Scheduling section).
+  CLEAN        — Initiates the descale cleaning cycle (see Maintenance).
+  DISPLAY      — Backlit LCD shows clock, scheduled brew time, selected
+                 strength, and temperature.
+
+Adjustments to STRENGTH and TEMP must be made before pressing BREW. Settings
+are retained between uses until changed.
+
+
+BREW SETTINGS
+
+Regular: Standard extraction time. Recommended for light and medium roasts.
+Bold: 20% longer bloom period. Recommended for medium-dark and dark roasts.
+Extra Bold: 35% longer bloom and a 2-minute pre-infusion step. Best for
+  espresso-roast beans or coarsely ground coffee.
+
+Temperature:
+  185°F — Lower extraction, reduced acidity; suited for sensitive stomachs.
+  195°F — Balanced default; ideal for most coffee types.
+  205°F — Higher extraction for light roasts; maximizes flavor complexity.
+
+
+SCHEDULING A BREW
+
+1. Set the current time: Hold SCHEDULE for 3 seconds. Use + and - to set
+   hours, then press SCHEDULE again to advance to minutes. Press SCHEDULE
+   again to confirm.
+2. Set the brew start time: Press SCHEDULE once. Use + and - to set the
+   desired time. Press BREW to confirm. The display will show the scheduled
+   time with a clock icon.
+3. To cancel a scheduled brew, press SCHEDULE and then press BREW without
+   changing the time, or press any other button within 5 seconds.
+
+Ensure the reservoir is filled and coffee is loaded the night before. The unit
+will not start a scheduled brew if the reservoir reads as empty.
+
+
+THERMAL CARAFE
+
+The BrewMaster Pro brews directly into the stainless-steel thermal carafe.
+The carafe keeps coffee hot for up to 4 hours without a heating element,
+preserving flavor better than a glass carafe on a warming plate.
+
+  - Lock the carafe lid to pour; twist the handle clockwise to lock open.
+  - Do not place the carafe in a microwave or on a stovetop.
+  - The carafe is top-rack dishwasher safe. The outer stainless shell should
+    be hand-washed.
+  - Do not use abrasive cleaners on the carafe interior.
+
+
+BREW PAUSE FEATURE
+
+Pressing BREW during an active cycle pauses extraction for up to 30 seconds,
+allowing you to pour a cup before brewing is complete. Brewing resumes
+automatically. Do not leave the carafe out for more than 30 seconds — the unit
+will stop brewing and display a CARAFE alert if the carafe is not replaced.
+
+
+MAINTENANCE
+
+Rinse the filter basket and permanent filter after every use. Once per week,
+wash the filter basket, permanent filter, and reservoir with warm soapy water
+or place them in the top rack of a dishwasher.
+
+DESCALING: Mineral buildup reduces heating efficiency and can affect taste.
+Descale every 60 brew cycles (the display shows a CLEAN reminder). Use the
+Apex Descaling Solution (sold separately, model AX-DS-01) or white vinegar.
+
+  Descale Procedure:
+  1. Fill the reservoir with 32 oz of descaling solution mixed with 32 oz of
+     water (or use 48 oz of undiluted white vinegar).
+  2. Insert the empty filter basket with no filter or grounds.
+  3. Place the carafe and press CLEAN.
+  4. The cycle runs automatically in two phases (approx. 40 minutes total).
+     Do not interrupt the cycle.
+  5. Discard the contents of the carafe.
+  6. Run two full brew cycles with plain water before making coffee.
+
+The CLEAN reminder resets automatically after a completed descale cycle.
+
+
+SPECIFICATIONS
+
+  Dimensions: 14.2" H x 9.8" W x 13.5" D
+  Weight: 8.4 lbs
+  Reservoir capacity: 72 oz (12 cups)
+  Voltage: 120V AC, 60Hz
+  Wattage: 1,450W
+  Cord length: 36 inches
+  Filter type: Permanent gold-tone or #4 basket paper (both compatible)
+  Carafe: 12-cup stainless-steel thermal
+  Brew time (12 cups, Regular): approximately 9 minutes
