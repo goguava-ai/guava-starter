@@ -1,0 +1,150 @@
+KEYSTONE PROPERTY & CASUALTY
+PREMIUM DISCOUNTS AND PRICING GUIDE
+
+PREMIUM CALCULATION OVERVIEW
+
+Your annual premium is determined by a base rate applied to your Coverage A (dwelling)
+limit, adjusted by a series of multiplicative rating factors. The formula is:
+
+  Annual Premium = (Coverage A / $1,000) x Base Rate x Combined Rating Factor
+                   + Liability Premium + Endorsement Premiums - Discounts
+
+Base rates vary by risk tier:
+  - Tier 1 (Preferred): $0.32 per $1,000 of Coverage A
+    Newer construction, superior materials, low-risk territory, excellent claims history
+  - Tier 2 (Standard): $0.48 per $1,000 of Coverage A
+    Average construction, moderate-risk territory, typical claims history
+  - Tier 3 (Non-Standard): $0.78 per $1,000 of Coverage A
+    Older construction, higher-risk territory, or prior claims activity
+
+RATING FACTORS
+
+Territory Factor (TF): Reflects geographic risk based on weather patterns, crime
+statistics, fire protection, and legal environment.
+  - Low risk: 0.85
+  - Moderate risk: 1.00
+  - High risk: 1.25
+  - Coastal/hurricane-prone: 1.40
+
+Construction Factor (CF):
+  - Superior fire-resistive: 0.80
+  - Masonry: 0.90
+  - Frame: 1.00
+  - Log or mixed non-standard: 1.15
+
+Protection Class Factor (PF): Based on distance to nearest fire station and hydrant,
+and quality of local fire department.
+  - Protection class 1-3: 0.80
+  - Protection class 4-6: 1.00
+  - Protection class 7-8: 1.15
+  - Protection class 9-10: 1.35
+
+Age of Home Factor (AHF):
+  - Built within last 5 years: 0.90
+  - Built 6-15 years ago: 1.00
+  - Built 16-30 years ago: 1.10
+  - Built over 30 years ago: 1.20
+  (Factor may be reduced if major systems — roof, electrical, plumbing, HVAC — have
+  been updated within the last 10 years.)
+
+Deductible Factor (DF):
+  - $500 deductible: 1.12
+  - $1,000 deductible: 1.00
+  - $2,500 deductible: 0.88
+  - $5,000 deductible: 0.78
+
+Claims History Factor (CHF):
+  - No claims in 5+ years: 0.92
+  - No claims in 3-5 years: 1.00
+  - One claim in last 3 years: 1.10
+  - Two claims in last 3 years: 1.30
+  - Three or more claims in last 5 years: 1.50 (may trigger underwriting review)
+
+AVAILABLE DISCOUNTS
+
+Multi-Policy Discount
+Bundle your homeowners policy with a Keystone auto, umbrella, or landlord policy.
+  - Home + auto: 15% discount
+  - Home + auto + umbrella: 22% discount
+  - Each additional qualifying policy: 3% incremental discount
+Maximum combined multi-policy discount: 25%.
+
+Protective Devices Discount
+Install qualifying safety and security systems:
+  - Smoke detectors (required in all rooms): 2%
+  - Monitored fire alarm (central station): 5%
+  - Monitored burglar alarm (central station): 5%
+  - Automatic fire sprinkler system: 8%
+  - Deadbolt locks on all exterior doors: 2%
+  - Water leak detection system: 3%
+Discounts are cumulative. Maximum protective devices discount: 18%.
+
+New Home Discount
+Homes built within the last 10 years qualify for a new home credit:
+  - Built 0-3 years ago: 12%
+  - Built 4-6 years ago: 8%
+  - Built 7-10 years ago: 5%
+
+Claims-Free Discount
+Policyholders with no claims filed in the last 5 or more years:
+  - 5-7 years claims-free: 8%
+  - 8-10 years claims-free: 10%
+  - 10+ years claims-free: 12%
+
+Loyalty Discount
+Continuous Keystone policyholders receive tenure-based credits:
+  - 3-5 years: 3%
+  - 6-10 years: 6%
+  - 11+ years: 9%
+
+Autopay and Paperless Discount
+  - Enroll in automatic premium payments: 2%
+  - Opt in to paperless billing and documents: 1%
+  - Combined autopay + paperless: 3%
+
+Senior Homeowner Discount
+Policyholders aged 55 or older who are retired and occupy the home full-time:
+  - 5% discount on property coverages
+
+PREMIUM CALCULATION EXAMPLE
+
+Assumptions:
+  - Coverage A: $350,000 (Tier 2 base rate: $0.48 per $1,000)
+  - Territory: Moderate (TF = 1.00)
+  - Construction: Masonry (CF = 0.90)
+  - Protection class 4 (PF = 1.00)
+  - Built 8 years ago (AHF = 1.00)
+  - $1,000 deductible (DF = 1.00)
+  - No claims in 6 years (CHF = 0.92)
+
+Step 1: Base dwelling premium
+  $350,000 / $1,000 x $0.48 = $168.00
+
+Step 2: Apply rating factors
+  Combined factor = 1.00 x 0.90 x 1.00 x 1.00 x 1.00 x 0.92 = 0.828
+  Modified dwelling premium = $168.00 x 0.828 = $139.10
+
+Step 3: Add other coverage premiums
+  Coverage B (10% of dwelling premium): $13.91
+  Coverage C (40% of dwelling premium): $55.64
+  Coverage D (20% of dwelling premium): $27.82
+  Property subtotal: $236.47
+
+Step 4: Add liability and endorsements
+  Coverage E ($300,000): $115.00
+  Coverage F ($5,000): $32.00
+  Water backup ($10,000): $85.00
+  Equipment breakdown: $55.00
+  Liability/endorsement subtotal: $287.00
+
+Step 5: Total before discounts
+  $236.47 + $287.00 = $523.47
+
+Step 6: Apply discounts
+  Multi-policy (home + auto): 15%
+  Protective devices (monitored fire + burglar alarm): 10%
+  Claims-free (6 years): 8%
+  Combined discount = 1 - (0.85 x 0.90 x 0.92) = 1 - 0.7038 = 29.62%
+  Discount amount: $523.47 x 0.2962 = $155.05
+
+Final annual premium: $523.47 - $155.05 = $368.42

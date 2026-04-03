@@ -1,0 +1,151 @@
+APEX HOME APPLIANCES
+BREWMASTER PRO — TROUBLESHOOTING GUIDE & WARRANTY
+Model: AX-BMP-900
+
+================================================================================
+
+TROUBLESHOOTING
+
+UNIT DOES NOT POWER ON
+  - Check that the power cord is fully inserted into the outlet and into the
+    back of the unit.
+  - Test the outlet with another appliance to confirm it is live.
+  - Check your home's circuit breaker. The BrewMaster Pro draws 1,450W; avoid
+    sharing a circuit with other high-draw appliances.
+  - The unit has a thermal cutoff safety feature that trips if it overheats.
+    Unplug for 15 minutes to allow it to cool and reset, then retry.
+
+DISPLAY IS ON BUT BREW DOES NOT START
+  - Confirm the carafe is fully seated on the base. The unit will not brew
+    unless the carafe sensor detects the carafe.
+  - Check that the reservoir is installed and contains water above the MIN line.
+  - If SCHEDULE is active (clock icon shown), the unit is waiting for the
+    programmed time. Press BREW to override and start immediately.
+  - If the CLEAN indicator is flashing, a descale cycle is required before
+    brewing. Run the descale procedure before resuming normal use.
+
+COFFEE IS BREWING SLOWLY
+  - Mineral scale buildup in the heating element is the most common cause.
+    Run the descale procedure even if the CLEAN reminder has not appeared.
+  - Verify the filter basket and permanent filter are not clogged with fine
+    grounds. Rinse thoroughly or soak in warm water with a drop of dish soap.
+  - Check that the reservoir vent (small hole on the reservoir lid) is not
+    blocked; wipe clean with a damp cloth.
+
+COFFEE IS WEAK OR UNDER-EXTRACTED
+  - Increase the amount of coffee: try 1.5 tablespoons per 6 oz of water.
+  - Select Bold or Extra Bold brew strength.
+  - Raise the brew temperature to 205°F.
+  - Check grind size — a grind that is too coarse reduces extraction. Switch
+    to a medium grind.
+  - If using a paper filter, switch to the permanent gold-tone filter for
+    fuller extraction.
+
+COFFEE IS TOO STRONG OR BITTER
+  - Reduce coffee: try 2 teaspoons per 6 oz of water.
+  - Switch from Bold/Extra Bold to Regular strength.
+  - Lower the brew temperature to 185°F or 195°F.
+  - Check grind size — too fine a grind over-extracts. Use a medium grind.
+
+COFFEE IS NOT HOT ENOUGH
+  - The BrewMaster Pro brews at up to 205°F, but the thermal carafe cools
+    slightly during the fill. Pre-heat the carafe by filling it with hot tap
+    water for 60 seconds and discarding before brewing.
+  - Select 205°F brew temperature for the hottest results.
+  - Ensure the carafe lid is locked closed immediately after brewing.
+  - If the carafe has been sitting for more than 2 hours, reheat coffee by
+    other means; the thermal carafe maintains temperature for up to 4 hours
+    from the end of the brew cycle under normal room conditions.
+
+COFFEE GROUNDS IN THE CUP
+  - Inspect the permanent filter for holes, tears, or deformations. If
+    damaged, replace with Apex model AX-GF-01.
+  - If using paper filters, ensure the filter is fully seated against all
+    sides of the basket before adding grounds.
+  - Avoid overfilling the filter basket; grounds above the rim can bypass
+    the filter.
+  - A very fine grind can pass through the permanent filter. Grind slightly
+    coarser or switch to paper filters.
+
+WATER LEAKING FROM THE UNIT
+  - Check that the reservoir is properly seated — you should hear a click.
+    Remove and reinsert to confirm.
+  - Inspect the reservoir and carafe for cracks. Do not use a cracked component.
+  - If water leaks from beneath the unit or from any internal area, stop using
+    the machine immediately. Unplug and contact Apex support.
+  - A small amount of dripping at the brew basket is normal during and
+    immediately after brewing when the carafe is removed (Brew Pause feature).
+
+DISPLAY SHOWS ERROR CODES
+  E1 — Heating element fault. Unplug for 15 minutes and retry. If E1 persists,
+       contact Apex support; do not attempt to repair internally.
+  E2 — Temperature sensor fault. Same steps as E1.
+  E3 — Reservoir not detected. Remove and firmly reinsert the reservoir.
+  E4 — Carafe not detected. Remove and firmly reinsert the carafe.
+  CLEAN (flashing) — Descale required. Run descale cycle before next brew.
+  SCHED ERR — Scheduled time is in the past. Reset the schedule.
+
+UNUSUAL ODORS OR TASTE (FIRST USE)
+  A plastic or chemical smell during the first few uses is normal and will
+  dissipate. Ensure you ran the initial rinse cycle before first brew.
+  If unusual odors persist after 5 brew cycles, contact Apex support.
+
+UNIT MAKES UNUSUAL NOISES
+  - A gurgling sound during and after brewing is normal — this is water and
+    steam moving through the system.
+  - A loud rattling or grinding sound indicates a foreign object may be inside.
+    Unplug and contact Apex support before continued use.
+  - Intermittent clicking after brewing is normal; this is the heating element
+    cooling down.
+
+
+WARRANTY INFORMATION
+
+LIMITED ONE-YEAR WARRANTY
+
+Apex Home Appliances warrants the BrewMaster Pro (AX-BMP-900) against defects
+in materials and workmanship for one (1) year from the original date of purchase
+when used for normal household purposes.
+
+What is covered:
+  - Defects in materials or workmanship under normal use
+  - Functional failures not caused by misuse, accident, or unauthorized repair
+
+What is NOT covered:
+  - Damage from misuse, drops, or physical impact
+  - Damage caused by failure to follow the instructions in this manual
+  - Normal wear and tear (carafes, filters, seals)
+  - Cosmetic damage (scratches, discoloration)
+  - Damage from using incompatible or non-Apex accessories
+  - Products purchased from unauthorized resellers
+
+To obtain warranty service:
+  1. Contact Apex support at 1-800-555-0400 or support@apexappliances.com.
+  2. Provide your model number (AX-BMP-900), proof of purchase, and a
+     description of the defect.
+  3. Apex will provide a prepaid return shipping label for warranty claims.
+  4. Upon inspection, Apex will repair or replace the unit at its discretion.
+
+Apex Home Appliances does not warrant refurbished or open-box units sold by
+third parties. Warranty coverage is non-transferable.
+
+
+EXTENDED WARRANTY
+
+Apex Care+ extends coverage to three (3) years from the original purchase date
+and includes one accidental damage repair. Purchase within 60 days of the
+original sale date at apexappliances.com/care-plus or by calling support.
+
+
+REGULATORY COMPLIANCE
+
+This device complies with Part 15 of the FCC Rules. UL Listed.
+For recycling and disposal information, visit apexappliances.com/recycling.
+
+
+CONTACT & SUPPORT
+
+Phone: 1-800-555-0400 (Mon–Fri 7 AM–9 PM, Sat 9 AM–6 PM Eastern)
+Email: support@apexappliances.com
+Live chat: apexappliances.com/support
+Replacement parts: apexappliances.com/parts (search model AX-BMP-900)

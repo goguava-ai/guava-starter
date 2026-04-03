@@ -1,0 +1,204 @@
+import guava
+import os
+import logging
+import secrets
+import pymysql
+import pymysql.cursors
+
+logging.basicConfig(level=logging.INFO)
+
+
+def get_connection():
+    return pymysql.connect(
+        host=os.environ["MYSQL_HOST"],
+        port=int(os.environ.get("MYSQL_PORT", "3306")),
+        user=os.environ["MYSQL_USER"],
+        password=os.environ["MYSQL_PASSWORD"],
+        database=os.environ["MYSQL_DATABASE"],
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True,
+    )
+
+
+def get_order(order_number: str) -> dict | None:
+    """Fetches an order by order number. Returns the order row or None."""
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, order_number, customer_email, status, created_at
+                FROM orders
+                WHERE order_number = %s
+                LIMIT 1
+                """,
+                (order_number,),
+            )
+            return cursor.fetchone()
+
+
+def create_return_request(
+    order_number: str,
+    customer_name: str,
+    customer_email: str,
+    item_description: str,
+    return_reason: str,
+    item_condition: str,
+) -> str:
+    """Creates a return request row and returns the generated RMA number."""
+    rma_number = "RMA-" + secrets.token_hex(3).upper()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO return_requests
+                    (rma_number, order_number, customer_name, customer_email,
+                     item_description, return_reason, item_condition, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', NOW())
+                """,
+                (
+                    rma_number,
+                    order_number,
+                    customer_name,
+                    customer_email,
+                    item_description,
+                    return_reason,
+                    item_condition,
+                ),
+            )
+    return rma_number
+
+
+class ReturnRequestController(guava.CallController):
+    def __init__(self):
+        super().__init__()
+
+        self.set_persona(
+            organization_name="Peak Outdoors",
+            agent_name="Casey",
+            agent_purpose=(
+                "to help Peak Outdoors customers initiate returns and exchanges"
+            ),
+        )
+
+        self.set_task(
+            objective=(
+                "A customer has called to return an item. "
+                "Verify their order, collect the return details, and create an RMA record."
+            ),
+            checklist=[
+                guava.Say(
+                    "Thanks for calling Peak Outdoors. I'm Casey. "
+                    "I can get a return started for you right now. "
+                    "Do you have your order number handy?"
+                ),
+                guava.Field(
+                    key="order_number",
+                    field_type="text",
+                    description=(
+                        "Ask for their order number. It typically starts with 'PO' followed "
+                        "by digits (e.g. PO-10482). Capture it exactly as they say it."
+                    ),
+                    required=True,
+                ),
+                guava.Field(
+                    key="customer_name",
+                    field_type="text",
+                    description="Ask for their full name.",
+                    required=True,
+                ),
+                guava.Field(
+                    key="customer_email",
+                    field_type="text",
+                    description="Ask for their email address so we can send the return label.",
+                    required=True,
+                ),
+                guava.Field(
+                    key="item_description",
+                    field_type="text",
+                    description="Ask which item they're returning — name, size, color, or any details.",
+                    required=True,
+                ),
+                guava.Field(
+                    key="return_reason",
+                    field_type="multiple_choice",
+                    description="Ask why they're returning the item.",
+                    choices=[
+                        "defective or damaged",
+                        "wrong item received",
+                        "doesn't fit",
+                        "changed my mind",
+                        "other",
+                    ],
+                    required=True,
+                ),
+                guava.Field(
+                    key="item_condition",
+                    field_type="multiple_choice",
+                    description="Ask about the condition of the item being returned.",
+                    choices=["unopened", "used once or twice", "used several times"],
+                    required=True,
+                ),
+            ],
+            on_complete=self.process_return,
+        )
+
+        self.accept_call()
+
+    def process_return(self):
+        order_number = (self.get_field("order_number") or "").strip().upper()
+        name = self.get_field("customer_name") or "Unknown"
+        email = self.get_field("customer_email") or ""
+        item = self.get_field("item_description") or "item"
+        reason = self.get_field("return_reason") or "other"
+        condition = self.get_field("item_condition") or "unknown"
+
+        logging.info("Processing return for order %s — %s", order_number, name)
+
+        try:
+            order = get_order(order_number)
+        except Exception as e:
+            logging.error("DB error verifying order %s: %s", order_number, e)
+            order = None
+
+        if not order:
+            self.hangup(
+                final_instructions=(
+                    f"Let {name} know you couldn't find an order with number '{order_number}'. "
+                    "Ask them to double-check the number — it should start with 'PO'. "
+                    "Offer to transfer them to a team member if they need further help."
+                )
+            )
+            return
+
+        try:
+            rma_number = create_return_request(
+                order_number, name, email, item, reason, condition
+            )
+            logging.info("Return RMA %s created for order %s", rma_number, order_number)
+            self.hangup(
+                final_instructions=(
+                    f"Let {name} know their return has been approved. "
+                    f"Their RMA number is {rma_number}. "
+                    f"Item: {item}. Reason: {reason}. "
+                    "Let them know a prepaid return label will be emailed within 24 hours. "
+                    "They should pack the item securely and drop it off at any carrier location. "
+                    "Refunds are processed within 5–7 business days of receiving the item. "
+                    "Thank them for their patience."
+                )
+            )
+        except Exception as e:
+            logging.error("Failed to create return for %s: %s", name, e)
+            self.hangup(
+                final_instructions=(
+                    f"Apologize to {name} for a technical issue. "
+                    "Let them know a team member will follow up by email within one business day "
+                    "to complete the return process."
+                )
+            )
+
+
+if __name__ == "__main__":
+    guava.Client().listen_inbound(
+        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
+        controller_class=ReturnRequestController,
+    )
