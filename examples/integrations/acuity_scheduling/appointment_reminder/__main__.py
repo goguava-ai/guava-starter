@@ -69,7 +69,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to load appointment %s: %s", appointment_id, e)
 
-        call.data = {"appointment": appointment, "appointment_id": appointment_id}
+        call.set_variable("appointment", appointment)
+        call.set_variable("appointment_id", appointment_id)
 
         if not appointment:
             call.hangup(
@@ -119,8 +120,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def handle_response(call: guava.Call) -> None:
     attendance = call.get_field("attendance") or ""
     client_name = call.get_variable("client_name")
-    appointment = call.data["appointment"]
-    appointment_id = call.data["appointment_id"]
+    appointment = call.get_variable("appointment")
+    appointment_id = call.get_variable("appointment_id")
     appt_type = appointment.get("type", "appointment") if appointment else "appointment"
 
     if "cancel" in attendance:

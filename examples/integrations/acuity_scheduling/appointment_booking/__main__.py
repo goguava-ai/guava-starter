@@ -81,15 +81,15 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.appointment_type_id = int(os.environ.get("ACUITY_APPOINTMENT_TYPE_ID", "0"))
+    call.set_variable("appointment_type_id", int(os.environ.get("ACUITY_APPOINTMENT_TYPE_ID", "0")))
 
     # Pre-load appointment types to present to caller
     type_names = []
     try:
         types = get_appointment_types()
         type_names = [t.get("name", "") for t in types if t.get("name")]
-        if not call.appointment_type_id and types:
-            call.appointment_type_id = types[0].get("id", 0)
+        if not call.get_variable("appointment_type_id") and types:
+            call.set_variable("appointment_type_id", types[0].get("id", 0))
     except Exception as e:
         logging.error("Failed to load appointment types: %s", e)
 
@@ -167,13 +167,13 @@ def find_and_offer_slot(call: guava.Call) -> None:
     )
 
     try:
-        times = get_available_times(call.appointment_type_id, preferred_date)
+        times = get_available_times(call.get_variable("appointment_type_id"), preferred_date)
         if not times:
             # Try the next day
             next_date = (
                 datetime.strptime(preferred_date, "%Y-%m-%d") + timedelta(days=1)
             ).strftime("%Y-%m-%d")
-            times = get_available_times(call.appointment_type_id, next_date)
+            times = get_available_times(call.get_variable("appointment_type_id"), next_date)
             if times:
                 preferred_date = next_date
 
@@ -207,14 +207,12 @@ def find_and_offer_slot(call: guava.Call) -> None:
                     ),
                 ],
             )
-            call.data = {
-                "first_name": first_name,
-                "last_name": last_name,
-                "email": email,
-                "phone": phone,
-                "slot_time": slot_time,
-                "display_time": display_time,
-            }
+            call.set_variable("first_name", first_name)
+            call.set_variable("last_name", last_name)
+            call.set_variable("email", email)
+            call.set_variable("phone", phone)
+            call.set_variable("slot_time", slot_time)
+            call.set_variable("display_time", display_time)
             return
 
         logging.info("No availability found near %s", preferred_date)
@@ -233,13 +231,12 @@ def find_and_offer_slot(call: guava.Call) -> None:
 @agent.on_task_complete("confirm_slot")
 def book_slot(call: guava.Call) -> None:
     confirmed = call.get_field("confirmed") or ""
-    data = call.data
-    first_name = data["first_name"]
-    last_name = data["last_name"]
-    email = data["email"]
-    phone = data["phone"]
-    slot_time = data["slot_time"]
-    display_time = data["display_time"]
+    first_name = call.get_variable("first_name")
+    last_name = call.get_variable("last_name")
+    email = call.get_variable("email")
+    phone = call.get_variable("phone")
+    slot_time = call.get_variable("slot_time")
+    display_time = call.get_variable("display_time")
 
     if confirmed.lower() != "yes":
         call.hangup(
@@ -254,7 +251,7 @@ def book_slot(call: guava.Call) -> None:
     booked = None
     try:
         booked = create_appointment(
-            call.appointment_type_id,
+            call.get_variable("appointment_type_id"),
             slot_time,
             first_name,
             last_name,

@@ -1,0 +1,31 @@
+[project]
+name = "guava-starter"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "guava-sdk>=0.22.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ty>=0.0.32",
+]
+
+[tool.ty.analysis]
+allowed-unresolved-imports = [
+    "anthropic.**",
+    "boto3.**",
+    "elasticsearch.**",
+    "firebase_admin.**",
+    "google_auth_oauthlib.**",
+    "google.cloud.**",
+    "googleapiclient.**",
+    "opensearchpy.**",
+    "psycopg2.**",
+    "pymongo.**",
+    "pymysql.**",
+    "requests_aws4auth.**",
+    "requests_oauthlib.**",
+    "simple_salesforce.**",
+]

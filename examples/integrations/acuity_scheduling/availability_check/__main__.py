@@ -65,7 +65,8 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load appointment types: %s", e)
 
-    call.data = {"appointment_type_id": appointment_type_id, "type_map": type_map}
+    call.set_variable("appointment_type_id", appointment_type_id)
+    call.set_variable("type_map", type_map)
 
     type_hint = (
         f"Options: {', '.join(type_names)}." if type_names else ""
@@ -114,8 +115,8 @@ def lookup_availability(call: guava.Call) -> None:
     preferred_week = call.get_field("preferred_week") or ""
     preferred_time = call.get_field("preferred_time_of_day") or ""
 
-    appointment_type_id = call.data["appointment_type_id"]
-    type_map = call.data["type_map"]
+    appointment_type_id = call.get_variable("appointment_type_id")
+    type_map = call.get_variable("type_map")
 
     # Resolve appointment type ID from service name if possible
     appt_type_id = appointment_type_id

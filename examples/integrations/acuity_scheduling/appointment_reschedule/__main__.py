@@ -65,7 +65,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load appointment %s: %s", appointment_id, e)
 
-    call.data = {"appointment": appointment, "appointment_id": appointment_id, "new_slot_time": None}
+    call.set_variable("appointment", appointment)
+    call.set_variable("appointment_id", appointment_id)
+    call.set_variable("new_slot_time", None)
 
     appt_display = ""
     if appointment:
@@ -107,7 +109,7 @@ def on_call_start(call: guava.Call) -> None:
 def find_new_slot(call: guava.Call) -> None:
     client_name = call.get_variable("client_name")
     new_date = call.get_field("new_preferred_date") or ""
-    appointment = call.data["appointment"]
+    appointment = call.get_variable("appointment")
     appointment_type_id = appointment.get("appointmentTypeID", 0) if appointment else 0
 
     logging.info("Searching availability for %s on %s", client_name, new_date)
@@ -122,8 +124,8 @@ def find_new_slot(call: guava.Call) -> None:
             except (ValueError, AttributeError):
                 display_time = new_slot_time
 
-            call.data["new_slot_time"] = new_slot_time
-            call.data["display_time"] = display_time
+            call.set_variable("new_slot_time", new_slot_time)
+            call.set_variable("display_time", display_time)
 
             call.set_task(
                 "confirm_new_slot",
@@ -163,9 +165,9 @@ def find_new_slot(call: guava.Call) -> None:
 def complete_reschedule(call: guava.Call) -> None:
     client_name = call.get_variable("client_name")
     confirmed = call.get_field("confirmed") or ""
-    display_time = call.data["display_time"]
-    new_slot_time = call.data["new_slot_time"]
-    appointment_id = call.data["appointment_id"]
+    display_time = call.get_variable("display_time")
+    new_slot_time = call.get_variable("new_slot_time")
+    appointment_id = call.get_variable("appointment_id")
 
     if confirmed.lower() != "yes":
         call.hangup(

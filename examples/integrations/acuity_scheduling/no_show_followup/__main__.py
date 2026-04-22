@@ -107,7 +107,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             except Exception as e:
                 logging.warning("Could not pre-load next slot: %s", e)
 
-        call.data = {"appointment": appointment, "appointment_id": appointment_id, "new_slot_time": new_slot_time}
+        call.set_variable("appointment", appointment)
+        call.set_variable("appointment_id", appointment_id)
+        call.set_variable("new_slot_time", new_slot_time)
 
         appt_type = appointment.get("type", "appointment") if appointment else "appointment"
         appt_date = appointment.get("date", "their recent appointment") if appointment else "their recent appointment"
@@ -120,7 +122,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             except (ValueError, AttributeError):
                 new_time_display = new_slot_time
 
-        call.data["new_time_display"] = new_time_display
+        call.set_variable("new_time_display", new_time_display)
 
         call.set_task(
             "no_show_followup",
@@ -160,10 +162,10 @@ def handle_rebook(call: guava.Call) -> None:
     client_name = call.get_variable("client_name")
     reason = call.get_field("reason") or ""
     wants_rebook = call.get_field("wants_to_rebook") or ""
-    appointment = call.data["appointment"]
-    new_slot_time = call.data["new_slot_time"]
-    new_time_display = call.data["new_time_display"]
-    appointment_id = call.data["appointment_id"]
+    appointment = call.get_variable("appointment")
+    new_slot_time = call.get_variable("new_slot_time")
+    new_time_display = call.get_variable("new_time_display")
+    appointment_id = call.get_variable("appointment_id")
     appt_type = appointment.get("type", "appointment") if appointment else "appointment"
 
     logging.info(
