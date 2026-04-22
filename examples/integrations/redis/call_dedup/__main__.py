@@ -2,11 +2,11 @@ import guava
 import os
 import logging
 from guava import logging_utils
-import redis
+from redis import Redis
 from datetime import datetime, timezone
 
 
-r = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+r = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 # Callers are considered repeat within this window (in seconds).
 DEDUP_WINDOW_SECONDS = int(os.environ.get("DEDUP_WINDOW_SECONDS", 300))  # 5 minutes default
@@ -48,20 +48,21 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    caller_phone = call.get_caller_number() or ""
-    call.caller_phone = caller_phone
-    call.is_repeat = is_repeat_caller(caller_phone) if caller_phone else False
-    call.call_count = get_call_count(caller_phone) if caller_phone else 1
+    caller_phone = call.get_variable("caller_phone") or ""
+    is_repeat = is_repeat_caller(caller_phone) if caller_phone else False
+    call_count = get_call_count(caller_phone) if caller_phone else 1
 
     if caller_phone:
         mark_caller(caller_phone)
 
+    call.set_variable("caller_phone", caller_phone)
+
     logging.info(
         "Caller %s — repeat within window: %s, lifetime calls: %d",
-        caller_phone, call.is_repeat, call.call_count,
+        caller_phone, is_repeat, call_count,
     )
 
-    if call.is_repeat:
+    if is_repeat:
         window_minutes = DEDUP_WINDOW_SECONDS // 60
 
         call.set_task(
@@ -152,7 +153,7 @@ def on_repeat_done(call: guava.Call) -> None:
     escalate = call.get_field("escalate") or "no, just help me here"
 
     logging.info(
-        "Repeat caller %s — status: %s, escalate: %s", call.caller_phone, status, escalate,
+        "Repeat caller %s — status: %s, escalate: %s", call.get_variable("caller_phone"), status, escalate,
     )
 
     if escalate == "yes, escalate":
@@ -179,7 +180,7 @@ def on_new_done(call: guava.Call) -> None:
     name = call.get_field("caller_name") or "there"
     resolution = call.get_field("resolution") or ""
 
-    logging.info("Call resolved for %s (%s).", name, call.caller_phone)
+    logging.info("Call resolved for %s (%s).", name, call.get_variable("caller_phone"))
 
     call.hangup(
         final_instructions=(

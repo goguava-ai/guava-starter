@@ -3,11 +3,11 @@ import os
 import logging
 from guava import logging_utils
 import json
-import redis
+from redis import Redis
 from datetime import datetime, timezone
 
 
-r = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+r = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", 3600))  # 1 hour default
 
@@ -49,14 +49,15 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
     # Use the inbound call's caller number + timestamp as the session ID.
-    caller_phone = call.get_caller_number() or "unknown"
-    call.session_id = f"{caller_phone.lstrip('+')}-{int(datetime.now(timezone.utc).timestamp())}"
+    caller_phone = call.get_variable("caller_phone") or "unknown"
+    session_id = f"{caller_phone.lstrip('+')}-{int(datetime.now(timezone.utc).timestamp())}"
+    call.set_variable("session_id", session_id)
 
-    logging.info("Call session started: %s", call.session_id)
+    logging.info("Call session started: %s", session_id)
 
     # Publish a session-started event so real-time subscribers can react.
     try:
-        publish_session_event(call.session_id, "call_started", {"phone": caller_phone})
+        publish_session_event(session_id, "call_started", {"phone": caller_phone})
     except Exception as e:
         logging.warning("Could not publish call_started event: %s", e)
 
@@ -126,7 +127,7 @@ def on_done(call: guava.Call) -> None:
     followup = call.get_field("preferred_followup") or "email"
 
     session_data = {
-        "session_id": call.session_id,
+        "session_id": call.get_variable("session_id"),
         "caller_name": name,
         "account_number": account_number,
         "request_type": request_type,
@@ -135,16 +136,16 @@ def on_done(call: guava.Call) -> None:
         "call_started_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    logging.info("Saving session %s to Redis for account %s.", call.session_id, account_number)
+    logging.info("Saving session %s to Redis for account %s.", call.get_variable("session_id"), account_number)
     try:
-        save_session(call.session_id, session_data)
-        logging.info("Session %s saved (TTL: %ds).", call.session_id, SESSION_TTL_SECONDS)
+        save_session(call.get_variable("session_id"), session_data)
+        logging.info("Session %s saved (TTL: %ds).", call.get_variable("session_id"), SESSION_TTL_SECONDS)
     except Exception as e:
         logging.error("Failed to save session to Redis: %s", e)
 
     try:
-        publish_session_event(call.session_id, "call_completed", session_data)
-        logging.info("call_completed event published for session %s.", call.session_id)
+        publish_session_event(call.get_variable("session_id"), "call_completed", session_data)
+        logging.info("call_completed event published for session %s.", call.get_variable("session_id"))
     except Exception as e:
         logging.warning("Could not publish call_completed event: %s", e)
 

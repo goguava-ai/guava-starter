@@ -76,16 +76,18 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     dataset_id = call.get_variable("dataset_id")
 
-    call.token = ""
-    call.last_refresh_time = ""
+    token = ""
+    last_refresh_time = ""
     try:
-        call.token = get_access_token()
-        last = get_last_refresh(dataset_id, call.token)
+        token = get_access_token()
+        last = get_last_refresh(dataset_id, token)
         if last:
-            call.last_refresh_time = last.get("endTime") or last.get("startTime") or ""
+            last_refresh_time = last.get("endTime") or last.get("startTime") or ""
     except Exception as e:
         logging.warning("Pre-call Power BI setup failed: %s", e)
 
+    call.set_variable("token", token)
+    call.set_variable("last_refresh_time", last_refresh_time)
     call.reach_person(contact_full_name=contact_name)
 
 
@@ -104,9 +106,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        last_refresh_time = call.get_variable("last_refresh_time") or ""
         last_note = (
-            f" It last completed a refresh at {call.last_refresh_time}."
-            if call.last_refresh_time
+            f" It last completed a refresh at {last_refresh_time}."
+            if last_refresh_time
             else ""
         )
 
@@ -174,9 +177,10 @@ def on_done(call: guava.Call) -> None:
         return
 
     try:
-        if not call.token:
-            call.token = get_access_token()
-        trigger_dataset_refresh(dataset_id, call.token)
+        token = call.get_variable("token") or ""
+        if not token:
+            token = get_access_token()
+        trigger_dataset_refresh(dataset_id, token)
         logging.info("Power BI dataset refresh triggered: %s", dataset_id)
         call.hangup(
             final_instructions=(

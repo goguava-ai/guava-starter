@@ -70,26 +70,29 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
     return guava.AcceptCall()
 
 
+DAYS = 30
+
+
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
     user_id = call.get_variable("user_id")
-    call.user_id = user_id
-    call.transactions = []
-    call.summary = {}
-    call.days = 30
+    transactions: list[dict] = []
+    summary: dict = {}
 
     try:
         access_token = lookup_access_token(user_id)
         if access_token:
-            call.transactions = get_transactions(access_token, days=call.days)
-            call.summary = summarize_transactions(call.transactions)
-            logging.info("Loaded %d transactions for user %s", len(call.transactions), user_id)
+            transactions = get_transactions(access_token, days=DAYS)
+            summary = summarize_transactions(transactions)
+            logging.info("Loaded %d transactions for user %s", len(transactions), user_id)
     except Exception as e:
         logging.error("Failed to load transactions: %s", e)
 
-    summary = call.summary
+    call.set_variable("transactions", transactions)
+    call.set_variable("summary", summary)
+
     context = (
-        f"The customer has {summary.get('count', 0)} transactions in the past {call.days} days. "
+        f"The customer has {summary.get('count', 0)} transactions in the past {DAYS} days. "
         f"Total spent: ${summary.get('total_spent', 0):.2f}. "
         f"Largest transaction: ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
         f"Top spending category: {summary.get('top_category', 'N/A')}."
@@ -132,7 +135,8 @@ def on_call_start(call: guava.Call) -> None:
 def on_done(call: guava.Call) -> None:
     review_period = call.get_field("review_period") or "summary"
     specific_concern = call.get_field("specific_concern") or ""
-    summary = call.summary
+    summary = call.get_variable("summary") or {}
+    transactions = call.get_variable("transactions") or []
 
     if review_period == "dispute a charge":
         call.hangup(
@@ -144,10 +148,10 @@ def on_done(call: guava.Call) -> None:
         )
         return
 
-    if specific_concern and call.transactions:
+    if specific_concern and transactions:
         concern_lower = specific_concern.lower()
         matches = [
-            t for t in call.transactions
+            t for t in transactions
             if concern_lower in t.get("name", "").lower()
             or concern_lower in (t.get("category") or [""])[0].lower()
         ]
@@ -170,7 +174,7 @@ def on_done(call: guava.Call) -> None:
         call.hangup(
             final_instructions=(
                 f"Read the following transaction summary to the customer: "
-                f"In the past {call.days} days you had {summary.get('count', 0)} transactions. "
+                f"In the past {DAYS} days you had {summary.get('count', 0)} transactions. "
                 f"Total spent: ${summary.get('total_spent', 0):.2f}. "
                 f"Your largest purchase was ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
                 f"Your top spending category was {summary.get('top_category', 'N/A')}. "

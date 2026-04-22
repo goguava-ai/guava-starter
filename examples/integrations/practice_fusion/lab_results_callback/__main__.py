@@ -115,16 +115,14 @@ def on_call_start(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     report_id = call.get_variable("report_id")
 
-    call.test_name = "your recent lab panel"
-    call.status_phrase = "results are available"
+    test_name = "your recent lab panel"
+    status_phrase = "results are available"
 
     # Pre-call: fetch the DiagnosticReport so the agent can describe the test
     # type and convey a high-level normal/abnormal summary.
     try:
         report = get_diagnostic_report(report_id)
         test_name, status_phrase = classify_report(report)
-        call.test_name = test_name
-        call.status_phrase = status_phrase
         logging.info(
             "DiagnosticReport %s: test=%s, status=%s",
             report_id,
@@ -134,6 +132,8 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as exc:
         logging.error("Failed to fetch DiagnosticReport %s: %s", report_id, exc)
 
+    call.set_variable("test_name", test_name)
+    call.set_variable("status_phrase", status_phrase)
     call.reach_person(contact_full_name=patient_name)
 
 
@@ -152,11 +152,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        test_name = call.get_variable("test_name") or "your recent lab panel"
+        status_phrase = call.get_variable("status_phrase") or "results are available"
         call.set_task(
             "deliver_results",
             objective=(
-                f"Notify {patient_name} that their {call.test_name} results are ready. "
-                f"The high-level summary is: {call.status_phrase}. "
+                f"Notify {patient_name} that their {test_name} results are ready. "
+                f"The high-level summary is: {status_phrase}. "
                 "Convey this in plain, reassuring language. Do not read raw codes or numeric values. "
                 "If values are outside the normal range, let the patient know their provider will "
                 "review the results and follow up with next steps. "
@@ -165,13 +167,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             checklist=[
                 guava.Say(
                     f"Hello {patient_name}, this is Riley calling from Westfield Medical Group. "
-                    f"I'm reaching out because your {call.test_name} results are now available."
+                    f"I'm reaching out because your {test_name} results are now available."
                 ),
                 guava.Field(
                     key="acknowledged",
                     field_type="multiple_choice",
                     description=(
-                        f"Let the patient know the overall status: {call.status_phrase}. "
+                        f"Let the patient know the overall status: {status_phrase}. "
                         "Ask if they acknowledge receiving this update."
                     ),
                     choices=["yes", "no"],

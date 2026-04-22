@@ -81,23 +81,26 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     opp_id = call.get_variable("opp_id")
 
-    call.opp_name = "your renewal"
-    call.opp_amount = ""
-    call.close_date = ""
+    opp_name = "your renewal"
+    opp_amount = ""
+    close_date = ""
 
     try:
         opp = get_opportunity(opp_id)
         if opp:
-            call.opp_name = opp.get("Name") or "your renewal"
+            opp_name = opp.get("Name") or "your renewal"
             amount = opp.get("Amount")
-            call.opp_amount = f"${amount:,.0f}" if amount else ""
+            opp_amount = f"${amount:,.0f}" if amount else ""
             close_date_raw = opp.get("CloseDate")
             if close_date_raw:
                 dt = datetime.strptime(close_date_raw, "%Y-%m-%d")
-                call.close_date = dt.strftime("%B %d, %Y")
+                close_date = dt.strftime("%B %d, %Y")
     except Exception as e:
         logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
 
+    call.set_variable("opp_name", opp_name)
+    call.set_variable("opp_amount", opp_amount)
+    call.set_variable("close_date", close_date)
     call.reach_person(contact_full_name=contact_name)
 
 
@@ -123,22 +126,26 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to log missed-call Task for opp %s: %s", opp_id, e)
 
+        opp_name = call.get_variable("opp_name") or "your renewal"
         call.hangup(
             final_instructions=(
                 f"Leave a professional voicemail for {contact_name} from Veritas Software. "
-                f"Mention you're calling about their upcoming contract renewal for {call.opp_name} "
+                f"Mention you're calling about their upcoming contract renewal for {opp_name} "
                 "and that you'd love to connect. Ask them to call back or watch for an email. "
                 "Keep it brief and warm."
             )
         )
     elif outcome == "available":
-        amount_note = f" valued at {call.opp_amount}" if call.opp_amount else ""
-        date_note = f" expiring on {call.close_date}" if call.close_date else " coming up for renewal"
+        opp_name = call.get_variable("opp_name") or "your renewal"
+        opp_amount = call.get_variable("opp_amount") or ""
+        close_date = call.get_variable("close_date") or ""
+        amount_note = f" valued at {opp_amount}" if opp_amount else ""
+        date_note = f" expiring on {close_date}" if close_date else " coming up for renewal"
 
         call.set_task(
             "record_outcome",
             objective=(
-                f"Speak with {contact_name} about renewing '{call.opp_name}'"
+                f"Speak with {contact_name} about renewing '{opp_name}'"
                 f"{amount_note}{date_note}. Understand their renewal intent and any requested changes."
             ),
             checklist=[

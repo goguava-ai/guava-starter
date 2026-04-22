@@ -16,7 +16,7 @@ HEADERS = {
 
 def list_apps(space_id: str = "") -> list[dict]:
     """Return the list of apps available to the service account, optionally filtered by space."""
-    params = {"limit": 50}
+    params: dict = {"limit": 50}
     if space_id:
         params["spaceId"] = space_id
     resp = requests.get(
@@ -74,11 +74,12 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
     # Pre-load the app list so the agent can confirm the name during the call.
-    call.apps = []
+    apps: list = []
     try:
-        call.apps = list_apps()
+        apps = list_apps()
     except Exception as e:
         logging.warning("Could not pre-load Qlik app list: %s", e)
+    call.set_variable("apps", apps)
 
     call.set_task(
         "trigger_and_respond",
@@ -144,8 +145,9 @@ def on_done(call: guava.Call) -> None:
     app_id = ""
     app_name = identifier
 
+    apps = call.get_variable("apps") or []
     matching = [
-        a for a in call.apps
+        a for a in apps
         if identifier.lower() in (a.get("attributes", {}).get("name") or "").lower()
         or identifier == a.get("resourceId") or identifier == a.get("id")
     ]

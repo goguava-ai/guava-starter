@@ -78,15 +78,16 @@ agent = guava.Agent(
 def on_call_start(call: guava.Call) -> None:
     recipient_name = call.get_variable("recipient_name")
 
-    call.kpi_summary = ""
+    kpi_summary = ""
     try:
         token = get_access_token()
         rows = get_latest_kpi_rows(token)
         if rows:
-            call.kpi_summary = format_kpi_row(rows[0])
+            kpi_summary = format_kpi_row(rows[0])
     except Exception as e:
         logging.error("Failed to fetch KPI data from Power BI: %s", e)
 
+    call.set_variable("kpi_summary", kpi_summary)
     call.reach_person(contact_full_name=recipient_name)
 
 
@@ -104,7 +105,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if not call.kpi_summary:
+        kpi_summary = call.get_variable("kpi_summary") or ""
+        if not kpi_summary:
             call.set_task(
                 "deliver_briefing",
                 objective=f"Inform {recipient_name} that today's KPI data is unavailable.",
@@ -125,7 +127,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     guava.Say(
                         f"Good morning {recipient_name}! This is Quinn from Apex Analytics "
                         "with your daily KPI briefing from Power BI. "
-                        f"Here are today's numbers: {call.kpi_summary}."
+                        f"Here are today's numbers: {kpi_summary}."
                     ),
                     guava.Field(
                         key="questions",

@@ -47,27 +47,28 @@ def on_call_start(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     subscription_id = call.get_variable("subscription_id")
 
-    call.customer_name = customer_name
-    call.subscription_id = subscription_id
-    call.subscription = None
-
+    subscription = None
     try:
         token = get_access_token()
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        call.subscription = get_subscription(subscription_id, headers)
+        subscription = get_subscription(subscription_id, headers)
     except Exception as e:
         logging.error("Failed to load subscription %s: %s", subscription_id, e)
 
+    call.set_variable("subscription", subscription)
     call.reach_person(contact_full_name=customer_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription = call.get_variable("subscription")
+
     if outcome == "unavailable":
-        logging.info("Unable to reach %s for payment recovery.", call.customer_name)
+        logging.info("Unable to reach %s for payment recovery.", customer_name)
         call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {call.customer_name} from Northgate Commerce. "
+                f"Leave a brief, professional voicemail for {customer_name} from Northgate Commerce. "
                 "Let them know you're calling about a payment issue on their PayPal subscription "
                 "and ask them to log into PayPal to update their payment method. "
                 "Keep it concise and non-threatening."
@@ -76,8 +77,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         failed_count = 0
         last_amount = ""
-        if call.subscription:
-            billing = call.subscription.get("billing_info", {})
+        if subscription:
+            billing = subscription.get("billing_info", {})
             failed_count = billing.get("failed_payments_count", 0)
             last = billing.get("last_payment", {}).get("amount", {})
             if last.get("value"):
@@ -86,14 +87,14 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.set_task(
             "handle_outcome",
             objective=(
-                f"Reach {call.customer_name} about a failed PayPal subscription payment. "
+                f"Reach {customer_name} about a failed PayPal subscription payment. "
                 f"There {'have been' if failed_count > 1 else 'has been'} {failed_count or 'a'} failed "
                 f"payment{'s' if failed_count != 1 else ''}{' of ' + last_amount if last_amount else ''}. "
                 "Help them understand what happened and guide them to update their payment method in PayPal."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {call.customer_name}, this is Alex calling from Northgate Commerce. "
+                    f"Hi {customer_name}, this is Alex calling from Northgate Commerce. "
                     "I'm reaching out because we noticed a payment issue with your PayPal subscription. "
                     + (f"There {'have' if failed_count != 1 else 'has'} been {failed_count} failed "
                        f"payment attempt{'s' if failed_count != 1 else ''}" if failed_count else "A recent payment didn't go through")
@@ -129,18 +130,20 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 
 @agent.on_task_complete("handle_outcome")
 def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
     cause = call.get_field("cause") or ""
     willing = call.get_field("willing_to_update") or ""
 
     logging.info(
         "Payment recovery outcome for subscription %s — cause: %s, response: %s",
-        call.subscription_id, cause, willing,
+        subscription_id, cause, willing,
     )
 
     if "cancel" in willing:
         call.hangup(
             final_instructions=(
-                f"Acknowledge {call.customer_name}'s wish to cancel. Let them know they can "
+                f"Acknowledge {customer_name}'s wish to cancel. Let them know they can "
                 "cancel their subscription by logging into PayPal and going to their subscription settings. "
                 "Thank them for being a customer and wish them well."
             )
@@ -148,7 +151,7 @@ def on_done(call: guava.Call) -> None:
     elif "already updated" in willing:
         call.hangup(
             final_instructions=(
-                f"Let {call.customer_name} know PayPal will automatically retry the payment "
+                f"Let {customer_name} know PayPal will automatically retry the payment "
                 "with the updated method. They should see the charge go through within 24 hours. "
                 "Thank them for updating quickly and wish them a great day."
             )
@@ -156,7 +159,7 @@ def on_done(call: guava.Call) -> None:
     elif "help" in willing:
         call.hangup(
             final_instructions=(
-                f"Guide {call.customer_name} to update their payment method: "
+                f"Guide {customer_name} to update their payment method: "
                 "log into paypal.com → click the gear icon → Payments → Manage automatic payments → "
                 "find Northgate Commerce → Update payment method. "
                 "Let them know PayPal will retry once updated. Thank them for their time."
@@ -165,7 +168,7 @@ def on_done(call: guava.Call) -> None:
     else:
         call.hangup(
             final_instructions=(
-                f"Thank {call.customer_name} for their time. Let them know they need to update "
+                f"Thank {customer_name} for their time. Let them know they need to update "
                 "their payment method in PayPal to avoid subscription interruption. "
                 "PayPal will retry automatically once the method is updated. "
                 "Wish them a great day."

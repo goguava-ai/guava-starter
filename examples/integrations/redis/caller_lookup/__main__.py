@@ -3,10 +3,10 @@ import os
 import logging
 from guava import logging_utils
 import json
-import redis
+from redis import Redis
 
 
-r = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+r = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 CALLER_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
@@ -47,18 +47,20 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
     # Look up the caller's phone number from the inbound call metadata.
-    caller_phone = call.get_caller_number() or ""
-    call.caller_phone = caller_phone
-    call.profile = get_caller_profile(caller_phone) if caller_phone else None
+    caller_phone = call.get_variable("caller_phone") or ""
+    profile = get_caller_profile(caller_phone) if caller_phone else None
 
-    if call.profile:
-        logging.info("Returning caller recognized: %s (%s)", call.profile.get("name"), caller_phone)
+    call.set_variable("caller_phone", caller_phone)
+    call.set_variable("profile", profile)
+
+    if profile:
+        logging.info("Returning caller recognized: %s (%s)", profile.get("name"), caller_phone)
     else:
         logging.info("New caller from %s — no cached profile found.", caller_phone)
 
-    if call.profile:
-        name = call.profile.get("name", "there")
-        last_topic = call.profile.get("last_topic", "")
+    if profile:
+        name = profile.get("name", "there")
+        last_topic = profile.get("last_topic", "")
         topic_mention = f" Last time you called about {last_topic}." if last_topic else ""
 
         call.set_task(
@@ -127,29 +129,31 @@ def on_call_start(call: guava.Call) -> None:
 
 @agent.on_task_complete("wrap_up")
 def on_done(call: guava.Call) -> None:
+    caller_phone = call.get_variable("caller_phone") or ""
+    profile = call.get_variable("profile")
     today_request = call.get_field("today_request") or ""
     resolution = call.get_field("resolution") or ""
 
-    if call.profile:
-        name = call.profile.get("name", "")
+    if profile:
+        name = profile.get("name", "")
         updated_profile = {
-            **call.profile,
+            **profile,
             "last_topic": today_request[:120],
-            "call_count": call.profile.get("call_count", 1) + 1,
+            "call_count": profile.get("call_count", 1) + 1,
         }
     else:
         name = call.get_field("caller_name") or ""
         updated_profile = {
             "name": name,
-            "phone": call.caller_phone,
+            "phone": caller_phone,
             "last_topic": today_request[:120],
             "call_count": 1,
         }
 
-    if call.caller_phone:
+    if caller_phone:
         try:
-            save_caller_profile(call.caller_phone, updated_profile)
-            logging.info("Caller profile saved/updated for %s.", call.caller_phone)
+            save_caller_profile(caller_phone, updated_profile)
+            logging.info("Caller profile saved/updated for %s.", caller_phone)
         except Exception as e:
             logging.error("Failed to save caller profile to Redis: %s", e)
 

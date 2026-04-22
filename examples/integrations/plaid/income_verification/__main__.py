@@ -80,18 +80,16 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
     user_id = call.get_variable("user_id")
-    call.user_id = user_id
-    call.income = None
+    income = None
 
     try:
         access_token = lookup_access_token(user_id)
         if access_token:
-            call.income = get_income_summary(access_token)
-            logging.info("Loaded income data for user %s: %s", user_id, call.income)
+            income = get_income_summary(access_token)
+            logging.info("Loaded income data for user %s: %s", user_id, income)
     except Exception as e:
         logging.error("Failed to load income data: %s", e)
 
-    income = call.income
     if income:
         context = (
             f"Employer: {income['employer']}. "
@@ -145,7 +143,7 @@ def on_done(call: guava.Call) -> None:
 
     logging.info(
         "Income verification for user %s: correct=%s, note=%s",
-        call.user_id,
+        call.get_variable("user_id"),
         details_correct,
         correction_note,
     )

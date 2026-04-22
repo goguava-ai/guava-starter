@@ -64,63 +64,72 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     account_id = int(call.get_variable("account_id"))
 
-    call.contact_name = contact_name
-    call.account_id = account_id
-    call.account_name = ""
-    call.plan = "current"
-    call.renewal_str = ""
-    call.days_until_renewal = None
+    account_name = ""
+    plan = "current"
+    renewal_str = ""
+    days_until_renewal = None
 
     try:
         account = get_account(account_id)
         if account:
-            call.account_name = account.get("name") or ""
-            call.plan = account.get("plan") or "current"
+            account_name = account.get("name") or ""
+            plan = account.get("plan") or "current"
             renewal = account.get("renewal_date")
             if renewal:
-                call.days_until_renewal = (renewal - date.today()).days
-                call.renewal_str = renewal.strftime("%B %d, %Y")
+                days_until_renewal = (renewal - date.today()).days
+                renewal_str = renewal.strftime("%B %d, %Y")
     except Exception as e:
         logging.error("Failed to fetch account %d: %s", account_id, e)
 
+    call.set_variable("account_name", account_name)
+    call.set_variable("plan", plan)
+    call.set_variable("renewal_str", renewal_str)
+    call.set_variable("days_until_renewal", days_until_renewal)
     call.reach_person(contact_full_name=contact_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = int(call.get_variable("account_id"))
+    account_name = call.get_variable("account_name") or ""
+    plan = call.get_variable("plan") or "current"
+    renewal_str = call.get_variable("renewal_str") or ""
+    days_until_renewal = call.get_variable("days_until_renewal")
+
     if outcome == "unavailable":
         logging.info(
             "Unable to reach %s for renewal reminder on account %d",
-            call.contact_name, call.account_id,
+            contact_name, account_id,
         )
         try:
-            log_renewal_outcome(call.account_id, "voicemail", "unknown")
+            log_renewal_outcome(account_id, "voicemail", "unknown")
         except Exception as e:
             logging.error("Failed to log outcome: %s", e)
         call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {call.contact_name} from Nexus Cloud. "
-                f"Mention that their subscription renews on {call.renewal_str} and "
+                f"Leave a brief voicemail for {contact_name} from Nexus Cloud. "
+                f"Mention that their subscription renews on {renewal_str} and "
                 "ask them to call back or log in to make any changes. Keep it brief."
             )
         )
     elif outcome == "available":
         days_note = (
-            f" in {call.days_until_renewal} days" if call.days_until_renewal is not None else ""
+            f" in {days_until_renewal} days" if days_until_renewal is not None else ""
         )
 
         call.set_task(
             "handle_response",
             objective=(
-                f"Remind {call.contact_name} at {call.account_name or 'their company'} that their "
-                f"Nexus Cloud {call.plan} plan renews{days_note} on {call.renewal_str}. "
+                f"Remind {contact_name} at {account_name or 'their company'} that their "
+                f"Nexus Cloud {plan} plan renews{days_note} on {renewal_str}. "
                 "Confirm they want to renew and check if they'd like to make any changes."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {call.contact_name}, this is Jordan from Nexus Cloud. "
-                    f"I'm calling to give you a heads-up that your {call.plan} subscription "
-                    f"is coming up for renewal{days_note} on {call.renewal_str}. "
+                    f"Hi {contact_name}, this is Jordan from Nexus Cloud. "
+                    f"I'm calling to give you a heads-up that your {plan} subscription "
+                    f"is coming up for renewal{days_note} on {renewal_str}. "
                     "I wanted to make sure everything looks good on your end."
                 ),
                 guava.Field(
@@ -150,11 +159,15 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 
 @agent.on_task_complete("handle_response")
 def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = int(call.get_variable("account_id"))
+    plan = call.get_variable("plan") or "current"
+    renewal_str = call.get_variable("renewal_str") or ""
     intent = call.get_field("renewal_intent") or "not sure"
     concerns = call.get_field("any_concerns") or ""
 
     logging.info(
-        "Renewal reminder handled for account %d — intent: %s", call.account_id, intent
+        "Renewal reminder handled for account %d — intent: %s", account_id, intent
     )
 
     if "as-is" in intent:
@@ -167,15 +180,15 @@ def on_done(call: guava.Call) -> None:
         outcome = "undecided"
 
     try:
-        log_renewal_outcome(call.account_id, outcome, intent)
+        log_renewal_outcome(account_id, outcome, intent)
     except Exception as e:
-        logging.error("Failed to log renewal outcome for account %d: %s", call.account_id, e)
+        logging.error("Failed to log renewal outcome for account %d: %s", account_id, e)
 
     if "as-is" in intent:
         call.hangup(
             final_instructions=(
-                f"Thank {call.contact_name} for confirming their renewal. "
-                f"Let them know their {call.plan} plan will automatically renew on {call.renewal_str} "
+                f"Thank {contact_name} for confirming their renewal. "
+                f"Let them know their {plan} plan will automatically renew on {renewal_str} "
                 "and they'll receive an invoice by email. "
                 "Wish them continued success and thank them for being a Nexus Cloud customer."
             )
@@ -183,7 +196,7 @@ def on_done(call: guava.Call) -> None:
     elif "change" in intent:
         call.hangup(
             final_instructions=(
-                f"Thank {call.contact_name} for letting you know. "
+                f"Thank {contact_name} for letting you know. "
                 "Let them know an account manager will reach out by end of day to walk through "
                 "plan options and ensure a smooth transition before the renewal date. "
                 + (f"Note their concern: {concerns}. " if concerns else "")
@@ -193,7 +206,7 @@ def on_done(call: guava.Call) -> None:
     elif "cancel" in intent:
         call.hangup(
             final_instructions=(
-                f"Acknowledge {call.contact_name}'s request to cancel. "
+                f"Acknowledge {contact_name}'s request to cancel. "
                 "Let them know a retention specialist will reach out within one business day "
                 "to walk through the cancellation process and explore any alternatives. "
                 "Assure them no changes will be made until they've spoken with someone. "
@@ -203,8 +216,8 @@ def on_done(call: guava.Call) -> None:
     else:
         call.hangup(
             final_instructions=(
-                f"Thank {call.contact_name} for their time. "
-                f"Remind them their renewal date is {call.renewal_str} and they can make changes "
+                f"Thank {contact_name} for their time. "
+                f"Remind them their renewal date is {renewal_str} and they can make changes "
                 "anytime through the Nexus Cloud dashboard or by calling back. "
                 "Wish them a great day."
             )

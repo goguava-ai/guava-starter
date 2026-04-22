@@ -61,16 +61,15 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     change_number = call.get_variable("change_number")
 
+    change_sys_id = ""
     try:
         cr = get_change_request(change_number)
         if cr:
-            call.change_sys_id = cr.get("sys_id", "")
-        else:
-            call.change_sys_id = ""
+            change_sys_id = cr.get("sys_id", "")
     except Exception as e:
         logging.error("Failed to fetch change request %s pre-call: %s", change_number, e)
-        call.change_sys_id = ""
 
+    call.set_variable("change_sys_id", change_sys_id)
     call.reach_person(contact_full_name=contact_name)
 
 

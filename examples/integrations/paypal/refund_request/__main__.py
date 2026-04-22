@@ -62,12 +62,13 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
+    paypal_headers: dict = {}
     try:
         token = get_access_token()
-        call.paypal_headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        paypal_headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     except Exception as e:
         logging.error("Failed to get PayPal token: %s", e)
-        call.paypal_headers = {}
+    call.set_variable("paypal_headers", paypal_headers)
 
     call.set_task(
         "process_refund",
@@ -125,10 +126,11 @@ def on_done(call: guava.Call) -> None:
         )
         return
 
+    paypal_headers = call.get_variable("paypal_headers") or {}
     logging.info("Processing refund for order %s, reason: %s", order_id, reason)
 
     try:
-        order = get_order(order_id, call.paypal_headers)
+        order = get_order(order_id, paypal_headers)
     except Exception as e:
         logging.error("Order lookup failed for %s: %s", order_id, e)
         order = None
@@ -167,7 +169,7 @@ def on_done(call: guava.Call) -> None:
 
     refund = None
     try:
-        refund = create_refund(capture_id, f"Customer refund: {reason}", call.paypal_headers)
+        refund = create_refund(capture_id, f"Customer refund: {reason}", paypal_headers)
         logging.info("Refund created: %s", refund.get("id") if refund else None)
     except Exception as e:
         logging.error("Refund creation failed for capture %s: %s", capture_id, e)

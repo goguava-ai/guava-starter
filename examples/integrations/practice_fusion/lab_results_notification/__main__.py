@@ -72,15 +72,16 @@ def on_call_start(call: guava.Call) -> None:
     patient_id = call.get_variable("patient_id")
     result_summary = call.get_variable("result_summary")
 
-    call.report_detail = ""
+    report_detail = ""
     try:
         reports = get_recent_diagnostic_reports(patient_id)
-        call.report_detail = summarize_reports(reports)
-        logging.info("Report detail fetched:\n%s", call.report_detail)
+        report_detail = summarize_reports(reports)
+        logging.info("Report detail fetched:\n%s", report_detail)
     except requests.HTTPError as exc:
         logging.error("Failed to fetch diagnostic reports: %s", exc)
-        call.report_detail = result_summary  # fall back to CLI summary
+        report_detail = result_summary  # fall back to CLI summary
 
+    call.set_variable("report_detail", report_detail)
     call.reach_person(contact_full_name=patient_name)
 
 
@@ -98,12 +99,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        report_detail = call.get_variable("report_detail") or ""
         call.set_task(
             "deliver_results",
             objective=(
                 f"Inform {patient_name} that their recent lab results are available "
                 f"and convey the following summary to guide the conversation: "
-                f"{call.report_detail}. "
+                f"{report_detail}. "
                 f"Do not read raw status codes verbatim; translate them into plain language "
                 f"(e.g., 'final' means the results are complete). "
                 f"Do not disclose specific numeric values unless the summary explicitly includes them."

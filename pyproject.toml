@@ -26,6 +26,8 @@ allowed-unresolved-imports = [
     "pymongo.**",
     "pymysql.**",
     "requests_aws4auth.**",
+    "redis",
+    "redis.**",
     "requests_oauthlib.**",
     "simple_salesforce.**",
 ]

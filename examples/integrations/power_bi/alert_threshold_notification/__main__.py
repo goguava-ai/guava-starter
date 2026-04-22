@@ -76,12 +76,13 @@ def on_call_start(call: guava.Call) -> None:
     dataset_id = call.get_variable("dataset_id")
     report_url = call.get_variable("report_url")
 
-    call.token = ""
+    token = ""
     try:
-        call.token = get_access_token()
+        token = get_access_token()
     except Exception as e:
         logging.warning("Could not obtain Power BI token before call: %s", e)
 
+    call.set_variable("token", token)
     call.reach_person(contact_full_name=recipient_name)
 
 
@@ -171,8 +172,9 @@ def on_done(call: guava.Call) -> None:
         metric_name, ack, eta,
     )
 
-    if call.token and dataset_id:
-        log_alert_acknowledgment(dataset_id, metric_name, ack, call.token)
+    token = call.get_variable("token") or ""
+    if token and dataset_id:
+        log_alert_acknowledgment(dataset_id, metric_name, ack, token)
 
     escalate = "escalate" in ack
     needs_info = "more information" in ack

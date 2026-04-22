@@ -93,19 +93,20 @@ def on_call_start(call: guava.Call) -> None:
     opp_id = call.get_variable("opp_id")
     deal_outcome = call.get_variable("deal_outcome").lower()  # "won" or "lost"
 
-    call.opp_name = "our recent proposal"
-    call.opp_amount = ""
-    call.deal_outcome = deal_outcome
+    opp_name = "our recent proposal"
+    opp_amount = ""
 
     try:
         opp = get_opportunity(opp_id)
         if opp:
-            call.opp_name = opp.get("Name") or "our recent proposal"
+            opp_name = opp.get("Name") or "our recent proposal"
             amount = opp.get("Amount")
-            call.opp_amount = f"${amount:,.0f}" if amount else ""
+            opp_amount = f"${amount:,.0f}" if amount else ""
     except Exception as e:
         logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
 
+    call.set_variable("opp_name", opp_name)
+    call.set_variable("opp_amount", opp_amount)
     call.reach_person(contact_full_name=contact_name)
 
 
@@ -136,16 +137,18 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if call.deal_outcome == "won":
+        deal_outcome = call.get_variable("deal_outcome") or ""
+        opp_name = call.get_variable("opp_name") or "our recent proposal"
+        if deal_outcome == "won":
             opening = (
                 f"Hi {contact_name}, this is Jordan from Northgate Solutions. "
-                f"We're thrilled you chose us for {call.opp_name}, and I'm calling to ask a "
+                f"We're thrilled you chose us for {opp_name}, and I'm calling to ask a "
                 "few quick questions about what made you decide to move forward with us."
             )
         else:
             opening = (
                 f"Hi {contact_name}, this is Jordan from Northgate Solutions. "
-                f"I know you went in a different direction on {call.opp_name}, and I truly "
+                f"I know you went in a different direction on {opp_name}, and I truly "
                 "appreciate you taking a moment to share some honest feedback — it helps us improve."
             )
 
@@ -153,7 +156,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             "record_feedback",
             objective=(
                 f"Conduct a brief win/loss survey with {contact_name} about the "
-                f"{'won' if call.deal_outcome == 'won' else 'lost'} deal '{call.opp_name}'. "
+                f"{'won' if deal_outcome == 'won' else 'lost'} deal '{opp_name}'. "
                 "Ask thoughtful questions and capture candid, detailed responses."
             ),
             checklist=[
@@ -230,10 +233,13 @@ def on_done(call: guava.Call) -> None:
     improvements = call.get_field("improvement_areas") or ""
     future = call.get_field("would_consider_future") or ""
 
+    deal_outcome = call.get_variable("deal_outcome") or ""
+    opp_name = call.get_variable("opp_name") or "our recent proposal"
+
     note_lines = [
-        f"Win/Loss Survey — {call.deal_outcome.title()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Win/Loss Survey — {deal_outcome.title()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
         f"Contact: {contact_name}",
-        f"Opportunity: {call.opp_name}",
+        f"Opportunity: {opp_name}",
         f"Primary decision factor: {decision_factor}",
         f"Our strengths: {strengths}",
         f"Improvement areas: {improvements}",
@@ -244,7 +250,7 @@ def on_done(call: guava.Call) -> None:
 
     logging.info(
         "Win/loss survey complete for opp %s — outcome: %s, factor: %s",
-        opp_id, call.deal_outcome, decision_factor,
+        opp_id, deal_outcome, decision_factor,
     )
 
     try:
@@ -253,7 +259,7 @@ def on_done(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to log Note: %s", e)
 
-    if call.deal_outcome == "lost" and decision_factor:
+    if deal_outcome == "lost" and decision_factor:
         try:
             update_opportunity_loss_reason(opp_id, decision_factor)
             logging.info("Updated Loss_Reason__c on opp %s.", opp_id)
@@ -263,7 +269,7 @@ def on_done(call: guava.Call) -> None:
     try:
         log_task(
             opp_id,
-            subject=f"Win/Loss Survey — {call.deal_outcome.title()}",
+            subject=f"Win/Loss Survey — {deal_outcome.title()}",
             description=f"Survey completed with {contact_name}.",
         )
     except Exception as e:
@@ -274,7 +280,7 @@ def on_done(call: guava.Call) -> None:
             f"Thank {contact_name} sincerely for their time and candid feedback. "
             "Let them know the input is genuinely valuable and will be shared with the product "
             "and sales leadership team. "
-            + ("Wish them great success with their chosen solution." if call.deal_outcome == "lost"
+            + ("Wish them great success with their chosen solution." if deal_outcome == "lost"
                else "Express excitement about working together and wish them a great day.")
         )
     )

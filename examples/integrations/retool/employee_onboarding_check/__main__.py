@@ -61,13 +61,13 @@ def on_call_start(call: guava.Call) -> None:
     start_date = call.get_variable("start_date")
 
     # Fetch their checklist before the call connects.
-    call.pending_items = []
+    pending_items: list = []
     try:
         status = get_onboarding_status(employee_id)
-        call.pending_items = status.get("pending_items") or []
+        pending_items = status.get("pending_items") or []
     except Exception as e:
         logging.warning("Could not fetch onboarding status for %s: %s", employee_id, e)
-        call.pending_items = [
+        pending_items = [
             "laptop setup",
             "ID badge pickup",
             "benefits enrollment",
@@ -75,6 +75,7 @@ def on_call_start(call: guava.Call) -> None:
             "first-day manager meeting",
         ]
 
+    call.set_variable("pending_items", pending_items)
     call.reach_person(contact_full_name=employee_name)
 
 
@@ -94,8 +95,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        pending_items = call.get_variable("pending_items") or []
         pending_list = (
-            ", ".join(call.pending_items) if call.pending_items else "all items"
+            ", ".join(pending_items) if pending_items else "all items"
         )
 
         call.set_task(
@@ -124,7 +126,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     key="completed_items",
                     field_type="text",
                     description=(
-                        f"Walk through their pending onboarding items one by one: {', '.join(call.pending_items)}. "
+                        f"Walk through their pending onboarding items one by one: {', '.join(pending_items)}. "
                         "Ask which ones they've completed. Note any that are still outstanding."
                     ),
                     required=True,
@@ -160,8 +162,9 @@ def on_done(call: guava.Call) -> None:
     if blockers:
         notes += f" Blockers: {blockers}"
 
+    pending_items = call.get_variable("pending_items") or []
     completed_items = [
-        item for item in call.pending_items
+        item for item in pending_items
         if item.lower() in completed_text.lower()
     ]
 

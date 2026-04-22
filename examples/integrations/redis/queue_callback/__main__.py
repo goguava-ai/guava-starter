@@ -3,11 +3,11 @@ import os
 import logging
 from guava import logging_utils
 import json
-import redis
+from redis import Redis
 from datetime import datetime, timezone
 
 
-r = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+r = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 CALLBACK_QUEUE_KEY = os.environ.get("CALLBACK_QUEUE_KEY", "guava:callback_queue")
 
@@ -112,7 +112,7 @@ def on_call_start(call: guava.Call) -> None:
 def on_done(call: guava.Call) -> None:
     wants_callback = call.get_field("wants_callback") or "yes"
     name = call.get_field("caller_name") or "Unknown"
-    callback_number = call.get_field("callback_number") or call.get_caller_number() or ""
+    callback_number = call.get_field("callback_number") or call.get_variable("caller_phone") or ""
     issue = call.get_field("issue_summary") or ""
     priority_raw = call.get_field("priority") or "normal — not urgent"
     priority = "high" if "high" in priority_raw else "normal"

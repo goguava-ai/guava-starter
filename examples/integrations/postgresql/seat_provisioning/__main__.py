@@ -91,7 +91,7 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="seats_requested",
-                field_type="number",
+                field_type="integer",
                 description="Ask how many additional seats they'd like to add.",
                 required=True,
             ),
