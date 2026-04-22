@@ -138,8 +138,8 @@ def on_verify_ticket_done(call: guava.Call) -> None:
         return
 
     # Store the verified ticket ID for use in the next task
-    call.verified_ticket_id = ticket_id
-    call.verified_ticket_subject = ticket.get("subject", "their issue")
+    call.set_variable("verified_ticket_id", ticket_id)
+    call.set_variable("verified_ticket_subject", ticket.get("subject", "their issue"))
 
     subject = ticket.get("subject", "their issue")
     call.set_task(
@@ -177,7 +177,7 @@ def on_verify_ticket_done(call: guava.Call) -> None:
 @agent.on_task_complete("post_update")
 def on_post_update_done(call: guava.Call) -> None:
     caller_name = call.get_field("caller_name") or "the caller"
-    ticket_id = call.verified_ticket_id
+    ticket_id = call.get_variable("verified_ticket_id")
     update_text = call.get_field("update_text") or ""
     issue_resolved = call.get_field("issue_resolved") or "still ongoing"
 

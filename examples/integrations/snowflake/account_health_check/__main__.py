@@ -23,7 +23,7 @@ BASE_URL = f"https://{SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2"
 
 def execute_statement(statement: str, bindings: dict | None = None) -> dict:
     """Executes a SQL statement against Snowflake and returns the raw response."""
-    payload = {
+    payload: dict[str, object] = {
         "statement": statement,
         "database": SNOWFLAKE_DATABASE,
         "schema": SNOWFLAKE_SCHEMA,

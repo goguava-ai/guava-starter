@@ -68,13 +68,14 @@ def on_call_start(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
 
     # Pre-call: fetch the ticket to personalize the survey with the issue subject.
-    call.ticket_subject = "your recent support request"
+    ticket_subject = "your recent support request"
     try:
         ticket = get_ticket(ticket_id)
         if ticket and ticket.get("subject"):
-            call.ticket_subject = f"'{ticket['subject']}'"
+            ticket_subject = f"'{ticket['subject']}'"
     except Exception as e:
         logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
+    call.set_variable("ticket_subject", ticket_subject)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -97,17 +98,18 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        ticket_subject = call.get_variable("ticket_subject")
         call.set_task(
             "save_results",
             objective=(
                 f"Collect CSAT feedback from {customer_name} regarding their recently "
-                f"resolved ticket {call.ticket_subject}."
+                f"resolved ticket {ticket_subject}."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Taylor calling from Clearline Software. "
                     f"I'm following up on your recently resolved support ticket regarding "
-                    f"{call.ticket_subject}. I have just a couple of quick questions — "
+                    f"{ticket_subject}. I have just a couple of quick questions — "
                     "this will only take about a minute."
                 ),
                 guava.Field(

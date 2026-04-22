@@ -43,9 +43,9 @@ def on_call_start(call: guava.Call) -> None:
     # Pre-call: fetch the shipment to get carrier and tracking details.
     # This lets the agent give the customer their tracking info if they haven't received
     # the package yet, rather than asking them to look it up themselves.
-    call.tracking_number = ""
-    call.carrier_code = ""
-    call.tracking_url = ""
+    call.set_variable("tracking_number", "")
+    call.set_variable("carrier_code", "")
+    call.set_variable("tracking_url", "")
     try:
         resp = requests.get(
             f"{BASE_URL}/shipments",
@@ -57,15 +57,17 @@ def on_call_start(call: guava.Call) -> None:
         shipments = resp.json().get("shipments", [])
         if shipments:
             shipment = shipments[0]
-            call.tracking_number = shipment.get("trackingNumber", "")
-            call.carrier_code = shipment.get("carrierCode", "")
-            if call.tracking_number and call.carrier_code:
-                call.tracking_url = get_tracking_url(call.carrier_code, call.tracking_number)
+            tracking_number = shipment.get("trackingNumber", "")
+            carrier_code = shipment.get("carrierCode", "")
+            call.set_variable("tracking_number", tracking_number)
+            call.set_variable("carrier_code", carrier_code)
+            if tracking_number and carrier_code:
+                call.set_variable("tracking_url", get_tracking_url(carrier_code, tracking_number))
             logging.info(
                 "Pre-call: shipment %s — carrier: %s, tracking: %s",
                 shipment_id,
-                call.carrier_code,
-                call.tracking_number,
+                carrier_code,
+                tracking_number,
             )
     except Exception as e:
         logging.error("Failed to fetch shipment %s pre-call: %s", shipment_id, e)
@@ -168,14 +170,17 @@ def on_done(call: guava.Call) -> None:
         return
 
     if "no" in delivery_status.lower() or "haven't" in delivery_status.lower():
-        carrier_display = call.carrier_code.upper().replace("_", " ") if call.carrier_code else "the carrier"
+        carrier_code = call.get_variable("carrier_code", "")
+        tracking_number = call.get_variable("tracking_number", "")
+        tracking_url = call.get_variable("tracking_url", "")
+        carrier_display = carrier_code.upper().replace("_", " ") if carrier_code else "the carrier"
         tracking_part = ""
-        if call.tracking_number:
+        if tracking_number:
             tracking_part = (
-                f" Your tracking number with {carrier_display} is {call.tracking_number}."
+                f" Your tracking number with {carrier_display} is {tracking_number}."
             )
-            if call.tracking_url:
-                tracking_part += f" You can check the latest status at: {call.tracking_url}"
+            if tracking_url:
+                tracking_part += f" You can check the latest status at: {tracking_url}"
 
         call.hangup(
             final_instructions=(

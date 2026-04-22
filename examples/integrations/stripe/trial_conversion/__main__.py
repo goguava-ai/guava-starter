@@ -84,7 +84,7 @@ def on_call_start(call: guava.Call) -> None:
 
             trial_end = sub.get("trial_end")
             if trial_end:
-                trial_dt = datetime.utcfromtimestamp(trial_end)
+                trial_dt = datetime.fromtimestamp(trial_end, tz=timezone.utc)
                 trial_end_date = trial_dt.strftime("%B %d, %Y")
                 days_remaining = max(0, (trial_dt - datetime.now(timezone.utc)).days)
 
@@ -102,11 +102,11 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch trial subscription for %s: %s", customer_id, e)
 
-    call.sub_id = sub_id
-    call.plan_name = plan_name
-    call.trial_end_date = trial_end_date
-    call.days_remaining = days_remaining
-    call.billing_amount_str = billing_amount_str
+    call.set_variable("sub_id", sub_id)
+    call.set_variable("plan_name", plan_name)
+    call.set_variable("trial_end_date", trial_end_date)
+    call.set_variable("days_remaining", days_remaining)
+    call.set_variable("billing_amount_str", billing_amount_str)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -120,13 +120,17 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a brief voicemail for {customer_name} on behalf of Luminary. "
-                f"Let them know their trial ends on {call.trial_end_date or 'soon'} and you wanted "
+                f"Let them know their trial ends on {call.get_variable('trial_end_date') or 'soon'} and you wanted "
                 "to check in before then. Let them know we'll send an email as well. "
                 "Keep it brief, warm, and low-pressure."
             )
         )
     elif outcome == "available":
-        if not call.sub_id:
+        sub_id = call.get_variable("sub_id")
+        trial_end_date = call.get_variable("trial_end_date")
+        days_remaining = call.get_variable("days_remaining") or 0
+        billing_amount_str = call.get_variable("billing_amount_str") or ""
+        if not sub_id:
             logging.info("No trialing subscription found for customer %s", call.get_variable("customer_id"))
             call.hangup(
                 final_instructions=(
@@ -139,23 +143,23 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             return
 
         days_note = (
-            f"just {call.days_remaining} day{'s' if call.days_remaining != 1 else ''}"
-            if call.days_remaining > 0
+            f"just {days_remaining} day{'s' if days_remaining != 1 else ''}"
+            if days_remaining > 0
             else "very soon"
         )
-        billing_note = f" at {call.billing_amount_str}" if call.billing_amount_str else ""
+        billing_note = f" at {billing_amount_str}" if billing_amount_str else ""
 
         call.set_task(
             "handle_decision",
             objective=(
                 f"Check in with {customer_name} about their Luminary trial, which ends "
-                f"on {call.trial_end_date} ({days_note} away). "
+                f"on {trial_end_date} ({days_note} away). "
                 "Understand how the trial went, answer questions, and convert them to paid if ready."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Jordan calling from Luminary. "
-                    f"I'm reaching out because your trial is coming to an end on {call.trial_end_date} "
+                    f"I'm reaching out because your trial is coming to an end on {trial_end_date} "
                     f"— just {days_note} away. I wanted to check in personally and see how "
                     "things are going."
                 ),
@@ -216,8 +220,13 @@ def handle_decision(call: guava.Call) -> None:
         customer_id, experience, decision,
     )
 
+    sub_id = call.get_variable("sub_id")
+    trial_end_date = call.get_variable("trial_end_date")
+    days_remaining = call.get_variable("days_remaining") or 0
+    billing_amount_str = call.get_variable("billing_amount_str") or ""
+
     if "convert now" in decision:
-        if not call.sub_id:
+        if not sub_id:
             call.hangup(
                 final_instructions=(
                     "Apologize for a technical issue and let them know a specialist "
@@ -226,20 +235,20 @@ def handle_decision(call: guava.Call) -> None:
             )
             return
         try:
-            convert_trial_to_paid(call.sub_id)
-            logging.info("Trial converted to paid for subscription %s", call.sub_id)
+            convert_trial_to_paid(sub_id)
+            logging.info("Trial converted to paid for subscription %s", sub_id)
             call.hangup(
                 final_instructions=(
                     f"Congratulate {customer_name} and let them know their subscription "
                     f"is now active — the trial has been converted to a paid plan. "
-                    + (f"They'll be billed {call.billing_amount_str} starting today. " if call.billing_amount_str else "")
+                    + (f"They'll be billed {billing_amount_str} starting today. " if billing_amount_str else "")
                     + "Thank them enthusiastically for choosing Luminary. "
                     "Let them know our team is always here if they need help getting the most "
                     "out of the product. Wish them a great day."
                 )
             )
         except Exception as e:
-            logging.error("Failed to convert trial for sub %s: %s", call.sub_id, e)
+            logging.error("Failed to convert trial for sub %s: %s", sub_id, e)
             call.hangup(
                 final_instructions=(
                     "Apologize for a technical issue and let them know their conversion "
@@ -251,8 +260,8 @@ def handle_decision(call: guava.Call) -> None:
         call.hangup(
             final_instructions=(
                 f"Thank {customer_name} for their enthusiasm. "
-                f"Let them know their subscription will automatically activate on {call.trial_end_date} "
-                + (f"and they'll be billed {call.billing_amount_str} at that time. " if call.billing_amount_str else ". ")
+                f"Let them know their subscription will automatically activate on {trial_end_date} "
+                + (f"and they'll be billed {billing_amount_str} at that time. " if billing_amount_str else ". ")
                 + "Let them know they'll receive a confirmation email. "
                 "Thank them for choosing Luminary and wish them a great day."
             )
@@ -261,13 +270,13 @@ def handle_decision(call: guava.Call) -> None:
     elif "extend" in decision:
         # Extend by 7 days
         import time
-        current_trial_end = int(time.time()) + (call.days_remaining * 86400)
+        current_trial_end = int(time.time()) + (days_remaining * 86400)
         new_trial_end = current_trial_end + (7 * 86400)
         try:
-            if call.sub_id:
-                extend_trial(call.sub_id, new_trial_end)
-                new_end_date = datetime.utcfromtimestamp(new_trial_end).strftime("%B %d, %Y")
-                logging.info("Trial extended for sub %s to %s", call.sub_id, new_end_date)
+            if sub_id:
+                extend_trial(sub_id, new_trial_end)
+                new_end_date = datetime.fromtimestamp(new_trial_end, tz=timezone.utc).strftime("%B %d, %Y")
+                logging.info("Trial extended for sub %s to %s", sub_id, new_end_date)
                 call.hangup(
                     final_instructions=(
                         f"Let {customer_name} know their trial has been extended by 7 days "

@@ -74,7 +74,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load invoice %s: %s", invoice_id, e)
 
-    call.invoice = invoice
+    call.set_variable("invoice", invoice)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -94,7 +94,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if not call.invoice:
+        invoice = call.get_variable("invoice")
+        if not invoice:
             call.hangup(
                 final_instructions=(
                     f"Let {customer_name} know you're calling from Harbor Market about an "
@@ -104,7 +105,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             return
 
-        status = call.invoice.get("status", "UNKNOWN")
+        status = invoice.get("status", "UNKNOWN")
         if status == "PAID":
             logging.info("Invoice %s is already paid.", invoice_id)
             call.hangup(
@@ -116,13 +117,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             return
 
-        payment_requests = call.invoice.get("payment_requests", [])
+        payment_requests = invoice.get("payment_requests", [])
         amount_str = ""
         if payment_requests:
             computed_amount = payment_requests[0].get("computed_amount_money", {})
             amount_str = format_amount(computed_amount) if computed_amount else ""
-        due_date = call.invoice.get("payment_requests", [{}])[0].get("due_date", "") if payment_requests else ""
-        invoice_number = call.invoice.get("invoice_number", invoice_id)
+        due_date = invoice.get("payment_requests", [{}])[0].get("due_date", "") if payment_requests else ""
+        invoice_number = invoice.get("invoice_number", invoice_id)
 
         call.set_task(
             "handle_intent",
@@ -166,8 +167,9 @@ def handle_intent(call: guava.Call) -> None:
     intent = call.get_field("payment_intent") or ""
 
     # Reconstruct invoice_number and amount_str from stored invoice
-    invoice_number = call.invoice.get("invoice_number", invoice_id) if call.invoice else invoice_id
-    payment_requests = call.invoice.get("payment_requests", []) if call.invoice else []
+    invoice = call.get_variable("invoice")
+    invoice_number = invoice.get("invoice_number", invoice_id) if invoice else invoice_id
+    payment_requests = invoice.get("payment_requests", []) if invoice else []
     amount_str = ""
     if payment_requests:
         computed_amount = payment_requests[0].get("computed_amount_money", {})
@@ -190,7 +192,7 @@ def handle_intent(call: guava.Call) -> None:
     if "resend" in intent or "didn't receive" in aware:
         published = None
         try:
-            version = call.invoice.get("version", 0) if call.invoice else 0
+            version = invoice.get("version", 0) if invoice else 0
             published = publish_invoice(invoice_id, version)
             logging.info("Invoice %s republished: %s", invoice_id, bool(published))
         except Exception as e:

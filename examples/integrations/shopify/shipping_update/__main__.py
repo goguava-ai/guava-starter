@@ -51,18 +51,19 @@ def on_call_start(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     order_id = int(call.get_variable("order_id"))
 
-    call.order = None
-    call.tracking = []
+    call.set_variable("order", None)
+    call.set_variable("tracking", [])
     try:
-        call.order = get_order(order_id)
-        if call.order:
-            call.tracking = get_fulfillment_tracking(call.order)
+        order_data = get_order(order_id)
+        call.set_variable("order", order_data)
+        if order_data:
+            call.set_variable("tracking", get_fulfillment_tracking(order_data))
         logging.info("Loaded order %s for shipping update", order_id)
     except Exception as e:
         logging.error("Failed to load order: %s", e)
 
-    order = call.order
-    tracking = call.tracking
+    order = call.get_variable("order")
+    tracking = call.get_variable("tracking")
 
     if order and tracking:
         t = tracking[0]
@@ -86,8 +87,8 @@ def on_call_start(call: guava.Call) -> None:
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     customer_name = call.get_variable("customer_name")
     order_id = call.get_variable("order_id")
-    order = call.order
-    tracking = call.tracking
+    order = call.get_variable("order")
+    tracking = call.get_variable("tracking")
 
     if order and tracking:
         t = tracking[0]
@@ -147,8 +148,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def on_done(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     order_id = call.get_variable("order_id")
-    order = call.order
-    tracking = call.tracking
+    order = call.get_variable("order")
+    tracking = call.get_variable("tracking")
 
     issue = call.get_field("issue") or "all good"
     questions = call.get_field("questions") or ""

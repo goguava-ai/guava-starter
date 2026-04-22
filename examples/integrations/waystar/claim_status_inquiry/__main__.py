@@ -33,7 +33,7 @@ def get_claim_status(
     patient_last_name: str,
     patient_dob: str,
     service_date: str,
-    claim_number: str = None,
+    claim_number: str | None = None,
 ) -> dict:
     """Queries Waystar for claim status. Claim number is optional if lookup is by member + service date."""
     token = get_access_token()

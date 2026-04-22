@@ -101,9 +101,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Insurance discovery submission failed: %s", e)
 
-    call.discovery_result = discovery_result
-    call.confirmed_payer = ""
-    call.confirmed_plan_details = ""
+    call.set_variable("discovery_result", discovery_result)
+    call.set_variable("confirmed_payer", "")
+    call.set_variable("confirmed_plan_details", "")
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -123,7 +123,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if not call.discovery_result:
+        if not call.get_variable("discovery_result"):
             # Discovery didn't complete in time — ask the patient for their info directly
             call.set_task(
                 "save_insurance_info",
@@ -160,7 +160,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             return
 
-        plans = call.discovery_result.get("insurancePlans", [])
+        plans = (call.get_variable("discovery_result") or {}).get("insurancePlans", [])
 
         if not plans:
             call.set_task(
@@ -195,12 +195,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         member_id = plan.get("memberId", "")
         group_number = plan.get("groupNumber", "")
 
-        call.confirmed_payer = payer_name
-        call.confirmed_plan_details = payer_name
+        confirmed_plan_details = payer_name
         if member_id:
-            call.confirmed_plan_details += f", member ID {member_id}"
+            confirmed_plan_details += f", member ID {member_id}"
         if group_number:
-            call.confirmed_plan_details += f", group {group_number}"
+            confirmed_plan_details += f", group {group_number}"
+        call.set_variable("confirmed_payer", payer_name)
+        call.set_variable("confirmed_plan_details", confirmed_plan_details)
 
         member_note = f" with member ID {member_id}" if member_id else ""
 
@@ -235,11 +236,11 @@ def finalize_confirmation(call: guava.Call) -> None:
     confirmed = call.get_field("plan_confirmed") or ""
     if "yes" in confirmed.lower():
         logging.info(
-            "Patient confirmed coverage: %s", call.confirmed_plan_details
+            "Patient confirmed coverage: %s", call.get_variable("confirmed_plan_details")
         )
         call.hangup(
             final_instructions=(
-                f"Let {patient_name} know their {call.confirmed_payer} coverage "
+                f"Let {patient_name} know their {call.get_variable('confirmed_payer')} coverage "
                 "is confirmed and we'll have it ready at check-in. "
                 "Remind them to bring their insurance card. "
                 "Thank them for their time and wish them well."

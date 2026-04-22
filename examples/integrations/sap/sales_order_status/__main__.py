@@ -24,7 +24,7 @@ def get_access_token() -> str:
     return resp.json()["access_token"]
 
 
-def find_sales_orders(sold_to_party: str = None, order_id: str = None) -> list:
+def find_sales_orders(sold_to_party: str | None = None, order_id: str | None = None) -> list:
     """Queries the SAP Sales Order OData API by customer number or order ID."""
     token = get_access_token()
     headers = {

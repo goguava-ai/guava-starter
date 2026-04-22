@@ -25,7 +25,7 @@ BASE_URL = f"https://{SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2"
 
 def execute_statement(statement: str, bindings: dict | None = None) -> dict:
     """Executes a SQL statement against Snowflake and returns the raw response."""
-    payload = {
+    payload: dict[str, object] = {
         "statement": statement,
         "database": SNOWFLAKE_DATABASE,
         "schema": SNOWFLAKE_SCHEMA,
@@ -101,11 +101,11 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch query result for query %s: %s", query_id, e)
 
-    call.query_name = query_name
-    call.row_count = row_count
-    call.status = status
-    call.completion_time = completion_time
-    call.summary_text = summary_text
+    call.set_variable("query_name", query_name)
+    call.set_variable("row_count", row_count)
+    call.set_variable("status", status)
+    call.set_variable("completion_time", completion_time)
+    call.set_variable("summary_text", summary_text)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -115,6 +115,12 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     query_id = call.get_variable("query_id")
     contact_name = call.get_variable("contact_name")
 
+    query_name = call.get_variable("query_name", "")
+    row_count = call.get_variable("row_count", 0)
+    status = call.get_variable("status", "")
+    completion_time = call.get_variable("completion_time", "")
+    summary_text = call.get_variable("summary_text", "")
+
     if outcome == "unavailable":
         logging.info(
             "Unable to reach %s for query result delivery of query %s",
@@ -123,28 +129,28 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a brief voicemail for {contact_name} from Meridian Analytics. "
-                f"Let them know their scheduled query '{call.query_name}' has completed "
+                f"Let them know their scheduled query '{query_name}' has completed "
                 f"and the results are ready in their dashboard. "
                 "Keep the message short and professional."
             )
         )
     elif outcome == "available":
-        has_summary = bool(call.summary_text and call.summary_text.strip())
+        has_summary = bool(summary_text and summary_text.strip())
 
         call.set_task(
             "wrap_up",
             objective=(
-                f"Deliver the results of the completed Snowflake query '{call.query_name}' "
+                f"Deliver the results of the completed Snowflake query '{query_name}' "
                 f"to {contact_name} and confirm they have what they need."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {contact_name}, this is Morgan calling from Meridian Analytics. "
-                    f"I'm calling to let you know that your scheduled query '{call.query_name}' "
-                    f"has finished running. It completed at {call.completion_time} with a status "
-                    f"of '{call.status}' and returned {call.row_count} rows."
+                    f"I'm calling to let you know that your scheduled query '{query_name}' "
+                    f"has finished running. It completed at {completion_time} with a status "
+                    f"of '{status}' and returned {row_count} rows."
                     + (
-                        f" Here's a summary of the results: {call.summary_text}"
+                        f" Here's a summary of the results: {summary_text}"
                         if has_summary
                         else " The full results are available in your Meridian Analytics dashboard."
                     )

@@ -66,16 +66,16 @@ def on_call_start(call: guava.Call) -> None:
     order_number = call.get_variable("order_number")
 
     try:
-        call.shipment = fetch_shipment_by_order_number(order_number)
+        call.set_variable("shipment", fetch_shipment_by_order_number(order_number))
     except Exception as e:
         logging.error("Pre-fetch shipment failed: %s", e)
-        call.shipment = None
+        call.set_variable("shipment", None)
 
     try:
-        call.order = fetch_order_by_number(order_number)
+        call.set_variable("order", fetch_order_by_number(order_number))
     except Exception as e:
         logging.error("Pre-fetch order failed: %s", e)
-        call.order = None
+        call.set_variable("order", None)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -97,8 +97,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        tracking_number = call.shipment.get("trackingNumber", "unknown") if call.shipment else "unknown"
-        carrier_code = call.shipment.get("carrierCode", "the carrier") if call.shipment else "the carrier"
+        shipment = call.get_variable("shipment")
+        tracking_number = shipment.get("trackingNumber", "unknown") if shipment else "unknown"
+        carrier_code = shipment.get("carrierCode", "the carrier") if shipment else "the carrier"
 
         call.set_task(
             "handle_outcome",
@@ -153,9 +154,10 @@ def on_done(call: guava.Call) -> None:
     resolution = call.get_field("resolution_preference")
     instructions = call.get_field("updated_instructions") or "No additional instructions provided."
 
-    if call.order:
-        order_id = call.order.get("orderId")
-        existing_notes = call.order.get("internalNotes", "") or ""
+    order = call.get_variable("order")
+    if order:
+        order_id = order.get("orderId")
+        existing_notes = order.get("internalNotes", "") or ""
         note = (
             f"[DELIVERY EXCEPTION] Reason: {exception_reason}. "
             f"Customer resolution preference: {resolution}. "

@@ -3,7 +3,7 @@ import os
 import logging
 from guava import logging_utils
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
@@ -193,7 +193,7 @@ def process_cancellation(call: guava.Call) -> None:
     sub_id = sub["id"]
     period_end = sub.get("current_period_end")
     end_date = (
-        datetime.utcfromtimestamp(period_end).strftime("%B %d, %Y")
+        datetime.fromtimestamp(period_end, tz=timezone.utc).strftime("%B %d, %Y")
         if period_end
         else "the end of your current billing period"
     )

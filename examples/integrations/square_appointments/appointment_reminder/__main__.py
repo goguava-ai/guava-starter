@@ -92,9 +92,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch booking %s: %s", booking_id, e)
 
-    call.booking = booking
-    call.readable_start = readable_start
-    call.service_description = service_description
+    call.set_variable("booking", booking)
+    call.set_variable("readable_start", readable_start)
+    call.set_variable("service_description", service_description)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -104,6 +104,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     booking_id = call.get_variable("booking_id")
     customer_name = call.get_variable("customer_name")
 
+    service_description = call.get_variable("service_description")
+    readable_start = call.get_variable("readable_start")
+
     if outcome == "unavailable":
         logging.info(
             "Unable to reach %s for appointment reminder (booking %s).",
@@ -112,8 +115,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a brief, friendly voicemail for {customer_name} from Crestwood Wellness. "
-                f"Let them know you're calling as a reminder about {call.service_description} on "
-                f"{call.readable_start}. Ask them to call back at their earliest convenience "
+                f"Let them know you're calling as a reminder about {service_description} on "
+                f"{readable_start}. Ask them to call back at their earliest convenience "
                 "if they need to make any changes. Keep the message concise and professional."
             )
         )
@@ -121,15 +124,15 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.set_task(
             "save_results",
             objective=(
-                f"Remind {customer_name} of {call.service_description} at Crestwood Wellness "
-                f"scheduled for {call.readable_start}. Confirm whether they'll be attending, "
+                f"Remind {customer_name} of {service_description} at Crestwood Wellness "
+                f"scheduled for {readable_start}. Confirm whether they'll be attending, "
                 "and handle any cancellation or reschedule requests."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Morgan calling from Crestwood Wellness. "
-                    f"I'm reaching out as a friendly reminder about {call.service_description} "
-                    f"we have scheduled for you on {call.readable_start}."
+                    f"I'm reaching out as a friendly reminder about {service_description} "
+                    f"we have scheduled for you on {readable_start}."
                 ),
                 guava.Field(
                     key="confirmation",
@@ -162,6 +165,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def save_results(call: guava.Call) -> None:
     booking_id = call.get_variable("booking_id")
     customer_name = call.get_variable("customer_name")
+    readable_start = call.get_variable("readable_start")
     confirmation = call.get_field("confirmation") or ""
     has_questions = call.get_field("has_questions") or "no"
     special_requests = call.get_field("special_requests") or ""
@@ -173,9 +177,10 @@ def save_results(call: guava.Call) -> None:
 
     if confirmation == "need-to-cancel":
         cancelled = None
-        if call.booking:
+        booking = call.get_variable("booking")
+        if booking:
             try:
-                booking_version = call.booking.get("version", 0)
+                booking_version = booking.get("version", 0)
                 cancelled = cancel_booking(booking_id, booking_version)
                 logging.info(
                     "Booking %s cancelled via reminder call, status=%s",
@@ -187,7 +192,7 @@ def save_results(call: guava.Call) -> None:
         if cancelled and "CANCELLED" in cancelled.get("status", ""):
             call.hangup(
                 final_instructions=(
-                    f"Let {customer_name} know their appointment on {call.readable_start} "
+                    f"Let {customer_name} know their appointment on {readable_start} "
                     "has been cancelled. Let them know they're welcome to call back any time to rebook. "
                     "Thank them and wish them a great day."
                 )
@@ -196,7 +201,7 @@ def save_results(call: guava.Call) -> None:
             call.hangup(
                 final_instructions=(
                     f"Let {customer_name} know you've noted their wish to cancel the appointment "
-                    f"on {call.readable_start}. Let them know our team will follow up to confirm "
+                    f"on {readable_start}. Let them know our team will follow up to confirm "
                     "the cancellation by email. Thank them for letting us know."
                 )
             )
@@ -204,7 +209,7 @@ def save_results(call: guava.Call) -> None:
     elif confirmation == "need-to-reschedule":
         call.hangup(
             final_instructions=(
-                f"Let {customer_name} know you've noted they need to reschedule from {call.readable_start}. "
+                f"Let {customer_name} know you've noted they need to reschedule from {readable_start}. "
                 "Ask them to call us back at their convenience or visit CreswoodWellness.com "
                 "to pick a new time. Thank them and wish them a great day."
             )
@@ -221,7 +226,7 @@ def save_results(call: guava.Call) -> None:
 
         call.hangup(
             final_instructions=(
-                f"Thank {customer_name} for confirming their appointment on {call.readable_start} "
+                f"Thank {customer_name} for confirming their appointment on {readable_start} "
                 f"at Crestwood Wellness.{questions_note} "
                 "Let them know we look forward to seeing them and wish them a wonderful day."
             )

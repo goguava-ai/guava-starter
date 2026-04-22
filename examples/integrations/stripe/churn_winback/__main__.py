@@ -84,12 +84,12 @@ def on_call_start(call: guava.Call) -> None:
                 plan_name = price.get("nickname") or price.get("id") or plan_name
             ended_at = sub.get("ended_at")
             if ended_at:
-                canceled_date = datetime.utcfromtimestamp(ended_at).strftime("%B %d, %Y")
+                canceled_date = datetime.fromtimestamp(ended_at, tz=timezone.utc).strftime("%B %d, %Y")
     except Exception as e:
         logging.error("Failed to fetch canceled subscriptions for %s: %s", customer_id, e)
 
-    call.plan_name = plan_name
-    call.canceled_date = canceled_date
+    call.set_variable("plan_name", plan_name)
+    call.set_variable("canceled_date", canceled_date)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -108,13 +108,15 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        date_note = f" on {call.canceled_date}" if call.canceled_date else " recently"
+        canceled_date = call.get_variable("canceled_date")
+        plan_name = call.get_variable("plan_name")
+        date_note = f" on {canceled_date}" if canceled_date else " recently"
 
         call.set_task(
             "record_and_close",
             objective=(
                 f"Reconnect with {customer_name}, a former Luminary customer who canceled "
-                f"'{call.plan_name}'{date_note}. "
+                f"'{plan_name}'{date_note}. "
                 "Understand why they left and gauge their interest in returning."
             ),
             checklist=[

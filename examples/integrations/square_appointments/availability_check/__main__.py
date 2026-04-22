@@ -267,7 +267,7 @@ def check_availability(call: guava.Call) -> None:
     slot_descriptions = [format_slot(s) for s in available_slots]
     slots_text = "; ".join(slot_descriptions)
 
-    call.available_slots = available_slots
+    call.set_variable("available_slots", available_slots)
 
     # Ask if they want to book now
     call.set_task(
@@ -328,7 +328,7 @@ def handle_booking_decision(call: guava.Call) -> None:
         )
         return
 
-    available_slots = call.available_slots
+    available_slots = call.get_variable("available_slots")
 
     # Pick the slot — try to match their text choice, otherwise use the first
     chosen = available_slots[0] if available_slots else None

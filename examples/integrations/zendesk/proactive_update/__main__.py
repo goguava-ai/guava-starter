@@ -90,9 +90,9 @@ def on_call_start(call: guava.Call) -> None:
     ticket_id = call.get_variable("ticket_id")
     customer_name = call.get_variable("customer_name")
 
-    call.ticket_subject = "your support request"
-    call.ticket_status = "open"
-    call.latest_agent_comment = ""
+    ticket_subject = "your support request"
+    ticket_status = "open"
+    latest_agent_comment = ""
 
     # Pre-call: fetch the ticket and its most recent public comment.
     # This gives the agent enough context to relay a specific update rather than
@@ -100,18 +100,22 @@ def on_call_start(call: guava.Call) -> None:
     try:
         ticket, public_comments = get_ticket_with_comments(ticket_id)
         if ticket:
-            call.ticket_status = ticket.get("status", "open")
+            ticket_status = ticket.get("status", "open")
             if ticket.get("subject"):
-                call.ticket_subject = f"'{ticket['subject']}'"
+                ticket_subject = f"'{ticket['subject']}'"
 
         # Find the most recent comment not authored by the requester (i.e., from an agent).
         requester_id = ticket.get("requester_id") if ticket else None
         for comment in public_comments:
             if comment.get("author_id") != requester_id:
-                call.latest_agent_comment = comment.get("body", "")
+                latest_agent_comment = comment.get("body", "")
                 break
     except Exception as e:
         logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
+
+    call.set_variable("ticket_subject", ticket_subject)
+    call.set_variable("ticket_status", ticket_status)
+    call.set_variable("latest_agent_comment", latest_agent_comment)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -139,7 +143,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a brief voicemail for {customer_name} on behalf of Horizon Software. "
-                f"Let them know you're calling with an update on {call.ticket_subject} and ask "
+                f"Let them know you're calling with an update on {call.get_variable('ticket_subject')} and ask "
                 "them to check their email for full details. Provide a callback number and "
                 "let them know our team is available Monday through Friday, 9am to 6pm Eastern."
             )
@@ -149,13 +153,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             "wrap_up",
             objective=(
                 f"Deliver a support ticket update to {customer_name} regarding "
-                f"{call.ticket_subject} and confirm they received the information."
+                f"{call.get_variable('ticket_subject')} and confirm they received the information."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Morgan calling from Horizon Software. "
                     f"I'm calling with an update on your support ticket regarding "
-                    f"{call.ticket_subject}."
+                    f"{call.get_variable('ticket_subject')}."
                 ),
                 guava.Say(update_summary),
                 guava.Field(
@@ -196,12 +200,13 @@ def on_done(call: guava.Call) -> None:
     ticket_id = call.get_variable("ticket_id")
     has_questions = call.get_field("has_questions") or "no"
     question_detail = call.get_field("question_detail") or ""
-    is_resolved = call.ticket_status in ("solved", "closed")
+    ticket_status = call.get_variable("ticket_status") or "open"
+    is_resolved = ticket_status in ("solved", "closed")
 
     outcome_parts = ["Customer reached and update delivered."]
     if has_questions == "yes" and question_detail:
         outcome_parts.append(f"Customer question: {question_detail}")
-    outcome_parts.append(f"Ticket status at time of call: {call.ticket_status}.")
+    outcome_parts.append(f"Ticket status at time of call: {ticket_status}.")
 
     outcome = " ".join(outcome_parts)
     logging.info("Proactive update call complete for ticket #%s — %s", ticket_id, outcome)

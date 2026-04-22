@@ -73,8 +73,8 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch invoices for %s pre-call: %s", customer_id, e)
 
-    call.invoices = invoices
-    call.total_owed_str = total_owed_str
+    call.set_variable("invoices", invoices)
+    call.set_variable("total_owed_str", total_owed_str)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -95,7 +95,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if not call.invoices:
+        invoices = call.get_variable("invoices") or []
+        total_owed_str = call.get_variable("total_owed_str") or ""
+        if not invoices:
             logging.info("No open invoices found for customer %s — call unnecessary", customer_id)
             call.hangup(
                 final_instructions=(
@@ -106,8 +108,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             return
 
-        invoice_count = len(call.invoices)
-        amount_note = f" totaling {call.total_owed_str}" if call.total_owed_str else ""
+        invoice_count = len(invoices)
+        amount_note = f" totaling {total_owed_str}" if total_owed_str else ""
 
         call.set_task(
             "handle_outcome",
@@ -179,8 +181,9 @@ def handle_outcome(call: guava.Call) -> None:
 
     if "retry" in updated_payment:
         # Attempt to pay all open invoices
+        invoices = call.get_variable("invoices") or []
         success_count = 0
-        for invoice in call.invoices:
+        for invoice in invoices:
             try:
                 pay_invoice(invoice["id"])
                 success_count += 1
@@ -188,7 +191,7 @@ def handle_outcome(call: guava.Call) -> None:
             except Exception as e:
                 logging.error("Failed to pay invoice %s: %s", invoice["id"], e)
 
-        if success_count == len(call.invoices):
+        if success_count == len(invoices):
             call.hangup(
                 final_instructions=(
                     f"Let {customer_name} know their payment was collected successfully — "

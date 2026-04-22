@@ -100,8 +100,8 @@ def on_call_start(call: guava.Call) -> None:
         logging.error("Pre-call eligibility check failed for %s: %s", patient_name, e)
         eligibility_active = None
 
-    call.eligibility_active = eligibility_active
-    call.plan_name = plan_name
+    call.set_variable("eligibility_active", eligibility_active)
+    call.set_variable("plan_name", plan_name)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -115,9 +115,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         logging.info(
             "Unable to reach %s for pre-appointment eligibility", patient_name
         )
-        if call.eligibility_active is True:
+        eligibility_active = call.get_variable("eligibility_active")
+        if eligibility_active is True:
             coverage_note = "their coverage looks good and no action is needed"
-        elif call.eligibility_active is False:
+        elif eligibility_active is False:
             coverage_note = (
                 "there may be an issue with their insurance coverage — they should "
                 "bring an updated card or contact their insurer before the visit"
@@ -134,18 +135,20 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if call.eligibility_active is True:
+        eligibility_active = call.get_variable("eligibility_active")
+        plan_name = call.get_variable("plan_name")
+        if eligibility_active is True:
             call.hangup(
                 final_instructions=(
                     f"Greet {patient_name} warmly. Let them know you're calling from "
                     f"Ridgeline Health about their appointment on {appointment_date}. "
-                    f"Tell them you've verified their {call.plan_name} coverage and everything "
+                    f"Tell them you've verified their {plan_name} coverage and everything "
                     "looks good — no action needed. Remind them to bring their insurance card "
                     "and a photo ID, and to arrive 10 minutes early. Wish them a great visit."
                 )
             )
 
-        elif call.eligibility_active is False:
+        elif eligibility_active is False:
             call.set_task(
                 "handle_inactive_coverage",
                 objective=(
@@ -157,7 +160,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                         f"Hi {patient_name}, this is Riley calling from Ridgeline Health. "
                         f"I'm reaching out ahead of your appointment on {appointment_date}. "
                         "When we verified your insurance today, we weren't able to confirm active "
-                        f"coverage under {call.plan_name}. I wanted to give you a heads-up so "
+                        f"coverage under {plan_name}. I wanted to give you a heads-up so "
                         "there are no surprises at check-in."
                     ),
                     guava.Field(

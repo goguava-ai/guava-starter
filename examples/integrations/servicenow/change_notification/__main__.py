@@ -82,10 +82,11 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     if outcome == "unavailable":
         logging.info("Unable to reach %s for change notification %s.", contact_name, change_number)
 
-        if call.change_sys_id:
+        change_sys_id = call.get_variable("change_sys_id", "")
+        if change_sys_id:
             try:
                 add_work_note(
-                    call.change_sys_id,
+                    change_sys_id,
                     f"Change notification attempted — {contact_name} unavailable, voicemail left. "
                     f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
                 )
@@ -174,9 +175,10 @@ def on_done(call: guava.Call) -> None:
         contact_name, acknowledged, reschedule,
     )
 
-    if call.change_sys_id:
+    change_sys_id = call.get_variable("change_sys_id", "")
+    if change_sys_id:
         try:
-            add_work_note(call.change_sys_id, "\n".join(note_lines))
+            add_work_note(change_sys_id, "\n".join(note_lines))
             logging.info("Work note added to change request %s.", change_number)
         except Exception as e:
             logging.error("Failed to add work note to change %s: %s", change_number, e)

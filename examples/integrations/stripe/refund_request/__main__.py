@@ -3,7 +3,7 @@ import os
 import logging
 from guava import logging_utils
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
@@ -53,7 +53,7 @@ def format_charge(charge: dict) -> str:
     amount = charge.get("amount", 0) / 100
     currency = charge.get("currency", "usd").upper()
     description = charge.get("description") or charge.get("statement_descriptor") or "charge"
-    created = datetime.utcfromtimestamp(charge["created"]).strftime("%B %d, %Y")
+    created = datetime.fromtimestamp(charge["created"], tz=timezone.utc).strftime("%B %d, %Y")
     return f"${amount:,.2f} {currency} on {created} for '{description}'"
 
 

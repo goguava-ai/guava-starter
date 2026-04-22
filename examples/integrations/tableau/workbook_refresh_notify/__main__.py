@@ -59,23 +59,27 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
 
     # Fetch workbook details before the call
-    call.workbook_name = "your workbook"
-    call.updated_display = "recently"
-    call.size_display = ""
+    workbook_name = "your workbook"
+    updated_display = "recently"
+    size_display = ""
 
     try:
         workbook = get_workbook(workbook_id)
-        call.workbook_name = workbook.get("name", call.workbook_name)
+        workbook_name = workbook.get("name", workbook_name)
         updated_at_str = workbook.get("updatedAt", "")
         if updated_at_str:
             updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-            call.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
+            updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
         size_bytes = workbook.get("size")
         if size_bytes is not None:
             size_mb = int(size_bytes) / (1024 * 1024)
-            call.size_display = f"{size_mb:.1f} MB"
+            size_display = f"{size_mb:.1f} MB"
     except Exception as e:
         logging.error("Failed to fetch workbook %s pre-call: %s", workbook_id, e)
+
+    call.set_variable("workbook_name", workbook_name)
+    call.set_variable("updated_display", updated_display)
+    call.set_variable("size_display", size_display)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -86,6 +90,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     workbook_id = call.get_variable("workbook_id")
     refresh_status = call.get_variable("refresh_status")
 
+    workbook_name = call.get_variable("workbook_name")
+    updated_display = call.get_variable("updated_display")
+    size_display = call.get_variable("size_display") or ""
+
     if outcome == "unavailable":
         logging.info(
             "Unable to reach %s for workbook refresh notification on workbook %s",
@@ -95,7 +103,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a brief voicemail for {contact_name} on behalf of Vertex Analytics. "
-                f"Let them know the refresh for the Tableau workbook '{call.workbook_name}' has "
+                f"Let them know the refresh for the Tableau workbook '{workbook_name}' has "
                 f"{status_word} and ask them to reach out to the analytics team if they have "
                 "any questions. Keep it concise and professional."
             )
@@ -104,15 +112,15 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         if refresh_status == "completed":
             status_message = (
                 f"I'm calling to let you know that the refresh for your Tableau workbook "
-                f"'{call.workbook_name}' has completed successfully. "
-                f"It was last updated on {call.updated_display}."
+                f"'{workbook_name}' has completed successfully. "
+                f"It was last updated on {updated_display}."
             )
-            if call.size_display:
-                status_message += f" The workbook is currently {call.size_display}."
+            if size_display:
+                status_message += f" The workbook is currently {size_display}."
         else:
             status_message = (
                 f"I'm calling to let you know that the refresh for your Tableau workbook "
-                f"'{call.workbook_name}' has unfortunately failed. "
+                f"'{workbook_name}' has unfortunately failed. "
                 "Our team has been notified, but I wanted to make sure you were aware directly."
             )
 
@@ -121,7 +129,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             objective=(
                 f"Notify {contact_name} about the Tableau workbook refresh "
                 f"{'completion' if refresh_status == 'completed' else 'failure'} "
-                f"for '{call.workbook_name}'. Capture their reaction and any issues they've noticed."
+                f"for '{workbook_name}'. Capture their reaction and any issues they've noticed."
             ),
             checklist=[
                 guava.Say(
@@ -173,7 +181,7 @@ def on_done(call: guava.Call) -> None:
         call.hangup(
             final_instructions=(
                 f"Let {contact_name} know the analytics team will review the workbook "
-                f"'{call.workbook_name}' and follow up with them shortly.{issue_note} "
+                f"'{call.get_variable('workbook_name')}' and follow up with them shortly.{issue_note} "
                 "Thank them for flagging it and wish them a great day."
             )
         )

@@ -73,10 +73,10 @@ def on_call_start(call: guava.Call) -> None:
     order_number = call.get_variable("order_number")
 
     try:
-        call.order = fetch_order(order_number)
+        call.set_variable("order", fetch_order(order_number))
     except Exception as e:
         logging.error("Pre-fetch order failed: %s", e)
-        call.order = None
+        call.set_variable("order", None)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -153,8 +153,9 @@ def on_done(call: guava.Call) -> None:
     customer_option = call.get_field("customer_option")
     additional_concerns = call.get_field("additional_concerns") or "None"
 
-    order_id = call.order.get("orderId") if call.order else None
-    existing_notes = (call.order.get("internalNotes", "") or "") if call.order else ""
+    order = call.get_variable("order")
+    order_id = order.get("orderId") if order else None
+    existing_notes = (order.get("internalNotes", "") or "") if order else ""
 
     note = (
         f"[DELAY NOTIFICATION] Reason: {delay_reason}. "

@@ -57,7 +57,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load checkout: %s", e)
 
-    call.checkout = checkout
+    call.set_variable("checkout", checkout)
 
     if checkout:
         line_items = checkout.get("line_items", [])
@@ -77,7 +77,7 @@ def on_call_start(call: guava.Call) -> None:
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     customer_name = call.get_variable("customer_name")
-    checkout = call.checkout
+    checkout = call.get_variable("checkout")
 
     if outcome == "unavailable":
         call.hangup(
@@ -144,7 +144,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 @agent.on_task_complete("handle_recovery")
 def on_done(call: guava.Call) -> None:
     checkout_token = call.get_variable("checkout_token")
-    checkout = call.checkout
+    checkout = call.get_variable("checkout")
 
     still_interested = call.get_field("still_interested") or "no"
     question = call.get_field("question") or ""

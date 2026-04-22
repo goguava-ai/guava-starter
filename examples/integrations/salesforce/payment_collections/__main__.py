@@ -105,11 +105,11 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     account_id = call.get_variable("account_id")
 
-    call.account_name = ""
+    call.set_variable("account_name", "")
     try:
         account = get_account(account_id)
         if account:
-            call.account_name = account.get("Name", "")
+            call.set_variable("account_name", account.get("Name", ""))
     except Exception as e:
         logging.error("Failed to fetch Account %s pre-call: %s", account_id, e)
 
@@ -150,7 +150,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        account_note = f" at {call.account_name}" if call.account_name else ""
+        account_name = call.get_variable("account_name", "")
+        account_note = f" at {account_name}" if account_name else ""
 
         call.set_task(
             "record_outcome",

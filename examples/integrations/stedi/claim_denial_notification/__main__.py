@@ -113,8 +113,8 @@ def on_call_start(call: guava.Call) -> None:
         logging.error("Pre-call claim status check failed for #%s: %s", claim_number, e)
         is_denied = False
 
-    call.is_denied = is_denied
-    call.denial_description = denial_description
+    call.set_variable("is_denied", is_denied)
+    call.set_variable("denial_description", denial_description)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -140,7 +140,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        if not call.is_denied:
+        if not call.get_variable("is_denied"):
             # Claim is not (or no longer) denied — no action needed
             logging.info(
                 "Claim #%s is not in a denied state for %s — ending call",
@@ -169,7 +169,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     f"Hi {patient_name}, this is Taylor calling from Ridgeline Health billing. "
                     f"I'm calling about your insurance claim #{claim_number} for "
                     f"{service_description}. Unfortunately, your insurance company has "
-                    f"issued a decision of: {call.denial_description}. "
+                    f"issued a decision of: {call.get_variable('denial_description')}. "
                     "I know this isn't the news you were hoping for, and I want to help you "
                     "understand your options."
                 ),

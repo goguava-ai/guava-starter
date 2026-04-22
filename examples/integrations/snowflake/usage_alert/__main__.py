@@ -25,7 +25,7 @@ BASE_URL = f"https://{SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2"
 
 def execute_statement(statement: str, bindings: dict | None = None) -> dict:
     """Executes a SQL statement against Snowflake and returns the raw response."""
-    payload = {
+    payload: dict[str, object] = {
         "statement": statement,
         "database": SNOWFLAKE_DATABASE,
         "schema": SNOWFLAKE_SCHEMA,
@@ -113,9 +113,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch alert data for account %s: %s", account_id, e)
 
-    call.current_usage_gb = current_usage_gb
-    call.quota_gb = quota_gb
-    call.usage_pct = usage_pct
+    call.set_variable("current_usage_gb", current_usage_gb)
+    call.set_variable("quota_gb", quota_gb)
+    call.set_variable("usage_pct", usage_pct)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -149,9 +149,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             checklist=[
                 guava.Say(
                     f"Hi {contact_name}, this is Taylor calling from Meridian Analytics. "
-                    f"I'm reaching out because your account is currently at {call.usage_pct}% "
-                    f"of its monthly quota — you've used {call.current_usage_gb} GB out of "
-                    f"your {call.quota_gb} GB allowance. I wanted to make sure you're aware "
+                    f"I'm reaching out because your account is currently at {call.get_variable('usage_pct')}% "
+                    f"of its monthly quota — you've used {call.get_variable('current_usage_gb')} GB out of "
+                    f"your {call.get_variable('quota_gb')} GB allowance. I wanted to make sure you're aware "
                     "and give you a chance to decide how you'd like to handle this."
                 ),
                 guava.Field(

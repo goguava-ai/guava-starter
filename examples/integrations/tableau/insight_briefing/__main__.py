@@ -59,22 +59,27 @@ def on_call_start(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
 
     # Fetch view metadata before delivering the briefing
-    call.view_name = "the requested view"
-    call.view_owner = "your Tableau team"
-    call.updated_display = "recently"
-    call.content_url = ""
+    view_name = "the requested view"
+    view_owner = "your Tableau team"
+    updated_display = "recently"
+    content_url = ""
 
     try:
         view = get_view(view_id)
-        call.view_name = view.get("name", call.view_name)
-        call.view_owner = view.get("owner", {}).get("name", call.view_owner)
-        call.content_url = view.get("contentUrl", "")
+        view_name = view.get("name", view_name)
+        view_owner = view.get("owner", {}).get("name", view_owner)
+        content_url = view.get("contentUrl", "")
         updated_at_str = view.get("updatedAt", "")
         if updated_at_str:
             updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-            call.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
+            updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
     except Exception as e:
         logging.error("Failed to fetch view %s pre-call: %s", view_id, e)
+
+    call.set_variable("view_name", view_name)
+    call.set_variable("view_owner", view_owner)
+    call.set_variable("updated_display", updated_display)
+    call.set_variable("content_url", content_url)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -83,6 +88,10 @@ def on_call_start(call: guava.Call) -> None:
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     contact_name = call.get_variable("contact_name")
     view_id = call.get_variable("view_id")
+
+    view_name = call.get_variable("view_name")
+    view_owner = call.get_variable("view_owner")
+    updated_display = call.get_variable("updated_display")
 
     if outcome == "unavailable":
         logging.info(
@@ -93,25 +102,25 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             final_instructions=(
                 f"Leave a brief, friendly voicemail for {contact_name} on behalf of "
                 "Vertex Analytics. Let them know you were calling to share a data briefing on "
-                f"the '{call.view_name}' Tableau view and ask them to call back or reach out "
+                f"the '{view_name}' Tableau view and ask them to call back or reach out "
                 "to the analytics team if they'd like a walkthrough. Keep it concise."
             )
         )
     elif outcome == "available":
-        owner_note = f" It's maintained by {call.view_owner}." if call.view_owner else ""
+        owner_note = f" It's maintained by {view_owner}." if view_owner else ""
 
         call.set_task(
             "save_results",
             objective=(
-                f"Deliver a verbal summary of the Tableau view '{call.view_name}' to "
+                f"Deliver a verbal summary of the Tableau view '{view_name}' to "
                 f"{contact_name}. Share the view name, when it was last updated, and who "
                 f"owns it. Then ask if they'd like to schedule a deeper review session."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {contact_name}, this is Taylor calling from Vertex Analytics. "
-                    f"I'm reaching out with a quick data briefing on the '{call.view_name}' "
-                    f"Tableau view. It was last updated on {call.updated_display}.{owner_note} "
+                    f"I'm reaching out with a quick data briefing on the '{view_name}' "
+                    f"Tableau view. It was last updated on {updated_display}.{owner_note} "
                     "I have a summary of the latest KPI metadata I'd like to walk you through."
                 ),
                 guava.Field(
@@ -146,7 +155,7 @@ def on_done(call: guava.Call) -> None:
 
     logging.info(
         "Briefing complete for %s — view: %s, wants_review: %s, preferred_time: %s",
-        contact_name, call.view_name, wants_review, preferred_time,
+        contact_name, call.get_variable("view_name"), wants_review, preferred_time,
     )
 
     if wants_review == "yes":

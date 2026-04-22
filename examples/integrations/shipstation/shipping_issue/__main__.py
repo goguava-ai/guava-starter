@@ -93,8 +93,8 @@ def on_lookup_done(call: guava.Call) -> None:
     email = call.get_field("email")
     issue_type = call.get_field("issue_type") or ""
 
-    call.order = None
-    call.shipment = None
+    call.set_variable("order", None)
+    call.set_variable("shipment", None)
 
     # Look up the order by order number or email.
     try:
@@ -108,7 +108,7 @@ def on_lookup_done(call: guava.Call) -> None:
             resp.raise_for_status()
             orders = resp.json().get("orders", [])
             if orders:
-                call.order = orders[0]
+                call.set_variable("order", orders[0])
         else:
             lookup_email = email or order_number
             resp = requests.get(
@@ -120,11 +120,11 @@ def on_lookup_done(call: guava.Call) -> None:
             resp.raise_for_status()
             orders = resp.json().get("orders", [])
             if orders:
-                call.order = orders[0]
+                call.set_variable("order", orders[0])
     except Exception as e:
         logging.error("Failed to look up order in ShipStation: %s", e)
 
-    if not call.order:
+    if not call.get_variable("order"):
         call.hangup(
             final_instructions=(
                 "Apologize and let the customer know we couldn't locate an order with the "
@@ -136,7 +136,8 @@ def on_lookup_done(call: guava.Call) -> None:
         return
 
     # Fetch shipment details.
-    order_id = call.order.get("orderId")
+    order = call.get_variable("order")
+    order_id = order.get("orderId")
     try:
         resp = requests.get(
             f"{BASE_URL}/shipments",
@@ -148,7 +149,7 @@ def on_lookup_done(call: guava.Call) -> None:
         shipments = resp.json().get("shipments", [])
         active = [s for s in shipments if not s.get("voided", False)]
         if active:
-            call.shipment = active[0]
+            call.set_variable("shipment", active[0])
     except Exception as e:
         logging.error("Failed to fetch shipments for order %s: %s", order_id, e)
 
@@ -156,7 +157,7 @@ def on_lookup_done(call: guava.Call) -> None:
         "Order %s found. Issue type: %s. Shipment found: %s",
         order_id,
         issue_type,
-        bool(call.shipment),
+        bool(call.get_variable("shipment")),
     )
 
     # Route to the appropriate collection flow based on issue type.
@@ -172,7 +173,8 @@ def on_lookup_done(call: guava.Call) -> None:
 
 def _collect_claim_details(call: guava.Call) -> None:
     issue_type = call.get_field("issue_type") or "issue"
-    order_num_display = call.order.get("orderNumber", "your order")
+    order = call.get_variable("order") or {}
+    order_num_display = order.get("orderNumber", "your order")
 
     call.set_task(
         "finalize_claim",
@@ -209,13 +211,15 @@ def _collect_claim_details(call: guava.Call) -> None:
 
 
 def _handle_delayed(call: guava.Call) -> None:
-    order_num_display = call.order.get("orderNumber", "your order")
+    order = call.get_variable("order") or {}
+    order_num_display = order.get("orderNumber", "your order")
 
     tracking_info = ""
-    if call.shipment:
-        tracking_number = call.shipment.get("trackingNumber", "")
-        carrier_code = call.shipment.get("carrierCode", "")
-        ship_date_raw = call.shipment.get("shipDate", "")
+    shipment = call.get_variable("shipment")
+    if shipment:
+        tracking_number = shipment.get("trackingNumber", "")
+        carrier_code = shipment.get("carrierCode", "")
+        ship_date_raw = shipment.get("shipDate", "")
         carrier_display = carrier_code.upper().replace("_", " ")
 
         ship_date_display = ship_date_raw
@@ -238,7 +242,7 @@ def _handle_delayed(call: guava.Call) -> None:
 
     logging.info(
         "Delayed shipment inquiry for order %s.",
-        call.order.get("orderId"),
+        order.get("orderId"),
     )
 
     call.hangup(
@@ -255,7 +259,8 @@ def _handle_delayed(call: guava.Call) -> None:
 
 
 def _collect_wrong_item_details(call: guava.Call) -> None:
-    order_num_display = call.order.get("orderNumber", "your order")
+    order = call.get_variable("order") or {}
+    order_num_display = order.get("orderNumber", "your order")
 
     call.set_task(
         "finalize_wrong_item",
@@ -287,11 +292,12 @@ def on_finalize_claim(call: guava.Call) -> None:
     issue_type = call.get_field("issue_type") or "issue"
     description = call.get_field("description") or ""
     resolution = call.get_field("preferred_resolution") or "replacement shipment"
-    order_num_display = call.order.get("orderNumber", "your order")
+    order = call.get_variable("order") or {}
+    order_num_display = order.get("orderNumber", "your order")
 
     logging.info(
         "Claim filed for order %s — issue: %s, resolution: %s, description: %s",
-        call.order.get("orderId"),
+        order.get("orderId"),
         issue_type,
         resolution,
         description,
@@ -312,11 +318,12 @@ def on_finalize_claim(call: guava.Call) -> None:
 @agent.on_task_complete("finalize_wrong_item")
 def on_finalize_wrong_item(call: guava.Call) -> None:
     wrong_item_description = call.get_field("wrong_item_description") or ""
-    order_num_display = call.order.get("orderNumber", "your order")
+    order = call.get_variable("order") or {}
+    order_num_display = order.get("orderNumber", "your order")
 
     logging.info(
         "Wrong items reported for order %s — description: %s",
-        call.order.get("orderId"),
+        order.get("orderId"),
         wrong_item_description,
     )
 

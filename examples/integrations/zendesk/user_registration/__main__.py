@@ -38,18 +38,17 @@ def create_user(name: str, email: str, phone: str, organization_name: str) -> di
     Creates a new Zendesk end-user.
     If organization_name is provided, Zendesk will look up or create the org automatically.
     """
-    payload: dict = {
-        "user": {
-            "name": name,
-            "email": email,
-            "role": "end-user",
-            "verified": True,
-        }
+    user: dict[str, object] = {
+        "name": name,
+        "email": email,
+        "role": "end-user",
+        "verified": True,
     }
+    payload: dict[str, object] = {"user": user}
     if phone:
-        payload["user"]["phone"] = phone
+        user["phone"] = phone
     if organization_name:
-        payload["user"]["organization"] = {"name": organization_name}
+        user["organization"] = {"name": organization_name}
 
     resp = requests.post(f"{BASE_URL}/users", headers=HEADERS, json=payload, timeout=10)
     resp.raise_for_status()
