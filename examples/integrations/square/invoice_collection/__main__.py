@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = os.environ.get("SQUARE_BASE_URL", "https://connect.squareupsandbox.com")
 SQUARE_VERSION = "2024-01-18"
@@ -211,6 +211,7 @@ class InvoiceCollectionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound Square invoice collection call.")
     parser.add_argument("phone", help="Customer phone number (E.164)")
     parser.add_argument("--name", required=True, help="Customer's full name")

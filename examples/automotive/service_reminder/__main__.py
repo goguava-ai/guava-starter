@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class ServiceReminderController(guava.CallController):
@@ -116,6 +116,7 @@ class ServiceReminderController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound service reminder call for Lakeside Auto Group"
     )

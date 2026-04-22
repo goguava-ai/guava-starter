@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 AVAILITY_CLIENT_ID = os.environ["AVAILITY_CLIENT_ID"]
 AVAILITY_CLIENT_SECRET = os.environ["AVAILITY_CLIENT_SECRET"]
@@ -228,6 +228,7 @@ class ClaimStatusInquiryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ClaimStatusInquiryController,

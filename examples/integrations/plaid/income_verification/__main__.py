@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://sandbox.plaid.com"
 
@@ -161,3 +161,6 @@ class IncomeVerificationController(guava.CallController):
                     "documentation is needed. Thank them for calling ClearPath Banking."
                 )
             )
+
+if __name__ == "__main__":
+    logging_utils.configure_logging()

@@ -12,6 +12,7 @@ Data is stored in a local ./chroma_data directory next to this file.
 """
 
 import guava
+from guava import logging_utils
 import os
 from pathlib import Path
 
@@ -42,6 +43,7 @@ class ChromaPolicyQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ChromaPolicyQAController,

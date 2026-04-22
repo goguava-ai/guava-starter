@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://ssapi.shipstation.com"
 AUTH = (os.environ["SHIPSTATION_API_KEY"], os.environ["SHIPSTATION_API_SECRET"])
@@ -218,6 +218,7 @@ class DeliveryConfirmationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound delivery confirmation call for Coastal Supply Co. via ShipStation."
     )

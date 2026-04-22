@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class ShowingSchedulingController(guava.CallController):
@@ -134,6 +134,7 @@ class ShowingSchedulingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Schedule a property showing outbound call.")
     parser.add_argument("phone", help="The buyer's phone number to call.")
     parser.add_argument("--name", required=True, help="Full name of the buyer to reach.")

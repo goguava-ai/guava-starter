@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-logging.basicConfig(level=logging.INFO)
 
 CALABRIO_BASE_URL = os.environ["CALABRIO_BASE_URL"]  # e.g. https://mycompany.calabriocloud.com
 CALABRIO_API_KEY = os.environ["CALABRIO_API_KEY"]
@@ -194,6 +194,7 @@ class ScheduleInquiryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ScheduleInquiryController,

@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 INTERCOM_ACCESS_TOKEN = os.environ["INTERCOM_ACCESS_TOKEN"]
 
@@ -217,6 +217,7 @@ class LeadCaptureController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=LeadCaptureController,

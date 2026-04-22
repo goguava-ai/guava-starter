@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 FHIR_BASE_URL = os.environ["MEDITECH_FHIR_BASE_URL"]
 
@@ -231,6 +231,7 @@ class AppointmentConfirmationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description=(
             "Outbound appointment confirmation call for St. Raphael Medical Center "

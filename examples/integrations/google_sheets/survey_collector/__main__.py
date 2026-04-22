@@ -1,13 +1,13 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import datetime
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-logging.basicConfig(level=logging.INFO)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]
@@ -160,6 +160,7 @@ class SurveyCollectorController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound post-service survey call")
     parser.add_argument("to_number", help="Customer's phone number to call (E.164)")
     parser.add_argument("--name", required=True, help="Customer's full name")

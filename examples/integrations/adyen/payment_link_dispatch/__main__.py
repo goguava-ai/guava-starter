@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, timezone, timedelta
 
-logging.basicConfig(level=logging.INFO)
 
 CHECKOUT_BASE_URL = os.environ.get("ADYEN_CHECKOUT_URL", "https://checkout-test.adyen.com/v71")
 MERCHANT_ACCOUNT = os.environ["ADYEN_MERCHANT_ACCOUNT"]
@@ -200,6 +200,7 @@ class PaymentLinkDispatchController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound payment link dispatch call via Meridian Commerce / Adyen."
     )

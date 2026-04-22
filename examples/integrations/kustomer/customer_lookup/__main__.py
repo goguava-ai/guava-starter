@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from urllib.parse import quote
 
-logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.environ["KUSTOMER_API_TOKEN"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
@@ -173,6 +173,7 @@ class CustomerLookupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=CustomerLookupController,

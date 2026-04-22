@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class ReservationConfirmationController(guava.CallController):
@@ -125,6 +125,7 @@ class ReservationConfirmationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound reservation confirmation call — The Grand Meridian Hotel"
     )

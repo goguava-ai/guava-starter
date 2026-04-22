@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 PRACTICE_ID = os.environ["ATHENA_PRACTICE_ID"]
 BASE_URL = f"https://api.platform.athenahealth.com/v1/{PRACTICE_ID}"
@@ -199,6 +199,7 @@ class PatientIntakeController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound pre-visit patient intake via Athenahealth."
     )

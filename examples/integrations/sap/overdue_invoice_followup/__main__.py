@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 SAP_BASE_URL = os.environ["SAP_BASE_URL"]
 SAP_CLIENT_ID = os.environ["SAP_CLIENT_ID"]
@@ -226,6 +226,7 @@ class OverdueInvoiceFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound overdue invoice follow-up call using SAP billing data."
     )

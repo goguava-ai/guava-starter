@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class ServiceConnectionController(guava.CallController):
@@ -136,6 +136,7 @@ class ServiceConnectionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Metro Power & Light New Connections — Service Activation Scheduling"
     )

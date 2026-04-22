@@ -13,7 +13,6 @@ from pathlib import Path
 
 from guava.helpers.rag import DocumentQA
 import logging                                                                                                                                                                                                                                                                                                                                
-logging.basicConfig(level=logging.INFO)
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 print(DOCS_DIR)
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]
@@ -34,6 +33,7 @@ class PolicyQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PolicyQAController,

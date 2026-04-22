@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://api.mindbodyonline.com/public/v6"
 API_KEY = os.environ["MINDBODY_API_KEY"]
@@ -198,6 +198,7 @@ class AppointmentReminderController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Call a client the day before their appointment to confirm or cancel."
     )

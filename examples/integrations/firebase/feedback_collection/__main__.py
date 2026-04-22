@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-logging.basicConfig(level=logging.INFO)
 
 cred = credentials.Certificate(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
 firebase_admin.initialize_app(cred)
@@ -185,6 +185,7 @@ class FeedbackCollectionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound post-service feedback collection call."
     )

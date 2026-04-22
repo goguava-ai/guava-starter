@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 ACCESS_TOKEN = os.environ["DRCHRONO_ACCESS_TOKEN"]
 DOCTOR_ID = int(os.environ["DRCHRONO_DOCTOR_ID"])
@@ -222,6 +222,7 @@ class LabResultsNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound lab results notification call via DrChrono."
     )

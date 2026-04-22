@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 SITE = os.environ["CHARGEBEE_SITE"]
 BASE_URL = f"https://{SITE}.chargebee.com/api/v2"
@@ -144,6 +144,7 @@ class SubscriptionInquiryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=SubscriptionInquiryController,

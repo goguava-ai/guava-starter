@@ -9,12 +9,12 @@ This is the simplest RAG pattern — a single retriever over a static document s
 import guava
 import os
 import logging
+from guava import logging_utils
 from pathlib import Path
 
 from google import genai
 from guava.helpers.rag import DocumentQA, LanceDBStore, VertexAIEmbedding, VertexAIGeneration
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load all policy documents and build the vector index at startup.
@@ -46,6 +46,7 @@ class PolicyQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PolicyQAController,

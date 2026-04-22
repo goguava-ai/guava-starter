@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 QLIK_TENANT_URL = os.environ["QLIK_TENANT_URL"].rstrip("/")
 QLIK_API_KEY = os.environ["QLIK_API_KEY"]
@@ -183,6 +183,7 @@ class AppReloadRequestController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=AppReloadRequestController,

@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 from requests_oauthlib import OAuth1
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 NS_ACCOUNT_ID = os.environ["NETSUITE_ACCOUNT_ID"]
 NS_CONSUMER_KEY = os.environ["NETSUITE_CONSUMER_KEY"]
@@ -199,6 +199,7 @@ class PurchaseOrderStatusController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PurchaseOrderStatusController,

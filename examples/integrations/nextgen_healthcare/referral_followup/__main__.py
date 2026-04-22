@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 
 def get_access_token() -> str:
@@ -166,6 +166,7 @@ class ReferralFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound referral followup via NextGen FHIR.")
     parser.add_argument("phone", help="Patient phone number (E.164)")
     parser.add_argument("--name", required=True)

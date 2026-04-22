@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 ACCESS_TOKEN = os.environ["DYNAMICS_ACCESS_TOKEN"]
 ORG_URL = os.environ["DYNAMICS_ORG_URL"]  # e.g. https://yourorg.crm.dynamics.com
@@ -203,6 +203,7 @@ class ContactUpdateController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ContactUpdateController,

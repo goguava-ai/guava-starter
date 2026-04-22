@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = os.environ.get("PRACTICE_FUSION_FHIR_BASE_URL", "https://api.practicefusion.com/fhir/r4")
 
@@ -239,6 +239,7 @@ class LabResultsCallbackController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound lab results callback call for Westfield Medical Group via Practice Fusion FHIR R4."
     )

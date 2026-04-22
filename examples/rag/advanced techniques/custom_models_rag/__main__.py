@@ -19,6 +19,7 @@ Environment variables:
 import guava
 import os
 import logging
+from guava import logging_utils
 from pathlib import Path
 
 import anthropic
@@ -31,7 +32,6 @@ from guava.helpers.rag import (
     LanceDBStore,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
@@ -93,6 +93,7 @@ class CustomModelsPolicyQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=CustomModelsPolicyQAController,

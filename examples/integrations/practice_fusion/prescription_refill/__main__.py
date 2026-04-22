@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = os.environ["PRACTICE_FUSION_FHIR_BASE_URL"]  # e.g. https://api.practicefusion.com/fhir/r4
 
@@ -217,6 +217,7 @@ class PrescriptionRefillController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PrescriptionRefillController,

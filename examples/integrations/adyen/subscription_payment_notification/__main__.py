@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 ADYEN_API_KEY = os.environ["ADYEN_API_KEY"]
 ADYEN_MERCHANT_ACCOUNT = os.environ["ADYEN_MERCHANT_ACCOUNT"]
@@ -209,6 +209,7 @@ class SubscriptionPaymentNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Proactively notify a customer about an upcoming subscription renewal charge."
     )

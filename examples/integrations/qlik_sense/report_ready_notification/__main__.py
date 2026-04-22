@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 QLIK_TENANT_URL = os.environ["QLIK_TENANT_URL"].rstrip("/")
 QLIK_API_KEY = os.environ["QLIK_API_KEY"]
@@ -156,6 +156,7 @@ class ReportReadyNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound notification call when a Qlik app reload completes."
     )

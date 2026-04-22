@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class MaintenanceRequestController(guava.CallController):
@@ -154,6 +154,7 @@ class MaintenanceRequestController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     logging.info("Starting Maintenance Request inbound agent for Pinnacle Property Management.")
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],

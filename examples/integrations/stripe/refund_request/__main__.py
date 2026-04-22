@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
 AUTH = (STRIPE_SECRET_KEY, "")
@@ -181,6 +181,7 @@ class RefundRequestController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=RefundRequestController,

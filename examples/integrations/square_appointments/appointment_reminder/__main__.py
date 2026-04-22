@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import uuid
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 ACCESS_TOKEN = os.environ["SQUARE_ACCESS_TOKEN"]
 LOCATION_ID = os.environ["SQUARE_LOCATION_ID"]
@@ -220,6 +220,7 @@ class AppointmentReminderController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound appointment reminder call from Crestwood Wellness.")
     parser.add_argument("phone", help="Customer phone number (E.164 format, e.g. +15551234567)")
     parser.add_argument("--booking-id", required=True, help="Square booking ID")

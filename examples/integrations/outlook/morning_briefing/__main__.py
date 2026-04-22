@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, date
 
-logging.basicConfig(level=logging.INFO)
 
 GRAPH_ACCESS_TOKEN = os.environ["GRAPH_ACCESS_TOKEN"]
 BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -219,6 +219,7 @@ class MorningBriefingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound morning briefing call with today's Outlook calendar summary."
     )

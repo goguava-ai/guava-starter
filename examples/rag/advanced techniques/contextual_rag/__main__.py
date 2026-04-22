@@ -19,6 +19,7 @@ Requires ANTHROPIC_API_KEY in addition to the standard Guava credentials.
 import guava
 import os
 import logging
+from guava import logging_utils
 from pathlib import Path
 
 import anthropic
@@ -26,7 +27,6 @@ from google import genai
 from guava.helpers.rag import LanceDBStore, VertexAIEmbedding
 from guava.helpers.rag.chunking import chunk_document
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "docs"
@@ -120,6 +120,7 @@ class ContextualPolicyQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ContextualPolicyQAController,

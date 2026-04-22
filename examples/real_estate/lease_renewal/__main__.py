@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class LeaseRenewalController(guava.CallController):
@@ -166,6 +166,7 @@ class LeaseRenewalController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Lease renewal outbound call to a tenant.")
     parser.add_argument("phone", help="The tenant's phone number to call.")
     parser.add_argument("--name", required=True, help="Full name of the tenant to reach.")

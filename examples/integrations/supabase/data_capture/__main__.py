@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 REST_URL = f"{SUPABASE_URL}/rest/v1"
@@ -152,6 +152,7 @@ class DataCaptureController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=DataCaptureController,

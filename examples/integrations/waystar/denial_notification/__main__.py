@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 WAYSTAR_CLIENT_ID = os.environ["WAYSTAR_CLIENT_ID"]
 WAYSTAR_CLIENT_SECRET = os.environ["WAYSTAR_CLIENT_SECRET"]
@@ -238,6 +238,7 @@ class DenialNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound call to notify a patient of an insurance claim denial."
     )

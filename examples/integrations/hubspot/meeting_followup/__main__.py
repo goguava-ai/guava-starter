@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 HUBSPOT_ACCESS_TOKEN = os.environ["HUBSPOT_ACCESS_TOKEN"]
 HEADERS = {
@@ -234,6 +234,7 @@ class MeetingFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound post-meeting follow-up call.")
     parser.add_argument("phone", help="Contact's phone number (E.164, e.g. +15551234567)")
     parser.add_argument("--contact-id", required=True, help="HubSpot contact ID")

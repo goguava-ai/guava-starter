@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 RETOOL_CHECKLIST_WEBHOOK_URL = os.environ["RETOOL_ONBOARDING_WORKFLOW_URL"]
 RETOOL_CHECKLIST_API_KEY = os.environ["RETOOL_ONBOARDING_API_KEY"]
@@ -189,6 +189,7 @@ class EmployeeOnboardingCheckController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound onboarding check-in call for a new employee."
     )

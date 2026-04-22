@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class SmartMeterEnrollmentController(guava.CallController):
@@ -124,6 +124,7 @@ class SmartMeterEnrollmentController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Metro Power & Light — Smart Meter Enrollment Outbound Call"
     )

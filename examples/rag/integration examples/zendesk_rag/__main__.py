@@ -18,13 +18,13 @@ Environment variables:
 import re
 import os
 import logging
+from guava import logging_utils
 from pathlib import Path
 
 import requests
 import guava
 from guava.helpers.rag import DocumentQA, LanceDBStore
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Fetch the first 100 published articles from the Zendesk Help Center.
@@ -66,6 +66,7 @@ class ZendeskController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ZendeskController,

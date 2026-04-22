@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class SurgeryPreopCheckinController(guava.CallController):
@@ -225,6 +225,7 @@ class SurgeryPreopCheckinController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound surgery pre-op checkin call for Cedar Health via Epic FHIR."
     )

@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 from opensearchpy import OpenSearch, NotFoundError
 
-logging.basicConfig(level=logging.INFO)
 
 OPENSEARCH_HOST = os.environ["OPENSEARCH_HOST"]
 OPENSEARCH_PORT = int(os.environ.get("OPENSEARCH_PORT", "443"))
@@ -194,6 +194,7 @@ class ProductCatalogSearchController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ProductCatalogSearchController,

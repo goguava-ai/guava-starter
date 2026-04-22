@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://acuityscheduling.com/api/v1"
 AUTH = (os.environ["ACUITY_USER_ID"], os.environ["ACUITY_API_KEY"])
@@ -187,6 +187,7 @@ class AppointmentRescheduleController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Inbound appointment reschedule via Acuity Scheduling."
     )

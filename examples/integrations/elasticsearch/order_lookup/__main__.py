@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 ES_URL = os.environ["ELASTICSEARCH_URL"].rstrip("/")
 ORDER_INDEX = os.environ.get("ELASTICSEARCH_ORDER_INDEX", "orders")
@@ -145,6 +145,7 @@ class OrderLookupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=OrderLookupController,

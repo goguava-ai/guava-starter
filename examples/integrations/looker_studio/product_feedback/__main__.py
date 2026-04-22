@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 from datetime import datetime, timezone
 
 from google.cloud import bigquery
 
-logging.basicConfig(level=logging.INFO)
 
 # Set this to your BigQuery table: "your_project.your_dataset.your_table"
 BIGQUERY_TABLE = os.environ["BIGQUERY_TABLE"]
@@ -129,6 +129,7 @@ class ProductFeedbackController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Product feedback survey → BigQuery → Looker Studio")
     parser.add_argument("phone", help="Phone number to call (E.164 format, e.g. +15551234567)")
     parser.add_argument("--name", required=True, help="Contact's full name")

@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import pymysql
 import pymysql.cursors
 
-logging.basicConfig(level=logging.INFO)
 
 
 def get_connection():
@@ -214,6 +214,7 @@ class CartRecoveryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound cart recovery call for a Peak Outdoors customer."
     )

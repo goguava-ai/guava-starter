@@ -1,6 +1,7 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 import datetime
 import zoneinfo
@@ -9,7 +10,6 @@ from google import genai as google_genai
 
 from guava.helpers.genai import DateRangeParser
 
-logging.basicConfig(level=logging.INFO)
 
 CALENDLY_TOKEN = os.environ["CALENDLY_TOKEN"]
 AGENT_NUMBER = os.environ["GUAVA_AGENT_NUMBER"]
@@ -355,6 +355,7 @@ class AppointmentSchedulingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=AGENT_NUMBER,
         controller_class=AppointmentSchedulingController,

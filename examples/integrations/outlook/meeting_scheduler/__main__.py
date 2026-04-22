@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import datetime
 import requests
 from guava.helpers.genai import DatetimeFilter
 
-logging.basicConfig(level=logging.INFO)
 
 GRAPH_ACCESS_TOKEN = os.environ["GRAPH_ACCESS_TOKEN"]
 BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -220,6 +220,7 @@ class MeetingSchedulerController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=MeetingSchedulerController,

@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class UnderwritingCollectionController(guava.CallController):
@@ -150,6 +150,7 @@ class UnderwritingCollectionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound underwriting data collection call for Keystone Property & Casualty"
     )

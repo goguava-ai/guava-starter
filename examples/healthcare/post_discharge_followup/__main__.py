@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class PostDischargeFollowupController(guava.CallController):
@@ -146,6 +146,7 @@ class PostDischargeFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound post-discharge follow-up call for Riverside Medical Center."
     )

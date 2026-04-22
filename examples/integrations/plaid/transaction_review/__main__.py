@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime, timedelta, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://sandbox.plaid.com"
 
@@ -172,3 +172,6 @@ class TransactionReviewController(guava.CallController):
                     "Ask if there's anything else they'd like to review. Thank them for banking with ClearPath."
                 )
             )
+
+if __name__ == "__main__":
+    logging_utils.configure_logging()

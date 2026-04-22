@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 CLIENT_ID = os.environ["CHANGE_HEALTHCARE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["CHANGE_HEALTHCARE_CLIENT_SECRET"]
@@ -255,6 +255,7 @@ class PriorAuthStatusController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PriorAuthStatusController,

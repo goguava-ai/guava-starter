@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import base64
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 ZENDESK_SUBDOMAIN = os.environ["ZENDESK_SUBDOMAIN"]
 ZENDESK_EMAIL = os.environ["ZENDESK_EMAIL"]
@@ -238,6 +238,7 @@ class ProactiveUpdateController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound proactive ticket update call for a Zendesk ticket."
     )

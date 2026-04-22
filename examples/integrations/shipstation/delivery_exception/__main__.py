@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 import base64
 
-logging.basicConfig(level=logging.INFO)
 
 API_KEY = os.environ["SHIPSTATION_API_KEY"]
 API_SECRET = os.environ["SHIPSTATION_API_SECRET"]
@@ -173,6 +173,7 @@ class DeliveryExceptionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Call a customer about a shipment delivery exception."
     )

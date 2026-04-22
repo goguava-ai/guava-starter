@@ -1,6 +1,7 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import datetime
 
 import pickle
@@ -12,7 +13,6 @@ from googleapiclient.discovery import build
 
 from guava.helpers.genai import DatetimeFilter
 
-logging.basicConfig(level=logging.INFO)
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
@@ -203,6 +203,7 @@ class AppointmentSchedulingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=AppointmentSchedulingController,

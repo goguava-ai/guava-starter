@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = os.environ.get("PRACTICE_FUSION_FHIR_BASE_URL", "https://api.practicefusion.com/fhir/r4")
 
@@ -199,6 +199,7 @@ class AppointmentReminderController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound appointment reminder call for Riverside Family Medicine via Practice Fusion FHIR R4."
     )

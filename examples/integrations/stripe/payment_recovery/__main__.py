@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
 AUTH = (STRIPE_SECRET_KEY, "")
@@ -217,6 +217,7 @@ class PaymentRecoveryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound payment recovery call for a Stripe customer with open invoices."
     )

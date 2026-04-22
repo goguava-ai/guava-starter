@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 ADYEN_API_KEY = os.environ["ADYEN_API_KEY"]
 ADYEN_MERCHANT_ACCOUNT = os.environ["ADYEN_MERCHANT_ACCOUNT"]
@@ -187,6 +187,7 @@ class FailedPaymentRecoveryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Call customers to recover a failed payment.")
     parser.add_argument("phone", help="Customer phone number in E.164 format (e.g. +12125550100)")
     parser.add_argument("--name", required=True, help="Customer full name")

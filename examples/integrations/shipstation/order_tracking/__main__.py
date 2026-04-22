@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 import base64
 
-logging.basicConfig(level=logging.INFO)
 
 API_KEY = os.environ["SHIPSTATION_API_KEY"]
 API_SECRET = os.environ["SHIPSTATION_API_SECRET"]
@@ -136,6 +136,7 @@ class OrderTrackingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=OrderTrackingController,

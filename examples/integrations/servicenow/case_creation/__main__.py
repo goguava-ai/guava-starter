@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 SN_INSTANCE = os.environ["SERVICENOW_INSTANCE"]  # e.g. "mycompany"
 SN_USERNAME = os.environ["SERVICENOW_USERNAME"]
@@ -183,6 +183,7 @@ class CaseCreationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=CaseCreationController,

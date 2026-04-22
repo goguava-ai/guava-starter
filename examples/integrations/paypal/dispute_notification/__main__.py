@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = os.environ.get("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
 
@@ -170,6 +170,7 @@ class DisputeNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound PayPal dispute notification call.")
     parser.add_argument("phone", help="Customer phone number (E.164)")
     parser.add_argument("--name", required=True, help="Customer's full name")

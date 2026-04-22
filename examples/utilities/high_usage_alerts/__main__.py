@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class HighUsageAlertController(guava.CallController):
@@ -133,6 +133,7 @@ class HighUsageAlertController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Metro Power & Light — High Usage Alert Outbound Call"
     )

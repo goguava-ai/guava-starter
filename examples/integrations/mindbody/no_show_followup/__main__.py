@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://api.mindbodyonline.com/public/v6"
 API_KEY = os.environ["MINDBODY_API_KEY"]
@@ -227,6 +227,7 @@ class NoShowFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound no-show follow-up call for FlexFit Studio via Mindbody."
     )

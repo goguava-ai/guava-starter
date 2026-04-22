@@ -10,13 +10,13 @@ deductible info appearing when the caller asked about life insurance).
 import guava
 import os
 import logging
+from guava import logging_utils
 from pathlib import Path
 
 from google import genai
 from guava.helpers.genai import IntentRecognizer
 from guava.helpers.rag import DocumentQA, LanceDBStore, VertexAIEmbedding, VertexAIGeneration
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DOCS_DIR = Path(__file__).parent / "docs"
@@ -77,6 +77,7 @@ class MultiProductQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=MultiProductQAController,

@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 CERNER_FHIR_BASE_URL = os.environ["CERNER_FHIR_BASE_URL"]  # e.g. https://fhir-ehr-code.cerner.com/r4/...
 CERNER_ACCESS_TOKEN = os.environ["CERNER_ACCESS_TOKEN"]
@@ -220,6 +220,7 @@ class PatientLookupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=PatientLookupController,

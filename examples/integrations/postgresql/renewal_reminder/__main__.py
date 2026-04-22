@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import psycopg2
 import psycopg2.extras
 from datetime import date
 
-logging.basicConfig(level=logging.INFO)
 
 
 def get_connection():
@@ -209,6 +209,7 @@ class RenewalReminderController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound renewal reminder call for a Nexus Cloud account."
     )

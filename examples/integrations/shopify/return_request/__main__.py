@@ -1,9 +1,9 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 STORE = os.environ["SHOPIFY_STORE"]
 BASE_URL = f"https://{STORE}.myshopify.com/admin/api/2026-01"
@@ -188,6 +188,7 @@ class ReturnRequestController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=ReturnRequestController,

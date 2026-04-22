@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 ACCESS_TOKEN = os.environ["DYNAMICS_ACCESS_TOKEN"]
 ORG_URL = os.environ["DYNAMICS_ORG_URL"]  # e.g. https://yourorg.crm.dynamics.com
@@ -235,6 +235,7 @@ class NpsSurveyController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound NPS survey call after a Dynamics 365 support case is resolved."
     )

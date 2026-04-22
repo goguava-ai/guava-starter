@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 TENANT_ID = os.environ["POWERBI_TENANT_ID"]
 CLIENT_ID = os.environ["POWERBI_CLIENT_ID"]
@@ -205,6 +205,7 @@ class AlertThresholdNotificationController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound alert call when a Power BI metric breaches a threshold."
     )

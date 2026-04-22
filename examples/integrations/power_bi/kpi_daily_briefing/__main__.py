@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 TENANT_ID = os.environ["POWERBI_TENANT_ID"]
 CLIENT_ID = os.environ["POWERBI_CLIENT_ID"]
@@ -165,6 +165,7 @@ class KPIDailyBriefingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound daily KPI briefing call.")
     parser.add_argument("phone", help="Recipient phone number (E.164)")
     parser.add_argument("--name", required=True, help="Recipient full name")

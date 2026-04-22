@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 SITE = os.environ["CHARGEBEE_SITE"]
 BASE_URL = f"https://{SITE}.chargebee.com/api/v2"
@@ -184,6 +184,7 @@ class TrialConversionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Outbound Chargebee trial conversion call.")
     parser.add_argument("phone", help="Customer phone number (E.164)")
     parser.add_argument("--name", required=True)

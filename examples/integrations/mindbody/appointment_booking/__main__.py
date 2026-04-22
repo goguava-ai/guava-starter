@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 from datetime import date, timedelta
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://api.mindbodyonline.com/public/v6"
 API_KEY = os.environ["MINDBODY_API_KEY"]
@@ -291,6 +291,7 @@ class AppointmentBookingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=AppointmentBookingController,

@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class AttendanceCheckinController(guava.CallController):
@@ -131,6 +131,7 @@ class AttendanceCheckinController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Attendance check-in call to parent or guardian for unexcused student absence"
     )

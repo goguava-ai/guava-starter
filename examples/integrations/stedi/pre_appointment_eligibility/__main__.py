@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import random
 import requests
 from datetime import date
 
-logging.basicConfig(level=logging.INFO)
 
 STEDI_API_KEY = os.environ["STEDI_API_KEY"]
 PROVIDER_NPI = os.environ["STEDI_PROVIDER_NPI"]
@@ -222,6 +222,7 @@ class PreAppointmentEligibilityController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound pre-appointment eligibility verification call."
     )

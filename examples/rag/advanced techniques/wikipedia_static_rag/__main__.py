@@ -13,12 +13,12 @@ knowledge (e.g. "What is subrogation?" or "How does flood insurance work?").
 import guava
 import os
 import logging
+from guava import logging_utils
 
 import httpx
 from google import genai
 from guava.helpers.rag import DocumentQA, LanceDBStore, VertexAIEmbedding, VertexAIGeneration
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +69,7 @@ class WikipediaQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=WikipediaQAController,

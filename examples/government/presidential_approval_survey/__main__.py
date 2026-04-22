@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 TO_NUMBER = "+13142239451"
 
@@ -108,6 +108,7 @@ class PollsterController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     client = guava.Client()
     client.create_outbound(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],

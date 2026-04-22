@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 AFTERSHIP_API_KEY = os.environ["AFTERSHIP_API_KEY"]
 HEADERS = {
@@ -162,6 +162,7 @@ class ProactiveDeliveryUpdateController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound out-for-delivery notification call."
     )

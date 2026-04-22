@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class LeadQualificationController(guava.CallController):
@@ -131,5 +131,6 @@ def accept_call():
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     logging.info("Starting Lead Qualification inbound agent for Pinnacle Realty Group.")
     accept_call()

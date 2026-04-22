@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 
 class CustomsComplianceController(guava.CallController):
@@ -135,6 +135,7 @@ class CustomsComplianceController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="SwiftShip Logistics - Customs Compliance Agent")
     parser.add_argument("phone", help="Shipper or broker phone number to call")
     parser.add_argument("--name", required=True, help="Full name of the shipper or broker contact")

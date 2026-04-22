@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 SAP_BASE_URL = os.environ["SAP_BASE_URL"]  # e.g. https://mycompany.s4hana.cloud.sap
 SAP_CLIENT_ID = os.environ["SAP_CLIENT_ID"]
@@ -204,6 +204,7 @@ class SalesOrderStatusController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=SalesOrderStatusController,

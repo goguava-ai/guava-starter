@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 API_LOGIN_ID = os.environ["AUTHORIZENET_API_LOGIN_ID"]
 TRANSACTION_KEY = os.environ["AUTHORIZENET_TRANSACTION_KEY"]
@@ -325,6 +325,7 @@ class BalanceCollectionController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Call a patient to collect an outstanding balance."
     )

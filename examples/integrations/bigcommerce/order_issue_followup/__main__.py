@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 STORE_HASH = os.environ["BIGCOMMERCE_STORE_HASH"]
 ACCESS_TOKEN = os.environ["BIGCOMMERCE_ACCESS_TOKEN"]
@@ -184,6 +184,7 @@ class OrderIssueFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound call to follow up with a customer about a flagged order issue."
     )

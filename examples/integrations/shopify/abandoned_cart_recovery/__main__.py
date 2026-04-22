@@ -2,9 +2,9 @@ import argparse
 import guava
 import os
 import logging
+from guava import logging_utils
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 STORE = os.environ["SHOPIFY_STORE"]
 BASE_URL = f"https://{STORE}.myshopify.com/admin/api/2026-01"
@@ -164,6 +164,7 @@ class AbandonedCartRecoveryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkout-token", required=True, help="Shopify abandoned checkout token")
     parser.add_argument("--customer-name", required=True, help="Customer's first name")

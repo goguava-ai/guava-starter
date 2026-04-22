@@ -15,6 +15,7 @@ multi-turn conversations.
 import guava
 import os
 import logging
+from guava import logging_utils
 import tempfile
 
 import httpx
@@ -22,7 +23,6 @@ from google import genai
 from guava.helpers.rag import LanceDBStore, VertexAIEmbedding
 from guava.helpers.rag.chunking import chunk_document
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 genai_client = genai.Client(vertexai=True, location="us-central1")
@@ -182,6 +182,7 @@ class WikipediaOpenQAController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=WikipediaOpenQAController,

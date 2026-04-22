@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import psycopg2
 import psycopg2.extras
 
-logging.basicConfig(level=logging.INFO)
 
 PRIORITY_MAP = {
     "blocking my entire team": "critical",
@@ -174,6 +174,7 @@ class IncidentReportController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=IncidentReportController,

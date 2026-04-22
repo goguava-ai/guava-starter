@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://api.mindbodyonline.com/public/v6"
 API_KEY = os.environ["MINDBODY_API_KEY"]
@@ -252,6 +252,7 @@ class ClassWaitlistOpeningController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Notify a waitlisted client that a spot has opened in a class."
     )

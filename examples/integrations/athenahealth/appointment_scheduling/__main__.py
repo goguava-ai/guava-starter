@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import requests
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 PRACTICE_ID = os.environ["ATHENA_PRACTICE_ID"]
 BASE_URL = f"https://api.platform.athenahealth.com/v1/{PRACTICE_ID}"
@@ -278,6 +278,7 @@ class AppointmentSchedulingController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     guava.Client().listen_inbound(
         agent_number=os.environ["GUAVA_AGENT_NUMBER"],
         controller_class=AppointmentSchedulingController,

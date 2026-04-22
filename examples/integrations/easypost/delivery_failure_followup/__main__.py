@@ -1,10 +1,10 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import argparse
 import requests
 
-logging.basicConfig(level=logging.INFO)
 
 EASYPOST_API_KEY = os.environ["EASYPOST_API_KEY"]
 BASE_URL = "https://api.easypost.com/v2"
@@ -195,6 +195,7 @@ class DeliveryFailureFollowupController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Outbound call for delivery failure follow-up"
     )

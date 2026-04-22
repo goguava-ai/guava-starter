@@ -1,12 +1,12 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 import requests
 from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO)
 
 STORE_HASH = os.environ["BIGCOMMERCE_STORE_HASH"]
 AUTH_TOKEN = os.environ["BIGCOMMERCE_AUTH_TOKEN"]
@@ -274,6 +274,7 @@ class AbandonedCartRecoveryController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Harbor House abandoned cart recovery agent"
     )

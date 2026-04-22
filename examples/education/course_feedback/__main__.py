@@ -1,11 +1,11 @@
 import guava
 import os
 import logging
+from guava import logging_utils
 import json
 import argparse
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
 
 
 class CourseFeedbackController(guava.CallController):
@@ -146,6 +146,7 @@ class CourseFeedbackController(guava.CallController):
 
 
 if __name__ == "__main__":
+    logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
         description="Post-term course feedback call to collect student ratings and comments"
     )
