@@ -17,7 +17,9 @@ from guava import logging_utils
 
 import httpx
 from google import genai
-from guava.helpers.rag import DocumentQA, LanceDBStore, VertexAIEmbedding, VertexAIGeneration
+from guava.helpers.rag import DocumentQA
+from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.vertexai import VertexAIEmbedding, VertexAIGeneration
 
 logger = logging.getLogger(__name__)
 

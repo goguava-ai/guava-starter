@@ -23,8 +23,11 @@ from guava import logging_utils
 from pathlib import Path
 
 import guava
+from google import genai
 from simple_salesforce import Salesforce
-from guava.helpers.rag import DocumentQA, LanceDBStore
+from guava.helpers.rag import DocumentQA
+from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +50,14 @@ DOCUMENTS = [
 ]
 logger.info("Loaded %d articles from Salesforce Knowledge.", len(DOCUMENTS))
 
+genai_client = genai.Client(vertexai=True)
 DOCUMENT_QA = DocumentQA(
     documents=DOCUMENTS,
     ids=IDS,
-    store=LanceDBStore(path=str(Path(__file__).parent / "lancedb_data")),
+    store=LanceDBStore(
+        path=str(Path(__file__).parent / "lancedb_data"),
+        embedding_model=VertexAIEmbedding(client=genai_client),
+    ),
 )
 
 agent = guava.Agent()

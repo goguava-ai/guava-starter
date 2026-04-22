@@ -15,13 +15,15 @@ multi-turn conversations.
 import guava
 import os
 import logging
+from dataclasses import dataclass, field
 from guava import logging_utils
 import tempfile
 
 import httpx
 from google import genai
-from guava.helpers.rag import LanceDBStore, VertexAIEmbedding
-from guava.helpers.rag.chunking import chunk_document
+from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.vertexai import VertexAIEmbedding
+from guava.helpers.rag import chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ def _rewrite_query(question: str, history: list[tuple[str, str]], instructions: 
         contents=f"Conversation history:\n{history_text}\n\nFollow-up question: {question}",
         config={"system_instruction": instructions},
     )
-    return response.text.strip()
+    return (response.text or "").strip()
 
 
 def _generate_answer(chunks: list[str], question: str, instructions: str = _DEFAULT_INSTRUCTIONS) -> str:
@@ -75,7 +77,7 @@ def _generate_answer(chunks: list[str], question: str, instructions: str = _DEFA
         contents=f"Context:\n{context}\n\nQuestion: {question}",
         config={"system_instruction": instructions},
     )
-    return response.text.strip()
+    return (response.text or "").strip()
 
 
 class DynamicWikipediaRetriever:
@@ -122,6 +124,16 @@ class DynamicWikipediaRetriever:
         return text
 
 
+@dataclass
+class CallState:
+    history: list[tuple[str, str]] = field(default_factory=list)
+    processed_titles: set[str] = field(default_factory=set)
+    tmpdir: str = ""
+    store: LanceDBStore | None = None
+
+
+_call_states: dict[int, CallState] = {}
+
 WIKI = DynamicWikipediaRetriever()
 
 agent = guava.Agent()
@@ -134,56 +146,59 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    # Per-call state: conversation history, accumulated chunks, and a per-call LanceDB store
-    call.history: list[tuple[str, str]] = []
-    call.processed_titles: set[str] = set()
-    # Each call gets an isolated in-memory LanceDB store (temp dir, cleared on exit)
-    call.tmpdir = tempfile.mkdtemp(prefix="guava_wiki_")
-    call.store = LanceDBStore(
-        path=call.tmpdir,
-        embedding_model=VertexAIEmbedding(client=genai_client),
+    tmpdir = tempfile.mkdtemp(prefix="guava_wiki_")
+    _call_states[id(call)] = CallState(
+        tmpdir=tmpdir,
+        store=LanceDBStore(
+            path=tmpdir,
+            embedding_model=VertexAIEmbedding(client=genai_client),
+        ),
     )
     call.read_script("Hello, how can I help you today?")
 
 
-def _fetch_new_articles(call: guava.Call, query: str) -> bool:
+def _fetch_new_articles(state: CallState, query: str) -> bool:
     """Search Wikipedia and add any new articles to the per-call store."""
-    search_query = _rewrite_query(query, call.history, _WIKI_REWRITE_INSTRUCTIONS)
+    search_query = _rewrite_query(query, state.history, _WIKI_REWRITE_INSTRUCTIONS)
+    assert state.store is not None
     added = False
     for title in WIKI.search(search_query):
-        if title not in call.processed_titles:
+        if title not in state.processed_titles:
             text = WIKI.fetch_article(title)
             if text:
                 chunks = chunk_document(text)
-                call.store.add_texts(chunks)
-                call.processed_titles.add(title)
+                state.store.add_texts(chunks)
+                state.processed_titles.add(title)
                 added = True
     return added
 
 
 @agent.on_question
 def on_question(call: guava.Call, question: str) -> str:
+    state = _call_states[id(call)]
+    assert state.store is not None
+
     # Rewrite follow-ups into standalone queries
-    rewritten = _rewrite_query(question, call.history, _REWRITE_INSTRUCTIONS)
+    rewritten = _rewrite_query(question, state.history, _REWRITE_INSTRUCTIONS)
 
     # Step 1: Try answering from articles already fetched in this call.
-    if call.store.count() > 0:
-        chunks = call.store.search(rewritten, k=20)
+    if state.store.count() > 0:
+        chunks = state.store.search(rewritten, k=20)
         answer = _generate_answer(chunks, rewritten, _TRY_INSTRUCTIONS)
         if "NEED_MORE_INFO" not in answer:
-            call.history.append((question, answer))
+            state.history.append((question, answer))
             return answer
 
     # Step 2: Cached context was insufficient — fetch new Wikipedia articles
-    if not _fetch_new_articles(call, rewritten) and call.store.count() == 0:
+    if not _fetch_new_articles(state, rewritten) and state.store.count() == 0:
         answer = "I'm sorry, I couldn't find any information on that topic."
-        call.history.append((question, answer))
+        state.history.append((question, answer))
         return answer
 
     # Step 3: Answer from the expanded store (old + newly fetched articles)
-    chunks = call.store.search(rewritten, k=20)
+    chunks = state.store.search(rewritten, k=20)
     answer = _generate_answer(chunks, rewritten)
-    call.history.append((question, answer))
+    state.history.append((question, answer))
     return answer
 
 

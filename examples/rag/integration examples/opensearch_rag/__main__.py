@@ -31,8 +31,7 @@ import boto3
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 from google import genai
-from guava.helpers.rag import DocumentQA, VectorStore
-from guava.helpers.rag.chunking import chunk_document
+from guava.helpers.rag import DocumentQA, VectorStore, chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +171,6 @@ genai_client = genai.Client(vertexai=True)
 DOCUMENT_QA = DocumentQA(
     documents=DOCUMENTS,
     store=OpenSearchVectorStore(os_client, INDEX_NAME, MODEL_ID, PIPELINE_NAME),
-    client=genai_client,
 )
 
 agent = guava.Agent()

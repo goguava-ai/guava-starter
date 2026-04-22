@@ -24,8 +24,9 @@ from pathlib import Path
 
 import anthropic
 from google import genai
-from guava.helpers.rag import LanceDBStore, VertexAIEmbedding
-from guava.helpers.rag.chunking import chunk_document
+from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.vertexai import VertexAIEmbedding
+from guava.helpers.rag import chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def on_question(call: guava.Call, question: str) -> str:
         contents=f"Context:\n{context}\n\nQuestion: {question}",
         config={"system_instruction": _DEFAULT_INSTRUCTIONS},
     )
-    return response.text
+    return response.text or ""
 
 
 if __name__ == "__main__":

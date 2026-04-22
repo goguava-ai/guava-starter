@@ -11,6 +11,7 @@ import guava
 import os
 from pathlib import Path
 
+from guava import logging_utils
 from guava.helpers.rag import DocumentQA
 import logging
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"

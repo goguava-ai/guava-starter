@@ -28,19 +28,27 @@ import logging
 from guava import logging_utils
 from pathlib import Path
 
-from guava.helpers.rag import DocumentQA, PgVectorStore
+from google import genai
+from guava.helpers.rag import DocumentQA
+from guava.helpers.pgvector import PgVectorStore
+from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)
 
 # Load all policy documents and build the vector index at startup.
 # PgVectorStore persists embeddings in Postgres, so documents are only
 # embedded on first run (DocumentQA skips indexing when the table is populated).
+genai_client = genai.Client(vertexai=True)
+
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]
 
 DOCUMENT_QA = DocumentQA(
     documents=DOCUMENTS,
-    store=PgVectorStore(db_url=os.environ["DATABASE_URL"]),
+    store=PgVectorStore(
+        db_url=os.environ["DATABASE_URL"],
+        embedding_model=VertexAIEmbedding(client=genai_client),
+    ),
 )
 
 agent = guava.Agent()

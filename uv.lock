@@ -374,17 +374,16 @@ dependencies = [
     { name = "guava-sdk" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "ty" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "guava-sdk", specifier = ">=0.22.0" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.32" },
-]
-provides-extras = ["dev"]
+requires-dist = [{ name = "guava-sdk", specifier = ">=0.22.0" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ty", specifier = ">=0.0.32" }]
 
 [[package]]
 name = "h11"

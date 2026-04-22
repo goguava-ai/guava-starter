@@ -21,7 +21,8 @@ from guava import logging_utils
 import os
 from pathlib import Path
 
-from guava.helpers.rag import DocumentQA, PineconeVectorStore
+from guava.helpers.rag import DocumentQA
+from guava.helpers.pinecone import PineconeVectorStore
 
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]

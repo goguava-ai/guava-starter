@@ -29,8 +29,8 @@ from guava.helpers.rag import (
     DocumentQA,
     EmbeddingModel,
     GenerationModel,
-    LanceDBStore,
 )
+from guava.helpers.lancedb import LanceDBStore
 
 logger = logging.getLogger(__name__)
 

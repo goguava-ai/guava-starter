@@ -7,7 +7,7 @@ dependencies = [
     "guava-sdk>=0.22.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "ty>=0.0.32",
 ]

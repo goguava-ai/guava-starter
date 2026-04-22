@@ -87,7 +87,7 @@ class ElasticsearchVectorStore(VectorStore):
                 task_type=task_type,
             ),
         )
-        return [e.values for e in response.embeddings]
+        return [e.values for e in (response.embeddings or []) if e.values is not None]
 
     def add_texts(self, texts: list[str]) -> list[str]:
         ids = [str(self._offset + i) for i in range(len(texts))]
@@ -151,7 +151,6 @@ genai_client = genai.Client(vertexai=True)
 DOCUMENT_QA = DocumentQA(
     documents=DOCUMENTS,
     store=ElasticsearchVectorStore(genai_client, es, INDEX_NAME),
-    client=genai_client,
 )
 
 agent = guava.Agent()
