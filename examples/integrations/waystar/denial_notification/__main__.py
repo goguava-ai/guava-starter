@@ -57,7 +57,7 @@ def update_claim_followup_status(claim_id: str, outcome: str) -> None:
         headers=headers,
         json={
             "workflowStatus": "patient_notified",
-            "notes": f"Patient notified of denial on {datetime.utcnow().strftime('%Y-%m-%d')}: {outcome}",
+            "notes": f"Patient notified of denial on {datetime.now(timezone.utc).strftime('%Y-%m-%d')}: {outcome}",
         },
         timeout=10,
     )

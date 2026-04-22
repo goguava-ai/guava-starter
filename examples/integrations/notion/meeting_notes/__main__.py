@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -117,7 +117,7 @@ class MeetingNotesController(guava.CallController):
                     field_type="text",
                     description=(
                         "Ask when the meeting took place. "
-                        f"Today is {datetime.utcnow().strftime('%B %d, %Y')}. "
+                        f"Today is {datetime.now(timezone.utc).strftime('%B %d, %Y')}. "
                         "Capture in YYYY-MM-DD format."
                     ),
                     required=False,
@@ -151,7 +151,7 @@ class MeetingNotesController(guava.CallController):
 
     def save_meeting_notes(self):
         meeting_title = self.get_field("meeting_title") or "Meeting Notes"
-        meeting_date = self.get_field("meeting_date") or datetime.utcnow().strftime("%Y-%m-%d")
+        meeting_date = self.get_field("meeting_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         attendees = self.get_field("attendees") or ""
         summary = self.get_field("summary") or ""
         action_items = self.get_field("action_items") or ""

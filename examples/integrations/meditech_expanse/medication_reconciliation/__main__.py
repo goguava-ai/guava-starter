@@ -270,7 +270,7 @@ class MedicationReconciliationController(guava.CallController):
 
         note_text = (
             f"Pre-admission medication reconciliation completed on "
-            f"{datetime.utcnow().strftime('%Y-%m-%d')} via Guava voice agent (Sam). "
+            f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')} via Guava voice agent (Sam). "
             f"Medications on file reviewed: {'; '.join(med_names_on_file)}. "
             f"Patient taking all: {still_taking_all}. "
             f"Stopped medications: {stopped_medications}. "

@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,7 +62,7 @@ def get_account_alert(account_id: str) -> dict | None:
 
 def record_alert_response(account_id: str, customer_name: str, decision: str, notes: str) -> None:
     """Inserts the customer's response decision into the ALERT_RESPONSES table."""
-    responded_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    responded_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     statement = (
         "INSERT INTO ALERT_RESPONSES (ACCOUNT_ID, CUSTOMER_NAME, DECISION, NOTES, RESPONDED_AT) "
         "VALUES (?, ?, ?, ?, ?)"

@@ -167,7 +167,7 @@ class PostEvaluationCoachingController(guava.CallController):
         first_name = self.agent_name.split()[0] if self.agent_name else "there"
 
         # Map preference to approximate date
-        today = datetime.utcnow()
+        today = datetime.now(timezone.utc)
         date_map = {
             "this week": today.strftime("%Y-%m-%d"),
             "next week": (today.replace(day=today.day + 7)).strftime("%Y-%m-%d"),

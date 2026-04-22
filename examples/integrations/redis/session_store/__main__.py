@@ -37,7 +37,7 @@ class SessionStoreController(guava.CallController):
 
         # Use the inbound call's caller number + timestamp as the session ID.
         caller_phone = self.get_caller_number() or "unknown"
-        self.session_id = f"{caller_phone.lstrip('+')}-{int(datetime.utcnow().timestamp())}"
+        self.session_id = f"{caller_phone.lstrip('+')}-{int(datetime.now(timezone.utc).timestamp())}"
 
         logging.info("Call session started: %s", self.session_id)
 

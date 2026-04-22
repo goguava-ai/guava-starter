@@ -169,7 +169,7 @@ class MeetingFollowupController(guava.CallController):
         timing = self.get_field("next_step_timing") or ""
 
         note_lines = [
-            f"Post-meeting follow-up — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Post-meeting follow-up — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Meeting topic: {self.meeting_topic}",
             f"Overall impression: {impression}",
             f"Internal alignment: {alignment}",

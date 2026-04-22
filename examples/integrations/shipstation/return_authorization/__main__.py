@@ -3,7 +3,7 @@ import os
 import logging
 import requests
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,7 +60,7 @@ def create_return_label(order: dict, return_reason: str) -> dict | None:
         "serviceCode": service_code,
         "packageCode": "package",
         "confirmation": "none",
-        "shipDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "shipDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "weight": {"value": 16, "units": "ounces"},
         "shipFrom": {
             "name": ship_from.get("name", ""),

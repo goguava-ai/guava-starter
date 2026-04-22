@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,8 +24,8 @@ def lookup_access_token(user_id: str) -> str | None:
 
 def get_transactions(access_token: str, days: int = 30) -> list[dict]:
     """Fetches recent transactions using /transactions/get."""
-    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-    end_date = datetime.utcnow().strftime("%Y-%m-%d")
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     payload = {
         "access_token": access_token,

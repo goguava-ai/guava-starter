@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -37,7 +37,7 @@ def create_nps_response(contact_id: str, account_id: str, score: int, category: 
         "NPS_Score__c": score,
         "NPS_Category__c": category,
         "Verbatim_Feedback__c": verbatim,
-        "Survey_Date__c": datetime.utcnow().strftime("%Y-%m-%d"),
+        "Survey_Date__c": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "Channel__c": "Phone",
     }
     resp = requests.post(
@@ -60,7 +60,7 @@ def log_task(contact_id: str, account_id: str, subject: str, description: str) -
         "Priority": "Normal",
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -185,7 +185,7 @@ class NpsSurveyController(guava.CallController):
                     account_id,
                     subject=f"NPS Survey — Score {score} ({category})",
                     description=(
-                        f"NPS survey completed — {datetime.utcnow().strftime('%Y-%m-%d')}\n"
+                        f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"
                         f"Score: {score} ({category})\n"
                         f"Feedback: {verbatim}"
                     ),

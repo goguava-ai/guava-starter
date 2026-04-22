@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -121,7 +121,7 @@ class LeadCaptureController(guava.CallController):
             "Urgency": urgency,
             "Source": "Inbound Phone Call",
             "Status": "New",
-            "Date Captured": datetime.utcnow().strftime("%Y-%m-%d"),
+            "Date Captured": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
         # Remove empty optional fields
         fields = {k: v for k, v in fields.items() if v}

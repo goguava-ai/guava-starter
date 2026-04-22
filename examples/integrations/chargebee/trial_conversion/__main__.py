@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,7 +25,7 @@ def end_trial_now(subscription_id: str) -> dict | None:
     resp = requests.post(
         f"{BASE_URL}/subscriptions/{subscription_id}/change_term_end",
         auth=AUTH,
-        data={"term_ends_at": str(int(datetime.utcnow().timestamp())), "prorate": "false"},
+        data={"term_ends_at": str(int(datetime.now(timezone.utc).timestamp())), "prorate": "false"},
         timeout=10,
     )
     resp.raise_for_status()

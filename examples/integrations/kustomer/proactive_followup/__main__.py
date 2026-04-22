@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -147,7 +147,7 @@ class ProactiveFollowupController(guava.CallController):
             self.conv_id, issue_resolved, preferred_followup,
         )
 
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         note_lines = [
             f"Proactive follow-up call — {timestamp}",
             f"Customer: {self.customer_name}",
@@ -216,7 +216,7 @@ class ProactiveFollowupController(guava.CallController):
         try:
             note = (
                 f"Proactive follow-up call attempted — "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
                 f"Customer: {self.customer_name}\n"
                 "Outcome: Customer not available — voicemail left."
             )

@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,7 +27,7 @@ def create_feedback_page(
 ) -> dict | None:
     properties: dict = {
         "Name": {
-            "title": [{"text": {"content": f"Feedback from {submitter} — {datetime.utcnow().strftime('%Y-%m-%d')}"}}]
+            "title": [{"text": {"content": f"Feedback from {submitter} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"}}]
         },
         "Status": {"select": {"name": "New"}},
     }
@@ -44,7 +44,7 @@ def create_feedback_page(
     if follow_up_needed is not None:
         properties["Follow-Up Needed"] = {"checkbox": follow_up_needed}
 
-    properties["Date"] = {"date": {"start": datetime.utcnow().strftime("%Y-%m-%d")}}
+    properties["Date"] = {"date": {"start": datetime.now(timezone.utc).strftime("%Y-%m-%d")}}
 
     children = []
     if feedback:

@@ -205,7 +205,7 @@ class OrderCancellationController(guava.CallController):
 
         # Apply the cancellation to BigCommerce
         # status_id 5 = Cancelled; include the reason in staff_notes for the ops team
-        staff_note = f"Cancelled via phone — reason: {cancel_reason}. Timestamp: {datetime.utcnow().isoformat()}Z"
+        staff_note = f"Cancelled via phone — reason: {cancel_reason}. Timestamp: {datetime.now(timezone.utc).isoformat()}Z"
         try:
             update_resp = requests.put(
                 f"{V2_BASE}/orders/{order_id}",

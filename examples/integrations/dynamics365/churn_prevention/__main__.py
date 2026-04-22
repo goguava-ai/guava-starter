@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -179,7 +179,7 @@ class ChurnPreventionController(guava.CallController):
         )
 
         note_lines = [
-            f"Retention call completed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Retention call completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Contact: {self.contact_name}",
             f"Overall satisfaction: {satisfaction}",
             f"Likelihood to renew: {likelihood}",

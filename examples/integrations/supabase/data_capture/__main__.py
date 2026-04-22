@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -111,7 +111,7 @@ class DataCaptureController(guava.CallController):
             "email": email,
             "status": "new",
             "source": "inbound_phone",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         if phone:
             data["phone"] = phone

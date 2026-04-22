@@ -4,7 +4,7 @@ import logging
 import base64
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -128,7 +128,7 @@ class OutageNotifyController(guava.CallController):
         needs_callback = self.get_field("needs_callback") or "no"
 
         comment_body = (
-            f"Outage notification call completed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"Outage notification call completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
             f"Customer notified: {self.customer_name}\n"
             f"Callback requested: {needs_callback}"
         )
@@ -162,7 +162,7 @@ class OutageNotifyController(guava.CallController):
             add_public_comment(
                 self.ticket_id,
                 (
-                    f"Outage notification attempted — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+                    f"Outage notification attempted — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
                     f"Customer: {self.customer_name} — not available, voicemail left."
                 ),
             )

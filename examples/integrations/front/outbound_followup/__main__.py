@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -131,7 +131,7 @@ class OutboundFollowupController(guava.CallController):
         can_close = self.get_field("can_close") or "keep it open"
 
         note_lines = [
-            f"Follow-up call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Follow-up call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Spoke with: {self.contact_name}",
             f"Resolution status: {resolved}",
             f"Can close: {can_close}",
@@ -182,7 +182,7 @@ class OutboundFollowupController(guava.CallController):
                 self.conversation_id,
                 self.author_id,
                 f"Follow-up call attempted — {self.contact_name} unavailable, voicemail left. "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             )
         except Exception as e:
             logging.error("Failed to add voicemail comment: %s", e)

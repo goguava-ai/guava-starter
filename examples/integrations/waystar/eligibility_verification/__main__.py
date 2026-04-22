@@ -54,7 +54,7 @@ def verify_eligibility(
             "dateOfBirth": date_of_birth,
         },
         "serviceTypes": [service_type],
-        "dateOfService": datetime.utcnow().strftime("%Y-%m-%d"),
+        "dateOfService": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{WAYSTAR_BASE_URL}/eligibility/v1/inquiries",

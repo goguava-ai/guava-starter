@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,7 +44,7 @@ def find_patient_by_name_dob(family: str, given: str, dob: str) -> dict | None:
 
 def get_upcoming_appointments(patient_id: str) -> list:
     """Returns upcoming Appointments for a patient."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
         f"{CERNER_FHIR_BASE_URL}/Appointment",
         headers=FHIR_HEADERS,

@@ -171,7 +171,7 @@ class IntakeFormsController(guava.CallController):
             f"Pre-visit intake — Sunrise Family Practice",
             f"Patient: {self.patient_name}",
             f"Appointment: {self.appointment_date}",
-            f"Collected: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Collected: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             "",
             f"Chief complaint: {chief_complaint}",
             f"Symptom duration: {symptom_duration}",

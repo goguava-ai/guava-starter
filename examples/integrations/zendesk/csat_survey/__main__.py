@@ -4,7 +4,7 @@ import logging
 import base64
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -138,7 +138,7 @@ class CsatSurveyController(guava.CallController):
 
         # Post an internal note to the ticket so the CSAT data lives alongside the case.
         note_lines = [
-            f"CSAT survey completed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"CSAT survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Customer: {self.customer_name}",
             f"Satisfaction rating: {rating}/5",
             f"Issue fully resolved: {resolution}",

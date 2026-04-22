@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -76,7 +76,7 @@ def create_service_request(patient_id: str, medication_name: str, pharmacy: str,
         },
         "subject": {"reference": f"Patient/{patient_id}"},
         "note": [{"text": notes}],
-        "occurrenceDateTime": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "occurrenceDateTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "patientInstruction": f"Preferred pharmacy: {pharmacy}" if pharmacy else "",
     }
     resp = requests.post(

@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -210,7 +210,7 @@ class CaseCreationController(guava.CallController):
 
             # Add internal note with caller context
             note_text = (
-                f"Case opened via voice call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+                f"Case opened via voice call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
                 f"Caller: {name}\n"
                 f"Email: {email}\n"
                 f"Issue type: {issue_type}\n"

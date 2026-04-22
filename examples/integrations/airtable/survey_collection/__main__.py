@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 logging.basicConfig(level=logging.INFO)
@@ -99,7 +99,7 @@ class SurveyCollectionController(guava.CallController):
             "What Went Well": what_went_well,
             "Improvement Suggestions": improvement_suggestion,
             "Likelihood to Recommend": recommend,
-            "Response Date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "Response Date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "Channel": "Phone",
         }
         fields = {k: v for k, v in fields.items() if v is not None and v != ""}

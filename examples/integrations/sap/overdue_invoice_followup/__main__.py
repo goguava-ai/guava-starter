@@ -159,7 +159,7 @@ class OverdueInvoiceFollowupController(guava.CallController):
         print(json.dumps(outcome, indent=2))
 
         # Record the dunning call result in SAP
-        dunning_note = f"Dunning call {datetime.utcnow().strftime('%Y%m%d')}: {payment_status}"
+        dunning_note = f"Dunning call {datetime.now(timezone.utc).strftime('%Y%m%d')}: {payment_status}"
         try:
             update_billing_document_status(self.invoice_id, dunning_note)
             logging.info("Dunning outcome recorded for invoice %s", self.invoice_id)

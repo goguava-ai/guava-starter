@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,7 +39,7 @@ def log_task(account_id: str, subject: str, description: str, priority: str = "H
         "Priority": priority,
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -175,7 +175,7 @@ class ChurnPreventionController(guava.CallController):
         )
 
         description_lines = [
-            f"Churn prevention outreach — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Churn prevention outreach — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.contact_name}",
             f"Satisfaction: {satisfaction}",
             f"Renewal likelihood: {likelihood}",
@@ -239,7 +239,7 @@ class ChurnPreventionController(guava.CallController):
                 subject="Churn prevention call — contact unavailable",
                 description=(
                     f"Attempted outreach to {self.contact_name} — contact unavailable, voicemail left.\n"
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
                 ),
                 priority="High",
             )

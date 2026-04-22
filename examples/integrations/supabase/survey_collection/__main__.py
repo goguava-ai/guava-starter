@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -114,7 +114,7 @@ class SurveyCollectionController(guava.CallController):
         data: dict = {
             "respondent_name": respondent_name,
             "channel": "phone",
-            "submitted_at": datetime.utcnow().isoformat(),
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
         }
         if email:
             data["email"] = email

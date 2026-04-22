@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,7 +58,7 @@ def estimate_next_billing_date(start_date_str: str, interval_length: int, interv
     """
     try:
         start = datetime.strptime(start_date_str[:10], "%Y-%m-%d")
-        today = datetime.utcnow()
+        today = datetime.now(timezone.utc)
         if interval_unit == "months":
             # Approximate: advance month by month
             current = start

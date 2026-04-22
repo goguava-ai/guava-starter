@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -167,7 +167,7 @@ class NpsSurveyController(guava.CallController):
             category = "Unknown"
 
         note_lines = [
-            f"NPS survey completed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Customer: {self.contact_name}",
             f"NPS score: {nps_score}/10 ({category})",
         ]

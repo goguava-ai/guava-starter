@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,7 +33,7 @@ def log_note_on_opportunity(opp_id: str, body: str) -> None:
     """Creates a Note associated with the Opportunity via the ContentNote or classic Note API."""
     payload = {
         "ParentId": opp_id,
-        "Title": f"Win/Loss Survey — {datetime.utcnow().strftime('%Y-%m-%d')}",
+        "Title": f"Win/Loss Survey — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
         "Body": body,
         "IsPrivate": False,
     }
@@ -66,7 +66,7 @@ def log_task(what_id: str, subject: str, description: str) -> None:
         "Priority": "Normal",
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -201,7 +201,7 @@ class WinLossSurveyController(guava.CallController):
         future = self.get_field("would_consider_future") or ""
 
         note_lines = [
-            f"Win/Loss Survey — {self.deal_outcome.title()} — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Win/Loss Survey — {self.deal_outcome.title()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.contact_name}",
             f"Opportunity: {self.opp_name}",
             f"Primary decision factor: {decision_factor}",
@@ -257,7 +257,7 @@ class WinLossSurveyController(guava.CallController):
                 subject="Win/Loss Survey — contact unavailable",
                 description=(
                     f"Win/loss survey attempted — {self.contact_name} unavailable.\n"
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
                 ),
             )
         except Exception as e:

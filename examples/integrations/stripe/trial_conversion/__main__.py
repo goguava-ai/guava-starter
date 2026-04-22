@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -76,7 +76,7 @@ class TrialConversionController(guava.CallController):
                 if trial_end:
                     trial_dt = datetime.utcfromtimestamp(trial_end)
                     self.trial_end_date = trial_dt.strftime("%B %d, %Y")
-                    self.days_remaining = max(0, (trial_dt - datetime.utcnow()).days)
+                    self.days_remaining = max(0, (trial_dt - datetime.now(timezone.utc)).days)
 
                 items = sub.get("items", {}).get("data", [])
                 if items:

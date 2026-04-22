@@ -53,7 +53,7 @@ def build_claim_payload(
     service_date: str,
     charge_amount: str,
 ) -> dict:
-    control_number = datetime.utcnow().strftime("%H%M%S%f")[:9]
+    control_number = datetime.now(timezone.utc).strftime("%H%M%S%f")[:9]
     return {
         "controlNumber": control_number,
         "tradingPartnerServiceId": payer_id,
@@ -208,7 +208,7 @@ class ClaimSubmissionTriggerController(guava.CallController):
         patient_last = self.patient_name.split()[-1] if self.patient_name else "Unknown"
         diagnosis_code = os.environ.get("DEMO_DIAGNOSIS_CODE", "Z00.00")
         procedure_code = os.environ.get("DEMO_PROCEDURE_CODE", "99213")
-        service_date = os.environ.get("DEMO_SERVICE_DATE", datetime.utcnow().strftime("%Y-%m-%d"))
+        service_date = os.environ.get("DEMO_SERVICE_DATE", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         charge_amount = os.environ.get("DEMO_CHARGE_AMOUNT", "150.00")
 
         payload = build_claim_payload(

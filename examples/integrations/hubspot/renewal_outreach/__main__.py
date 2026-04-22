@@ -180,7 +180,7 @@ class RenewalOutreachController(guava.CallController):
         }
 
         note_lines = [
-            f"Renewal outreach call — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Renewal outreach call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Customer: {self.customer_name}",
             f"Satisfaction: {satisfaction}",
             f"Renewal intent: {intent}",

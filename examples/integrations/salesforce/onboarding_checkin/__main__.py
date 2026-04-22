@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -59,7 +59,7 @@ def log_task(account_id: str, subject: str, description: str) -> None:
         "Priority": "Normal",
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -72,7 +72,7 @@ def log_task(account_id: str, subject: str, description: str) -> None:
 
 def create_followup_task(account_id: str, subject: str, description: str, due_days: int = 3) -> None:
     """Creates an open follow-up Task due in the future."""
-    due_date = (datetime.utcnow() + __import__("datetime").timedelta(days=due_days)).strftime("%Y-%m-%d")
+    due_date = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=due_days)).strftime("%Y-%m-%d")
     payload = {
         "WhatId": account_id,
         "Subject": subject,
@@ -209,7 +209,7 @@ class OnboardingCheckinController(guava.CallController):
         new_status = ONBOARDING_STATUS_MAP.get(progress, "In Progress")
 
         notes_lines = [
-            f"Onboarding check-in — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Onboarding check-in — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.contact_name}",
             f"Progress: {progress}",
             f"Confidence level: {confidence}",
@@ -303,7 +303,7 @@ class OnboardingCheckinController(guava.CallController):
                 subject="Onboarding check-in — contact unavailable",
                 description=(
                     f"Onboarding check-in attempted — {self.contact_name} unavailable.\n"
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
                 ),
             )
         except Exception as e:

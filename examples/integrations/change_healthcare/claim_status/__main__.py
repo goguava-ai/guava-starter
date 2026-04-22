@@ -36,7 +36,7 @@ def get_claim_status(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    control_number = datetime.utcnow().strftime("%H%M%S%f")[:9]
+    control_number = datetime.now(timezone.utc).strftime("%H%M%S%f")[:9]
     payload = {
         "controlNumber": control_number,
         "tradingPartnerServiceId": payer_id,

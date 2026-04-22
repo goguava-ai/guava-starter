@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -184,7 +184,7 @@ class ConversationCreateController(guava.CallController):
         if conv_id:
             try:
                 note = (
-                    f"[Voice call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}]\n"
+                    f"[Voice call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}]\n"
                     f"Caller: {name} | Email: {email}\n"
                     f"Issue type: {issue_type}\n"
                     f"Preferred response: {response_pref}"

@@ -184,7 +184,7 @@ class WinLossSurveyController(guava.CallController):
         likely_to_return = self.get_field("likely_to_return") or ""
 
         note_lines = [
-            f"Win/Loss Survey — {self.outcome.upper()} — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Win/Loss Survey — {self.outcome.upper()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.customer_name}",
             f"Deal: {self.deal_name}",
             f"Primary reason: {primary_reason}",

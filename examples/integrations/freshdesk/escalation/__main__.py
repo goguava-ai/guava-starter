@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -138,7 +138,7 @@ class EscalationController(guava.CallController):
         subject = ticket.get("subject") or "their issue"
 
         note_lines = [
-            f"ESCALATION — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"ESCALATION — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Escalated by: {name} (via phone)",
             f"Reason: {reason}",
             f"Detail: {detail}",

@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -158,7 +158,7 @@ class TagAndAssignController(guava.CallController):
             f"<p><strong>Category:</strong> {category}<br>"
             f"<strong>Urgency:</strong> {urgency}</p>"
             f"<p><strong>Summary:</strong><br>{summary}</p>"
-            f"<p><em>Via voice — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
+            f"<p><em>Via voice — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
         )
 
         logging.info("Creating Front conversation for %s — category: %s, urgency: %s", name, category, urgency)

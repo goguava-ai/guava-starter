@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -131,7 +131,7 @@ class ChangeNotificationController(guava.CallController):
         reschedule = self.get_field("needs_reschedule") or "window is fine"
 
         note_lines = [
-            f"Change notification call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Change notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             f"Notified: {self.contact_name}",
             f"Acknowledged: {acknowledged}",
             f"Window preference: {reschedule}",
@@ -184,7 +184,7 @@ class ChangeNotificationController(guava.CallController):
                 add_work_note(
                     self.change_sys_id,
                     f"Change notification attempted — {self.contact_name} unavailable, voicemail left. "
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
                 )
             except Exception as e:
                 logging.error("Failed to add voicemail work note: %s", e)

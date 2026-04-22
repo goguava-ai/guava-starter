@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -183,7 +183,7 @@ class OutboundReengagementController(guava.CallController):
 
         custom_attrs = {
             "reengagement_outcome": interest,
-            "reengagement_date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "reengagement_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
         try:
             update_contact(self.contact_id, {"custom_attributes": custom_attrs})

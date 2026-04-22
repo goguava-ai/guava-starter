@@ -110,7 +110,7 @@ class ScheduleInquiryController(guava.CallController):
         date_pref = self.get_field("date_preference")
         specific = (self.get_field("specific_date") or "").strip()
 
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         if date_pref == "today":
             target_date = today
         elif date_pref == "tomorrow":

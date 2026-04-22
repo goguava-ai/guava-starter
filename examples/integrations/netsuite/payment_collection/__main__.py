@@ -56,7 +56,7 @@ def apply_customer_payment(customer_id: str, invoice_id: str, amount: float, mem
             ]
         },
         "memo": memo,
-        "trandate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "trandate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{REST_BASE}/customerPayment",
@@ -168,7 +168,7 @@ class PaymentCollectionController(guava.CallController):
         )
 
         memo_note = (
-            f"Collection call {datetime.utcnow().strftime('%Y-%m-%d')}: "
+            f"Collection call {datetime.now(timezone.utc).strftime('%Y-%m-%d')}: "
             f"{payment_status}"
             + (f" — ref: {payment_reference}" if payment_reference else "")
         )
@@ -240,7 +240,7 @@ class PaymentCollectionController(guava.CallController):
         logging.info(
             "Unable to reach %s for invoice %s collection", self.contact_name, self.invoice_number
         )
-        memo_note = f"Collection voicemail left {datetime.utcnow().strftime('%Y-%m-%d')}"
+        memo_note = f"Collection voicemail left {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         try:
             add_invoice_memo(self.invoice_id, memo_note)
         except Exception as e:

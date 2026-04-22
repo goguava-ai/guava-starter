@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -143,7 +143,7 @@ class ConversationCreateController(guava.CallController):
             f"<p><strong>Inquiry type:</strong> {inquiry_type}</p>"
             f"<p><strong>Detail:</strong><br>{detail}</p>"
             f"<p><strong>Urgency:</strong> {urgency}</p>"
-            f"<p><em>Received via voice — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
+            f"<p><em>Received via voice — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
         )
 
         logging.info("Creating Front conversation for %s (%s) — type: %s", name, email, inquiry_type)

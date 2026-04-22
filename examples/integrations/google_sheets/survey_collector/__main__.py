@@ -32,7 +32,7 @@ def append_response(
     recommend: str,
 ) -> None:
     """Appends one survey response row to the sheet."""
-    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     service.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A1",

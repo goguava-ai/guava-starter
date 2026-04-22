@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -77,7 +77,7 @@ def create_communication(patient_id: str, note: str) -> None:
         "category": [{"coding": [{"code": "notification"}]}],
         "subject": {"reference": f"Patient/{patient_id}"},
         "payload": [{"contentString": note}],
-        "sent": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sent": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "medium": [{"text": "Phone"}],
     }
     resp = requests.post(
@@ -182,7 +182,7 @@ class LabResultsNotificationController(guava.CallController):
         wants_appt = self.get_field("wants_appointment") or "no thanks"
 
         log_note = (
-            f"Lab results notification call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"Lab results notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
             f"Patient: {self.patient_name}\n"
             f"Results shared: {'; '.join(self.results_summary) if self.results_summary else 'results available'}\n"
             f"Patient understood: {understood}\n"
@@ -225,7 +225,7 @@ class LabResultsNotificationController(guava.CallController):
             create_communication(
                 self.patient_id,
                 f"Lab results notification attempted — {self.patient_name} unavailable, voicemail left. "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             )
         except Exception as e:
             logging.error("Failed to create Communication for voicemail: %s", e)

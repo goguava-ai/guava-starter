@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -182,7 +182,7 @@ class ReturnInitiationController(guava.CallController):
         # Generate the prepaid return label via ShipStation.
         return_tracking_number = None
         try:
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             label_payload = {
                 "orderId": order_id,
                 "carrierCode": carrier_code,

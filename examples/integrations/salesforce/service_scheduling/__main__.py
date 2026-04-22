@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,7 +42,7 @@ def find_contact_by_email(email: str) -> dict | None:
 def create_event(contact_id: str, account_id: str, subject: str, description: str, slot_key: str) -> str:
     """Creates a Salesforce Event for the given contact and account. Returns the event ID."""
     day_offset, hour = SLOT_OFFSETS_DAYS.get(slot_key, (3, 10))
-    start_dt = datetime.utcnow().replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+    start_dt = datetime.now(timezone.utc).replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
     end_dt = start_dt + timedelta(hours=1)
 
     payload = {

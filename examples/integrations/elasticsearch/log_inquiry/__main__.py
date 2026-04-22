@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,7 +18,7 @@ def get_headers() -> dict:
 
 
 def search_logs(service: str, level: str = "", hours: int = 1) -> dict:
-    since = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     must: list[dict] = [
         {"range": {"@timestamp": {"gte": since}}},

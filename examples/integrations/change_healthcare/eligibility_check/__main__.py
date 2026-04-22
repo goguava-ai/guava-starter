@@ -37,7 +37,7 @@ def check_eligibility(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    control_number = datetime.utcnow().strftime("%H%M%S%f")[:9]
+    control_number = datetime.now(timezone.utc).strftime("%H%M%S%f")[:9]
     payload = {
         "controlNumber": control_number,
         "tradingPartnerServiceId": trading_partner_id,
@@ -53,7 +53,7 @@ def check_eligibility(
         },
         "encounter": {
             "serviceTypeCodes": [service_type_code],
-            "dateOfService": datetime.utcnow().strftime("%Y-%m-%d"),
+            "dateOfService": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         },
     }
     resp = requests.post(

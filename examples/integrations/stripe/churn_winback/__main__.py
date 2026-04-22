@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -167,7 +167,7 @@ class ChurnWinbackController(guava.CallController):
         metadata = {
             "winback_reason": reason,
             "winback_interest": interest,
-            "winback_date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "winback_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         }
         if competitor:
             metadata["winback_competitor"] = competitor

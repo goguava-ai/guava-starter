@@ -119,7 +119,7 @@ class MaintenanceRequestController(guava.CallController):
         else:
             response_time = "within 3 to 5 business days"
 
-        work_order_number = f"WO-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        work_order_number = f"WO-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
         results = {
             "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,7 +31,7 @@ def get_account(account_id: str) -> dict | None:
 
 def get_overdue_opportunities(account_id: str) -> list:
     """Returns Closed Won opportunities with an overdue payment date for the account."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     q = (
         f"SELECT Id, Name, Amount, CloseDate FROM Opportunity "
         f"WHERE AccountId = '{account_id}' "
@@ -59,7 +59,7 @@ def log_collections_task(account_id: str, subject: str, description: str, priori
         "Priority": priority,
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -191,7 +191,7 @@ class PaymentCollectionsController(guava.CallController):
         priority = "High" if outcome in ("refused to pay", "disputes the amount") else "Normal"
 
         description_lines = [
-            f"Collections call — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Collections call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.contact_name}",
             f"Overdue amount: {self.overdue_amount}",
             f"Acknowledged balance: {acknowledges}",
@@ -278,7 +278,7 @@ class PaymentCollectionsController(guava.CallController):
                 description=(
                     f"Collections outreach attempted — {self.contact_name} unavailable, voicemail left.\n"
                     f"Overdue amount: {self.overdue_amount}\n"
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
                 ),
                 priority="High",
             )

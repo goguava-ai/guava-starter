@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -55,7 +55,7 @@ def log_task(what_id: str, subject: str, description: str) -> None:
         "Priority": "High",
         "Type": "Call",
         "TaskSubtype": "Call",
-        "ActivityDate": datetime.utcnow().strftime("%Y-%m-%d"),
+        "ActivityDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
     resp = requests.post(
         f"{API_BASE}/sobjects/Task",
@@ -166,7 +166,7 @@ class ContractRenewalController(guava.CallController):
         new_stage = INTENT_TO_STAGE.get(intent, "Perception Analysis")
 
         description_lines = [
-            f"Contract renewal call — {datetime.utcnow().strftime('%Y-%m-%d')}",
+            f"Contract renewal call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             f"Contact: {self.contact_name}",
             f"Intent: {intent}",
             f"Preferred follow-up: {followup}",
@@ -233,7 +233,7 @@ class ContractRenewalController(guava.CallController):
                 subject="Contract renewal call — contact unavailable",
                 description=(
                     f"Renewal outreach attempted — {self.contact_name} unavailable, voicemail left.\n"
-                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
                 ),
             )
         except Exception as e:

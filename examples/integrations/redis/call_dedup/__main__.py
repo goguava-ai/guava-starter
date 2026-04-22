@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import redis
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,7 +21,7 @@ def is_repeat_caller(phone: str) -> bool:
 def mark_caller(phone: str) -> None:
     """Sets a Redis key for the caller that expires after the dedup window."""
     key = f"recent_call:{phone}"
-    r.setex(key, DEDUP_WINDOW_SECONDS, datetime.utcnow().isoformat())
+    r.setex(key, DEDUP_WINDOW_SECONDS, datetime.now(timezone.utc).isoformat())
 
 
 def get_call_count(phone: str) -> int:

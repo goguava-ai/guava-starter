@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -55,7 +55,7 @@ def create_appointment(
 ) -> dict:
     """Creates a FHIR Appointment resource. Returns the created resource."""
     day_offset, hour = SLOT_OFFSETS.get(slot_key, (3, 10))
-    start_dt = datetime.utcnow().replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+    start_dt = datetime.now(timezone.utc).replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
     end_dt = start_dt + timedelta(minutes=30)
 
     participants = [
@@ -82,7 +82,7 @@ def create_appointment(
         "reasonReference": [{"display": reason}],
         "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "comment": f"Scheduled via voice agent — {datetime.utcnow().strftime('%Y-%m-%d')}",
+        "comment": f"Scheduled via voice agent — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
         "participant": participants,
     }
 

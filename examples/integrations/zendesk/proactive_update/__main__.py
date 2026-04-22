@@ -4,7 +4,7 @@ import logging
 import base64
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -54,7 +54,7 @@ def get_ticket_with_comments(ticket_id: str) -> tuple[dict | None, list[dict]]:
 def add_call_log_note(ticket_id: str, customer_name: str, outcome: str) -> None:
     """Records an internal note that the customer was called and what happened."""
     note = (
-        f"Proactive update call — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"Proactive update call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
         f"Customer: {customer_name}\n"
         f"Outcome: {outcome}"
     )
