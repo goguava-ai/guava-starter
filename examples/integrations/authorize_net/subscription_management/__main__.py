@@ -185,8 +185,8 @@ def on_lookup_subscription_done(call: guava.Call) -> None:
     call.set_task(
         "manage_subscription",
         objective=(
-            f"You've retrieved the subscription details. Read them back to the customer "
-            f"and ask what they'd like to do."
+            "You've retrieved the subscription details. Read them back to the customer "
+            "and ask what they'd like to do."
         ),
         checklist=[
             guava.Say(

@@ -1,7 +1,6 @@
 import argparse
 import logging
 import os
-from datetime import datetime
 
 import guava
 import requests

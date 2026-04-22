@@ -1,7 +1,6 @@
 import logging
 import os
 import secrets
-from datetime import datetime
 
 import guava
 import pymysql

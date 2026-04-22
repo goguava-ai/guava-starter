@@ -1,6 +1,5 @@
 import logging
 import os
-from datetime import datetime, timezone
 
 import firebase_admin
 import guava

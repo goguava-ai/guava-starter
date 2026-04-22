@@ -268,7 +268,7 @@ def on_done(call: guava.Call) -> None:
         logging.error("Waystar prior auth lookup failed: %s", e)
         call.hangup(
             final_instructions=(
-                f"Apologize to the caller for a technical issue and let them know we "
+                "Apologize to the caller for a technical issue and let them know we "
                 "were unable to retrieve the authorization status. Ask them to try again "
                 "or contact the payer directly. Thank them for their patience."
             )

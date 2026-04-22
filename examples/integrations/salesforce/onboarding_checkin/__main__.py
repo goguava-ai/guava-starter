@@ -1,7 +1,6 @@
 import argparse
 import logging
 import os
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import guava
@@ -312,7 +311,7 @@ def on_done(call: guava.Call) -> None:
                 f"Reassure {contact_name} that they're not alone. "
                 f"Let them know the team will follow up within two business days with "
                 f"help on '{support}'. "
-                + (f"If they mentioned blockers, acknowledge them by name and say the team will address them. " if blockers else "")
+                + ("If they mentioned blockers, acknowledge them by name and say the team will address them. " if blockers else "")
                 + "Thank them for their time and wish them a great day."
             )
         )

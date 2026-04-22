@@ -124,7 +124,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     key="ready_to_convert",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask if they'd like to convert to the paid plan now"
+                        "Ask if they'd like to convert to the paid plan now"
                         + (f" at {amount_str}/{period}" if amount_str else "")
                         + ". We can activate it immediately so there's no interruption in access."
                     ),

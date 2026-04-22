@@ -8,7 +8,6 @@ Environment variables:
     GUAVA_AGENT_NUMBER
 """
 
-import logging
 import os
 from pathlib import Path
 

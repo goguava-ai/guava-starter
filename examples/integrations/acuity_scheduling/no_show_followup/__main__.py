@@ -215,7 +215,7 @@ def handle_rebook(call: guava.Call) -> None:
     else:
         call.hangup(
             final_instructions=(
-                f"Apologize — the rebooking couldn't be completed online. "
+                "Apologize — the rebooking couldn't be completed online. "
                 "Invite {client_name} to call back or visit the website to book. "
                 "Thank them for their time."
             )

@@ -80,7 +80,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="doctor_note_available",
-                    description=f"Whether a doctor's note or official documentation will be provided for the absence",
+                    description="Whether a doctor's note or official documentation will be provided for the absence",
                     field_type="text",
                     required=False,
                 ),

@@ -29,7 +29,7 @@ import boto3
 import guava
 from google import genai
 from guava import logging_utils
-from guava.helpers.rag import DocumentQA, VectorStore, chunk_document
+from guava.helpers.rag import DocumentQA, VectorStore
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 

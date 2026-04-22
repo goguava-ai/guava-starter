@@ -2,7 +2,7 @@ import argparse
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import guava
 import requests

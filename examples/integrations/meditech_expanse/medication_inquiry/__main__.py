@@ -104,7 +104,7 @@ def lookup_medications(call: guava.Call) -> None:
             )
             call.hangup(
                 final_instructions=(
-                    f"Apologize to the caller and let them know we were not able to find a "
+                    "Apologize to the caller and let them know we were not able to find a "
                     "patient record matching the information they provided in Valley General "
                     "Hospital's system. Ask them to double-check the spelling of their last "
                     "name and date of birth, and encourage them to call back or visit the "

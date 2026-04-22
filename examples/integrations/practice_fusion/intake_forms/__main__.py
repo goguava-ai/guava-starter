@@ -182,7 +182,7 @@ def on_done(call: guava.Call) -> None:
 
     # Build a plain-text note to be stored as a DocumentReference.
     note_lines = [
-        f"Pre-visit intake — Sunrise Family Practice",
+        "Pre-visit intake — Sunrise Family Practice",
         f"Patient: {patient_name}",
         f"Appointment: {appointment_date}",
         f"Collected: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",

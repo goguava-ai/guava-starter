@@ -229,7 +229,7 @@ def on_done(call: guava.Call) -> None:
 
     # Build the note text that will accompany the MedicationRequest renewal proposal.
     note_parts = [
-        f"Patient-initiated renewal request via phone.",
+        "Patient-initiated renewal request via phone.",
         f"Medication requested: {medication_name}.",
         f"Matched active prescription: {matched_name}.",
         f"Pharmacy preference: {pharmacy_preference}.",
