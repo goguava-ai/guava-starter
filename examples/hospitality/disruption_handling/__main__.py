@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -113,7 +113,7 @@ class DisruptionHandlingController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "use_case": "disruption_handling",
             "traveler_name": self.name,
             "booking_reference": self.booking_reference,

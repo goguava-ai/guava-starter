@@ -4,7 +4,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,7 +38,7 @@ def create_document_reference(patient_id: str, note_text: str, appointment_date:
             ]
         },
         "subject": {"reference": f"Patient/{patient_id}"},
-        "date": datetime.utcnow().isoformat() + "Z",
+        "date": datetime.now(timezone.utc).isoformat(),
         "description": f"Pre-visit intake — {appointment_date}",
         "content": [
             {

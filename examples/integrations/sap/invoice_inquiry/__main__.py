@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -195,7 +195,7 @@ class InvoiceInquiryController(guava.CallController):
         status = doc.get("OverallBillingStatus", "")
 
         result = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "use_case": "invoice_inquiry",
             "invoice_number": invoice_number,

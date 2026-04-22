@@ -5,7 +5,7 @@ import json
 import argparse
 import requests
 from requests_oauthlib import OAuth1
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -180,7 +180,7 @@ class PaymentCollectionController(guava.CallController):
             logging.warning("Failed to update invoice memo: %s", e)
 
         outcome = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Dana",
             "use_case": "payment_collection",
             "contact": self.contact_name,

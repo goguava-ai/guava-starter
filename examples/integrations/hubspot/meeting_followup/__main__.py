@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,7 +33,7 @@ def log_followup_note(contact_id: str, note_body: str) -> None:
     payload = {
         "properties": {
             "hs_note_body": note_body,
-            "hs_timestamp": datetime.utcnow().isoformat() + "Z",
+            "hs_timestamp": datetime.now(timezone.utc).isoformat(),
         },
         "associations": [
             {

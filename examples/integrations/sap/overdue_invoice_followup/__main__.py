@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -145,7 +145,7 @@ class OverdueInvoiceFollowupController(guava.CallController):
         )
 
         outcome = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Morgan",
             "use_case": "overdue_invoice_followup",
             "contact": self.contact_name,

@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -78,7 +78,7 @@ def log_communication(patient_id: str, report_id: str, acknowledged: str, questi
         "resourceType": "Communication",
         "status": "completed",
         "subject": {"reference": f"Patient/{patient_id}"},
-        "sent": datetime.utcnow().isoformat() + "Z",
+        "sent": datetime.now(timezone.utc).isoformat(),
         "payload": [
             {
                 "contentString": (

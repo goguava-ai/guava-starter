@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -115,7 +115,7 @@ class TechSupportTriageController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Casey",
             "organization": "Nexus Mobile - Technical Support",
             "use_case": "tech_support_triage",

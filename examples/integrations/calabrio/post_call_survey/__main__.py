@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,7 +32,7 @@ def submit_survey_response(
         "interactionId": interaction_id,
         "surveyType": "PostCallCSAT",
         "respondentName": customer_name,
-        "submittedAt": datetime.utcnow().isoformat() + "Z",
+        "submittedAt": datetime.now(timezone.utc).isoformat(),
         "responses": {
             "overallSatisfaction": overall_satisfaction,
             "agentPerformance": agent_score,
@@ -185,7 +185,7 @@ class PostCallSurveyController(guava.CallController):
             logging.info("Survey response recorded: %s", survey_id)
 
             outcome = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Alex",
                 "use_case": "post_call_survey",
                 "customer_name": self.customer_name,

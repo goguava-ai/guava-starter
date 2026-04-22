@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -207,7 +207,7 @@ class MedicationInquiryController(guava.CallController):
         inquiry_reason = self.get_field("inquiry_reason")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Alex",
             "organization": "Valley General Hospital",
             "use_case": "medication_inquiry",

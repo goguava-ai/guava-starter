@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -167,7 +167,7 @@ class OrderStatusController(guava.CallController):
             logging.warning("Could not fetch line items for order %s: %s", order_id, e)
 
         print(json.dumps({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "order_id": order_id,
             "status_id": status_id,
             "status_label": status_label,

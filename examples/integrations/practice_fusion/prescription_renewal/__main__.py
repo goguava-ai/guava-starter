@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -65,7 +65,7 @@ def create_medication_request(patient_id: str, source_med: dict, note_text: str)
         "intent": "proposal",
         "medicationCodeableConcept": source_med.get("medicationCodeableConcept", {}),
         "subject": {"reference": f"Patient/{patient_id}"},
-        "authoredOn": datetime.utcnow().isoformat() + "Z",
+        "authoredOn": datetime.now(timezone.utc).isoformat(),
         "note": [{"text": note_text}],
     }
     resp = requests.post(

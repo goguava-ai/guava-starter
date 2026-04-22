@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 from requests_oauthlib import OAuth1
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -148,7 +148,7 @@ class CustomerAccountLookupController(guava.CallController):
         address = customer.get("defaultaddress", "")
 
         result = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Jordan",
             "use_case": "customer_account_lookup",
             "email": email,

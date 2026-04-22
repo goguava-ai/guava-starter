@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -215,7 +215,7 @@ class ReturnRequestController(guava.CallController):
             logging.info("RMA created: %s for order %s", rma_id, order_number)
 
             outcome = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Casey",
                 "use_case": "return_request",
                 "order_number": order_number,

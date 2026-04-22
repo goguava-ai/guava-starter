@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,7 +93,7 @@ class InboundOrderInquiryController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "organization": "Summit Retail - Order Support",
             "use_case": "inbound_order_inquiry",
@@ -126,7 +126,7 @@ class InboundOrderInquiryController(guava.CallController):
                     "issue_details": self.get_field("issue_details"),
                     "resolution_provided": self.get_field("resolution_provided"),
                     "satisfaction_rating": self.get_field("satisfaction_rating"),
-                    "call_timestamp": datetime.utcnow().isoformat() + "Z",
+                    "call_timestamp": datetime.now(timezone.utc).isoformat(),
                     "source": "guava_voice_agent",
                 }),
             }

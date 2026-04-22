@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -156,7 +156,7 @@ class ProductAvailabilityController(guava.CallController):
             qty = stock.get("qty", 0) if stock else 0
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Riley",
                 "use_case": "product_availability",
                 "query": product_query,

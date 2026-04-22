@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -91,7 +91,7 @@ class PostDischargeFollowupController(guava.CallController):
         concerning_symptoms = self.get_field("concerning_symptoms")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "Cedar Health",
             "use_case": "post_discharge_followup",
@@ -136,7 +136,7 @@ class PostDischargeFollowupController(guava.CallController):
                     "coding": [{"system": "http://loinc.org", "code": "72166-2", "display": "Post-discharge follow-up"}]
                 },
                 "subject": {"reference": f"Patient/{self.patient_id}"},
-                "effectiveDateTime": datetime.utcnow().isoformat() + "Z",
+                "effectiveDateTime": datetime.now(timezone.utc).isoformat(),
                 "valueString": (
                     f"Recovery: {recovery_status}. "
                     f"Pain: {pain_level}/10. "

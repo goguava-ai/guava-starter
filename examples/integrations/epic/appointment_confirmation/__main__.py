@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,7 +93,7 @@ class AppointmentConfirmationController(guava.CallController):
         cancellation_reason = self.get_field("cancellation_reason")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Maya",
             "organization": "Cedar Health",
             "use_case": "appointment_confirmation",

@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -80,7 +80,7 @@ class CarrierCheckinController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "load_number": self.load_number,
             "destination": self.destination,
             "scheduled_arrival": self.scheduled_arrival,
@@ -106,7 +106,7 @@ class CarrierCheckinController(guava.CallController):
             f"Could not reach carrier contact for load number {self.load_number}."
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "load_number": self.load_number,
             "destination": self.destination,
             "scheduled_arrival": self.scheduled_arrival,

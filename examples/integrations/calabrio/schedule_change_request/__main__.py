@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,7 +58,7 @@ def submit_schedule_change_request(
         "reason": reason,
         "notes": details,
         "status": "pending",
-        "submittedAt": datetime.utcnow().isoformat() + "Z",
+        "submittedAt": datetime.now(timezone.utc).isoformat(),
     }
     resp = requests.post(
         f"{CALABRIO_BASE_URL}/api/scheduling/requests",
@@ -197,7 +197,7 @@ class ScheduleChangeRequestController(guava.CallController):
             logging.info("Schedule change request submitted: %s", request_id)
 
             outcome = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Taylor",
                 "use_case": "schedule_change_request",
                 "caller_email": email,

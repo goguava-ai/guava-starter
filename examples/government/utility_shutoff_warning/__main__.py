@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -111,7 +111,7 @@ class UtilityShutoffWarningController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "resident_name": self.resident_name,
             "account_number": self.account_number,
             "amount_owed": self.amount_owed,

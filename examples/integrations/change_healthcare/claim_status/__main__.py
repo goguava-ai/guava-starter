@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -189,7 +189,7 @@ class ClaimStatusController(guava.CallController):
             logging.info("Claim status result: %s", claim_info)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Dana",
                 "use_case": "claim_status",
                 "patient_last_name": last_name,

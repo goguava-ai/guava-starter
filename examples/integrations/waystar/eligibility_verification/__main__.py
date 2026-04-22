@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -185,7 +185,7 @@ class EligibilityVerificationController(guava.CallController):
             logging.info("Waystar coverage result: %s", coverage)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Taylor",
                 "use_case": "eligibility_verification",
                 "patient": {"first_name": first_name, "last_name": last_name, "dob": dob},

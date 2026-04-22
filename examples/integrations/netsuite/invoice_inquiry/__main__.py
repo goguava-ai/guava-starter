@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 from requests_oauthlib import OAuth1
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -151,7 +151,7 @@ class InvoiceInquiryController(guava.CallController):
                 invoices = find_invoices_by_email(identifier)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Sam",
                 "use_case": "invoice_inquiry",
                 "lookup_type": lookup_type,

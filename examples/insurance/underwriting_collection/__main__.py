@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -104,7 +104,7 @@ class UnderwritingCollectionController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "use_case": "underwriting_collection",
             "contact_name": self.contact_name,
             "application_number": self.application_number,
@@ -134,7 +134,7 @@ class UnderwritingCollectionController(guava.CallController):
             self.application_number,
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "use_case": "underwriting_collection",
             "contact_name": self.contact_name,
             "application_number": self.application_number,

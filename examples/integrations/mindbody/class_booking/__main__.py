@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO)
 
@@ -402,7 +402,7 @@ class ClassBookingController(guava.CallController):
             return
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Jordan",
             "organization": "FlexFit Studio",
             "use_case": "class_booking",

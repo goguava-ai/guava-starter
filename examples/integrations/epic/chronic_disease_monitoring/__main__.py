@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -196,7 +196,7 @@ class ChronicDiseaseMonitoringController(guava.CallController):
         med_adherence = self.get_field("medication_adherence")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Jamie",
             "organization": "Cedar Health",
             "use_case": "chronic_disease_monitoring",
@@ -231,7 +231,7 @@ class ChronicDiseaseMonitoringController(guava.CallController):
                 "Content-Type": "application/json",
             }
 
-            effective_time = datetime.utcnow().isoformat() + "Z"
+            effective_time = datetime.now(timezone.utc).isoformat()
             subject_ref = {"reference": f"Patient/{self.patient_id}"}
             observations = []
 

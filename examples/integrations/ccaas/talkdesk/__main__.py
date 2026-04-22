@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -92,7 +92,7 @@ class InboundBillingInquiryController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Taylor",
             "organization": "Clearview Utilities - Billing Department",
             "use_case": "inbound_billing_inquiry",
@@ -146,7 +146,7 @@ class InboundBillingInquiryController(guava.CallController):
                     "follow_up_needed": self.get_field("follow_up_needed"),
                 }),
                 "disposition": self.get_field("resolution_status"),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "source": "guava_voice_agent",
             }
             interaction_resp = requests.post(

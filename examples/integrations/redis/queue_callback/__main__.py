@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import redis
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,7 +19,7 @@ def enqueue_callback(phone: str, name: str, issue: str, priority: str) -> int:
         "name": name,
         "issue": issue,
         "priority": priority,
-        "queued_at": datetime.utcnow().isoformat() + "Z",
+        "queued_at": datetime.now(timezone.utc).isoformat(),
     })
     # High-priority callers go to the front of the queue (LPUSH), others to the back (RPUSH).
     if priority == "high":

@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -183,7 +183,7 @@ class ClaimSubmissionTriggerController(guava.CallController):
                 self.appointment_id, confirmed, insurance_active,
             )
             print(json.dumps({
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "appointment_id": self.appointment_id,
                 "action": "held_for_review",
                 "reason": f"confirmation={confirmed}, insurance_active={insurance_active}",
@@ -231,7 +231,7 @@ class ClaimSubmissionTriggerController(guava.CallController):
             logging.info("Claim submitted for appointment %s — ID: %s", self.appointment_id, claim_id)
 
             print(json.dumps({
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "appointment_id": self.appointment_id,
                 "patient_name": self.patient_name,
                 "action": "claim_submitted",

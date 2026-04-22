@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -107,7 +107,7 @@ class LeaseRenewalController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vertical": "real_estate",
             "use_case": "lease_renewal",
             "contact_name": self.contact_name,
@@ -144,7 +144,7 @@ class LeaseRenewalController(guava.CallController):
             self.unit_address,
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vertical": "real_estate",
             "use_case": "lease_renewal",
             "contact_name": self.contact_name,

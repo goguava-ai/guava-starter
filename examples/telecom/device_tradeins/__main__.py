@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -110,7 +110,7 @@ class DeviceTradeInController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "Nexus Mobile",
             "use_case": "device_tradeins",
@@ -141,7 +141,7 @@ class DeviceTradeInController(guava.CallController):
 
     def recipient_unavailable(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "Nexus Mobile",
             "use_case": "device_tradeins",

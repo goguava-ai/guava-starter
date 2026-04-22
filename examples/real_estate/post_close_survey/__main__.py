@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -113,7 +113,7 @@ class PostCloseSurveyController(guava.CallController):
         referral_interest = (self.get_field("open_to_referral_program") or "").lower()
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vertical": "real_estate",
             "use_case": "post_close_survey",
             "contact_name": self.contact_name,
@@ -158,7 +158,7 @@ class PostCloseSurveyController(guava.CallController):
             self.property_address,
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vertical": "real_estate",
             "use_case": "post_close_survey",
             "contact_name": self.contact_name,

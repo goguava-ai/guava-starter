@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -94,7 +94,7 @@ class WebhookTriggerController(guava.CallController):
         contact_pref = self.get_field("preferred_contact") or "email"
 
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "caller_name": name,
             "caller_email": email,
             "request_type": request_type,

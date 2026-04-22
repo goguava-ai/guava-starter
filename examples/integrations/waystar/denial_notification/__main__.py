@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -163,7 +163,7 @@ class DenialNotificationController(guava.CallController):
         )
 
         outcome = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Alex",
             "use_case": "denial_notification",
             "patient_name": self.patient_name,

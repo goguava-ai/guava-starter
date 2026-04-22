@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO)
 
@@ -159,7 +159,7 @@ class ScheduleInquiryController(guava.CallController):
             shifts = []
 
         result = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "use_case": "schedule_inquiry",
             "caller_email": email,

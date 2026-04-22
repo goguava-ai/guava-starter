@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -122,7 +122,7 @@ class NumberPortingController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Morgan",
             "organization": "Nexus Mobile - Porting Team",
             "use_case": "number_porting",
@@ -152,7 +152,7 @@ class NumberPortingController(guava.CallController):
 
     def recipient_unavailable(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Morgan",
             "organization": "Nexus Mobile - Porting Team",
             "use_case": "number_porting",

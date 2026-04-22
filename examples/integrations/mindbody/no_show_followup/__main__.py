@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -107,7 +107,7 @@ class NoShowFollowupController(guava.CallController):
         want_to_rebook = self.get_field("want_to_rebook")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "organization": "FlexFit Studio",
             "use_case": "no_show_followup",
@@ -187,7 +187,7 @@ class NoShowFollowupController(guava.CallController):
 
         # Update results log with the additional preference.
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "organization": "FlexFit Studio",
             "use_case": "no_show_followup",

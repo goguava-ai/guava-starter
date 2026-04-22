@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -214,7 +214,7 @@ class MembershipInquiryController(guava.CallController):
         action = self.get_field("next_action")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Casey",
             "organization": "FlexFit Studio",
             "use_case": "membership_inquiry",

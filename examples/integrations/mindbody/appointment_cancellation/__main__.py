@@ -297,7 +297,7 @@ class AppointmentCancellationController(guava.CallController):
             return
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "FlexFit Studio",
             "use_case": "appointment_cancellation",
@@ -469,7 +469,7 @@ class AppointmentCancellationController(guava.CallController):
             return
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "FlexFit Studio",
             "use_case": "appointment_cancellation",

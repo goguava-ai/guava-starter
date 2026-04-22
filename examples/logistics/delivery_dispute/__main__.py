@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -97,7 +97,7 @@ class DeliveryDisputeController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "claimant_name": self.get_field("claimant_name"),
             "tracking_number": self.get_field("tracking_number"),
             "dispute_type": self.get_field("dispute_type"),

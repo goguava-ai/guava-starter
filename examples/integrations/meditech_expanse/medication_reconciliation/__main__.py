@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -313,7 +313,7 @@ class MedicationReconciliationController(guava.CallController):
         import base64
 
         encoded_note = base64.b64encode(note_text.encode("utf-8")).decode("ascii")
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
 
         doc_ref = {
             "resourceType": "DocumentReference",

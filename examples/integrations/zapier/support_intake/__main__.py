@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -120,7 +120,7 @@ class SupportIntakeController(guava.CallController):
         priority = PRIORITY_MAP.get(impact, "normal")
 
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "caller_name": name,
             "caller_email": email,
             "company": company,

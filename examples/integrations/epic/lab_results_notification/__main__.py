@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -105,7 +105,7 @@ class LabResultsNotificationController(guava.CallController):
         callback_requested = self.get_field("callback_requested")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Alex",
             "organization": "Cedar Health",
             "use_case": "lab_results_notification",
@@ -136,7 +136,7 @@ class LabResultsNotificationController(guava.CallController):
                 "resourceType": "Communication",
                 "status": "completed",
                 "subject": {"reference": f"Patient/{self.patient_id}"},
-                "sent": datetime.utcnow().isoformat() + "Z",
+                "sent": datetime.now(timezone.utc).isoformat(),
                 "payload": [
                     {
                         "contentString": (

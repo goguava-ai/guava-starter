@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -98,7 +98,7 @@ class InsuranceUpdateController(guava.CallController):
         insurance_confirmed = self.get_field("insurance_confirmed")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Taylor",
             "organization": "Cedar Health",
             "use_case": "insurance_update",

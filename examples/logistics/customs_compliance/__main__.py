@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -89,7 +89,7 @@ class CustomsComplianceController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "shipment_number": self.shipment_number,
             "contact_name": self.contact_name,
             "missing_docs": self.missing_docs,
@@ -116,7 +116,7 @@ class CustomsComplianceController(guava.CallController):
             f"Could not reach {self.contact_name} for customs compliance check on shipment {self.shipment_number}."
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "shipment_number": self.shipment_number,
             "contact_name": self.contact_name,
             "missing_docs": self.missing_docs,

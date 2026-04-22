@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -78,7 +78,7 @@ class OutboundNotifyController(guava.CallController):
         questions = self.get_field("questions") or ""
 
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "campaign_id": self.campaign_id,
             "contact_name": self.contact_name,
             "outcome": acknowledged,
@@ -122,7 +122,7 @@ class OutboundNotifyController(guava.CallController):
 
     def recipient_unavailable(self):
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "campaign_id": self.campaign_id,
             "contact_name": self.contact_name,
             "outcome": "unavailable",

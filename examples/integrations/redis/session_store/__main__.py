@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import redis
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,7 +27,7 @@ def get_session(session_id: str) -> dict | None:
 def publish_session_event(session_id: str, event: str, data: dict) -> None:
     """Publishes a call event to a Redis Pub/Sub channel for real-time subscribers."""
     channel = f"call_events:{session_id}"
-    message = json.dumps({"event": event, "data": data, "ts": datetime.utcnow().isoformat() + "Z"})
+    message = json.dumps({"event": event, "data": data, "ts": datetime.now(timezone.utc).isoformat()})
     r.publish(channel, message)
 
 
@@ -128,7 +128,7 @@ class SessionStoreController(guava.CallController):
             "request_type": request_type,
             "request_detail": detail,
             "preferred_followup": followup,
-            "call_started_at": datetime.utcnow().isoformat() + "Z",
+            "call_started_at": datetime.now(timezone.utc).isoformat(),
         }
 
         logging.info("Saving session %s to Redis for account %s.", self.session_id, account_number)

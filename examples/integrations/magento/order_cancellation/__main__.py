@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -215,7 +215,7 @@ class OrderCancellationController(guava.CallController):
             success = False
 
         outcome = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Jordan",
             "use_case": "order_cancellation",
             "order_number": order_number,

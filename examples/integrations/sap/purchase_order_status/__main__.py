@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -147,7 +147,7 @@ class PurchaseOrderStatusController(guava.CallController):
                 orders = find_po_by_vendor(identifier)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Sam",
                 "use_case": "purchase_order_status",
                 "lookup_type": lookup_type,

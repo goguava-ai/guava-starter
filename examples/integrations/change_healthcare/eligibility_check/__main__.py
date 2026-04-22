@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -181,7 +181,7 @@ class EligibilityCheckController(guava.CallController):
             logging.info("Eligibility result for %s: %s", member_id, coverage)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Alex",
                 "use_case": "eligibility_check",
                 "patient": {"first_name": first_name, "last_name": last_name, "dob": dob},

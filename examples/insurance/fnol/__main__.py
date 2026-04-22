@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -103,7 +103,7 @@ class FNOLController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "use_case": "first_notice_of_loss",
             "policy_number": self.get_field("policy_number"),
             "policyholder_name": self.get_field("policyholder_name"),

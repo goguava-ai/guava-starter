@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -81,7 +81,7 @@ class CareGapOutreachController(guava.CallController):
         questions = self.get_field("questions")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Morgan",
             "organization": "Cedar Health",
             "use_case": "care_gap_outreach",
@@ -113,7 +113,7 @@ class CareGapOutreachController(guava.CallController):
                 "resourceType": "CommunicationRequest",
                 "status": "completed",
                 "subject": {"reference": f"Patient/{self.patient_id}"},
-                "authoredOn": datetime.utcnow().isoformat() + "Z",
+                "authoredOn": datetime.now(timezone.utc).isoformat(),
                 "payload": [
                     {
                         "contentString": (

@@ -4,7 +4,7 @@ import logging
 import json
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -174,7 +174,7 @@ class PatientIntakeController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Maya",
             "organization": "Cedar Health",
             "use_case": "patient_intake",
@@ -222,7 +222,7 @@ class PatientIntakeController(guava.CallController):
                     "coding": [{"system": "http://loinc.org", "code": "34117-2", "display": "History and physical note"}]
                 },
                 "subject": {"reference": f"Patient/{self.patient_id}"},
-                "date": datetime.utcnow().isoformat() + "Z",
+                "date": datetime.now(timezone.utc).isoformat(),
                 "content": [
                     {
                         "attachment": {

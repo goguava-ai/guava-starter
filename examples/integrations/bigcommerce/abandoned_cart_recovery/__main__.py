@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -172,7 +172,7 @@ class AbandonedCartRecoveryController(guava.CallController):
     def _finalize_questions(self):
         question = self.get_field("question_about")
         print(json.dumps({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "customer_name": self.customer_name,
             "customer_email": self.customer_email,
             "cart_id": self.cart_id,
@@ -214,7 +214,7 @@ class AbandonedCartRecoveryController(guava.CallController):
     def _finalize_changed_mind(self):
         reason = self.get_field("changed_mind_reason")
         print(json.dumps({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "customer_name": self.customer_name,
             "customer_email": self.customer_email,
             "cart_id": self.cart_id,

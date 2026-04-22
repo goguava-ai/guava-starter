@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -94,7 +94,7 @@ class InboundTechSupportController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Sam",
             "organization": "CloudFirst Solutions - Technical Support",
             "use_case": "inbound_tech_support",

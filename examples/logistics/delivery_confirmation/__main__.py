@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -83,7 +83,7 @@ class DeliveryConfirmationController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "tracking_number": self.tracking_number,
             "recipient_name": self.recipient_name,
             "delivery_date": self.delivery_date,
@@ -109,7 +109,7 @@ class DeliveryConfirmationController(guava.CallController):
             f"Could not reach {self.recipient_name} for delivery confirmation on tracking number {self.tracking_number}."
         )
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "tracking_number": self.tracking_number,
             "recipient_name": self.recipient_name,
             "delivery_date": self.delivery_date,

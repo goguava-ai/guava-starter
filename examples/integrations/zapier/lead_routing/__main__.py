@@ -2,7 +2,7 @@ import guava
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -130,7 +130,7 @@ class LeadRoutingController(guava.CallController):
         tier = determine_tier(budget, timeline)
 
         payload = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "first_name": first,
             "last_name": last,
             "company": company,

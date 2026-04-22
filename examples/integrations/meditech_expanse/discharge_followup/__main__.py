@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -245,7 +245,7 @@ class DischargeFollowupController(guava.CallController):
         escalate: bool,
     ):
         """POST a FHIR transaction Bundle of Observations capturing all wellness check data points."""
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         subject_ref = {"reference": f"Patient/{self.patient_id}"}
         encounter_ref = (
             {"reference": f"Encounter/{self.encounter_id}"} if self.encounter_id else None
@@ -384,7 +384,7 @@ class DischargeFollowupController(guava.CallController):
                 ),
             },
             "subject": {"reference": f"Patient/{self.patient_id}"},
-            "period": {"start": datetime.utcnow().isoformat() + "Z"},
+            "period": {"start": datetime.now(timezone.utc).isoformat()},
             "author": {"display": "Guava Voice Agent — Riley"},
         }
         try:

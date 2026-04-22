@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -122,7 +122,7 @@ class MaintenanceRequestController(guava.CallController):
         work_order_number = f"WO-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vertical": "real_estate",
             "use_case": "maintenance_request",
             "work_order_number": work_order_number,

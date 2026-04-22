@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -212,7 +212,7 @@ class PriorAuthStatusController(guava.CallController):
             logging.info("Prior auth result for %s: %s", member_id, auth_info)
 
             result = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Morgan",
                 "use_case": "prior_auth_status",
                 "patient": {"first_name": first_name, "last_name": last_name},

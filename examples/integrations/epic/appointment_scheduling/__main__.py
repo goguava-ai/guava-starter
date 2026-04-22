@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -98,7 +98,7 @@ class AppointmentSchedulingController(guava.CallController):
         preferred_time = self.get_field("preferred_time_of_day")
 
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "organization": "Cedar Health",
             "use_case": "appointment_scheduling",
@@ -274,7 +274,7 @@ class AppointmentSchedulingController(guava.CallController):
             logging.error("Failed to book Epic Appointment: %s", e)
 
         booking_results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Riley",
             "organization": "Cedar Health",
             "use_case": "appointment_scheduling",

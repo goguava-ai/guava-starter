@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -152,7 +152,7 @@ class ProductInquiryController(guava.CallController):
                 variant_summary = ", ".join(option_values[:8])
 
         print(json.dumps({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "product_id": product.get("id"),
             "product_name": product_full_name,
             "price": price,

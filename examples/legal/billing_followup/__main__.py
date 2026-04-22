@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -101,7 +101,7 @@ class BillingFollowupController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "call_type": "outbound_billing_followup",
             "meta": {
                 "contact_name": self.contact_name,
@@ -133,7 +133,7 @@ class BillingFollowupController(guava.CallController):
 
     def recipient_unavailable(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "call_type": "outbound_billing_followup",
             "status": "recipient_unavailable",
             "meta": {

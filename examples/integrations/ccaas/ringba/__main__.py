@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -102,7 +102,7 @@ class OutboundLeadQualificationController(guava.CallController):
 
     def save_results(self):
         results = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent": "Alex",
             "organization": "Velocity Sales Group",
             "use_case": "outbound_lead_qualification",
@@ -138,7 +138,7 @@ class OutboundLeadQualificationController(guava.CallController):
                 "decisionTimeline": self.get_field("decision_timeline"),
                 "followUpPreference": self.get_field("follow_up_preference"),
                 "additionalNotes": self.get_field("additional_notes"),
-                "callTimestamp": datetime.utcnow().isoformat() + "Z",
+                "callTimestamp": datetime.now(timezone.utc).isoformat(),
                 "source": "guava_voice_agent",
             }
             resp = requests.post(

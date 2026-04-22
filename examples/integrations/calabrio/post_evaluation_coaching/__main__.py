@@ -4,7 +4,7 @@ import logging
 import json
 import argparse
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 logging.basicConfig(level=logging.INFO)
 
@@ -45,7 +45,7 @@ def schedule_coaching_session(
         "proposedDate": preferred_date,
         "notes": agent_notes,
         "status": "pending",
-        "createdAt": datetime.utcnow().isoformat() + "Z",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
     }
     resp = requests.post(
         f"{CALABRIO_BASE_URL}/api/qualitymanagement/coaching",
@@ -64,7 +64,7 @@ def update_evaluation_status(evaluation_id: str, agent_acknowledged: bool, notes
         headers=HEADERS,
         json={
             "agentAcknowledged": agent_acknowledged,
-            "agentAcknowledgmentDate": datetime.utcnow().isoformat() + "Z",
+            "agentAcknowledgmentDate": datetime.now(timezone.utc).isoformat(),
             "agentNotes": notes,
         },
         timeout=10,
@@ -199,7 +199,7 @@ class PostEvaluationCoachingController(guava.CallController):
 
         if coaching_pref == "I prefer async coaching via portal":
             outcome = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Jordan",
                 "use_case": "post_evaluation_coaching",
                 "agent_name": self.agent_name,
@@ -230,7 +230,7 @@ class PostEvaluationCoachingController(guava.CallController):
             logging.info("Coaching session created: %s", session_id)
 
             outcome = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent": "Jordan",
                 "use_case": "post_evaluation_coaching",
                 "agent_name": self.agent_name,
