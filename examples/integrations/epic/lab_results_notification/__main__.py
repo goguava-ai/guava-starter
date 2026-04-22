@@ -46,13 +46,14 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch Epic DiagnosticReport: %s", e)
 
-    call.report_summary = report_summary
+    call.set_variable("report_summary", report_summary)
     call.reach_person(contact_full_name=patient_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     patient_name = call.get_variable("patient_name")
+    report_summary = call.get_variable("report_summary")
     if outcome == "unavailable":
         call.hangup(
             final_instructions=(
@@ -65,14 +66,14 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.set_task(
             "lab_results_notification",
             objective=(
-                f"Notify {patient_name} that {call.report_summary} are available in their "
+                f"Notify {patient_name} that {report_summary} are available in their "
                 "patient portal, confirm they acknowledge receipt, and determine if they have "
                 "questions for their provider."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {patient_name}, this is Alex calling from Cedar Health. "
-                    f"I'm calling to let you know that {call.report_summary} are now available "
+                    f"I'm calling to let you know that {report_summary} are now available "
                     "in your patient portal."
                 ),
                 guava.Field(

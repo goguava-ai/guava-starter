@@ -86,7 +86,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to fetch appointment %s pre-call: %s", appointment_id, e)
 
-        call.data = {"headers": headers, "appointment": appointment}
+        call.set_variable("headers", headers)
+        call.set_variable("appointment", appointment)
 
         if not appointment:
             call.hangup(
@@ -133,8 +134,8 @@ def on_done(call: guava.Call) -> None:
     will_attend = call.get_field("will_attend") or ""
     patient_name = call.get_variable("patient_name")
     appointment_id = call.get_variable("appointment_id")
-    appointment = call.data.get("appointment") if call.data else None
-    headers = call.data.get("headers", {}) if call.data else {}
+    appointment = call.get_variable("appointment")
+    headers = call.get_variable("headers") or {}
     appt_type = appointment.get("appointmenttype", "appointment") if appointment else "appointment"
 
     if "no" in will_attend or "reschedule" in will_attend:

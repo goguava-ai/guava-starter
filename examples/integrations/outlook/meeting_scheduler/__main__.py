@@ -4,8 +4,11 @@ import logging
 from guava import logging_utils
 import datetime
 import requests
+from google import genai as google_genai
 from guava.helpers.genai import DatetimeFilter
 
+
+_datetime_filter: DatetimeFilter | None = None
 
 GRAPH_ACCESS_TOKEN = os.environ["GRAPH_ACCESS_TOKEN"]
 BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -133,8 +136,9 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 def on_call_start(call: guava.Call) -> None:
     # Fetch the organizer's free slots before the call so DatetimeFilter
     # is ready to answer natural-language time queries immediately.
+    global _datetime_filter
     free_slots = get_free_slots()
-    call.datetime_filter = DatetimeFilter(source_list=free_slots)
+    _datetime_filter = DatetimeFilter(source_list=free_slots, client=google_genai.Client())
 
     call.set_task(
         "book_meeting",
@@ -169,7 +173,7 @@ def on_call_start(call: guava.Call) -> None:
                     "Find a meeting time that works for the caller. "
                     "Ask for their preference and present available options."
                 ),
-                choice_generator=lambda query: call.datetime_filter.filter(query, max_results=3),
+                choice_generator=lambda query: _datetime_filter.filter(query, max_results=3) if _datetime_filter else ([], []),
             ),
         ],
     )

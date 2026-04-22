@@ -87,8 +87,8 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch Epic MedicationStatement: %s", e)
 
-    call.known_allergies = known_allergies
-    call.known_medications = known_medications
+    call.set_variable("known_allergies", known_allergies)
+    call.set_variable("known_medications", known_medications)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -107,8 +107,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         # Dynamically build the question descriptions based on what Epic already has on file.
         # If records exist, the agent reads them back for confirmation; otherwise asks from scratch.
-        if call.known_medications:
-            med_list = ", ".join(call.known_medications)
+        known_medications = call.get_variable("known_medications") or []
+        known_allergies = call.get_variable("known_allergies") or []
+        if known_medications:
+            med_list = ", ".join(known_medications)
             medications_description = (
                 f"We currently have the following medications on file for this patient: {med_list}. "
                 "Read this list back to the patient and ask whether it is still accurate, or if "
@@ -122,8 +124,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 "If none, capture 'none'."
             )
 
-        if call.known_allergies:
-            allergy_list = ", ".join(call.known_allergies)
+        if known_allergies:
+            allergy_list = ", ".join(known_allergies)
             allergies_description = (
                 f"We currently have the following allergies on file for this patient: {allergy_list}. "
                 "Read this list back to the patient and ask whether it is still accurate, or if "
@@ -197,8 +199,8 @@ def on_done(call: guava.Call) -> None:
         "patient_name": patient_name,
         "patient_id": patient_id,
         "prior_record": {
-            "medications_on_file": call.known_medications,
-            "allergies_on_file": call.known_allergies,
+            "medications_on_file": call.get_variable("known_medications"),
+            "allergies_on_file": call.get_variable("known_allergies"),
         },
         "fields": {
             "chief_complaint": call.get_field("chief_complaint"),

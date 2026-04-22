@@ -166,7 +166,7 @@ def on_collect_done(call: guava.Call) -> None:
         return
 
     # Order is eligible — confirm the customer wants to proceed
-    call.data = {"order": order}
+    call.set_variable("order", order)
 
     call.set_task(
         "confirm_cancellation",
@@ -197,7 +197,7 @@ def on_collect_done(call: guava.Call) -> None:
 def on_confirm_done(call: guava.Call) -> None:
     confirm = call.get_field("confirm_cancel")
     cancel_reason = call.get_field("cancel_reason")
-    order = call.data.get("order", {})
+    order = call.get_variable("order") or {}
     order_id = order.get("id")
 
     if not confirm or "yes" not in confirm.lower():

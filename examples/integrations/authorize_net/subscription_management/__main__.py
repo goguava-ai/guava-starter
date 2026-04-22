@@ -159,7 +159,8 @@ def on_lookup_subscription_done(call: guava.Call) -> None:
         )
         return
 
-    call.data = {"subscription": sub, "subscription_id": subscription_id}
+    call.set_variable("subscription", sub)
+    call.set_variable("subscription_id", subscription_id)
 
     # Parse subscription details
     plan_name = sub.get("name", "your subscription")
@@ -215,10 +216,10 @@ def on_lookup_subscription_done(call: guava.Call) -> None:
 @agent.on_task_complete("manage_subscription")
 def on_manage_subscription_done(call: guava.Call) -> None:
     action = call.get_field("desired_action") or ""
-    subscription_id = call.data.get("subscription_id", "")
+    subscription_id = call.get_variable("subscription_id") or ""
 
     if "cancel" in action:
-        sub = call.data.get("subscription", {})
+        sub = call.get_variable("subscription") or {}
         call.set_task(
             "confirm_cancellation",
             objective="Confirm the customer truly wants to cancel their subscription before proceeding.",
@@ -247,7 +248,7 @@ def on_manage_subscription_done(call: guava.Call) -> None:
             )
         )
     elif "billing date" in action:
-        sub = call.data.get("subscription", {})
+        sub = call.get_variable("subscription") or {}
         schedule = sub.get("paymentSchedule", {})
         interval = schedule.get("interval", {})
         start_date = schedule.get("startDate", "")
@@ -276,7 +277,7 @@ def on_manage_subscription_done(call: guava.Call) -> None:
 @agent.on_task_complete("confirm_cancellation")
 def on_confirm_cancellation_done(call: guava.Call) -> None:
     confirm = call.get_field("cancel_confirm") or ""
-    subscription_id = call.data.get("subscription_id", "")
+    subscription_id = call.get_variable("subscription_id") or ""
 
     if "yes" in confirm:
         logging.info("Cancelling subscription %s", subscription_id)

@@ -88,8 +88,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to fetch Meditech Encounter: %s", e)
 
-        call.encounter_id = encounter_id
-        call.encounter_summary = encounter_summary
+        call.set_variable("encounter_id", encounter_id)
 
         call.set_task(
             "collect_wellness_info",
@@ -176,7 +175,7 @@ def process_and_close(call: guava.Call) -> None:
     concerning_symptoms = call.get_field("concerning_symptoms")
     symptom_description = call.get_field("symptom_description")
     followup_scheduled = call.get_field("followup_scheduled")
-    encounter_id = call.encounter_id
+    encounter_id = call.get_variable("encounter_id")
 
     has_concerning_symptoms = (
         concerning_symptoms and concerning_symptoms.strip().lower() == "yes"

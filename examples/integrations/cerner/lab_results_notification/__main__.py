@@ -112,7 +112,7 @@ def on_call_start(call: guava.Call) -> None:
         results_summary = [format_observation(o) for o in observations]
     except Exception as e:
         logging.error("Failed to fetch lab observations pre-call: %s", e)
-    call.data["results_summary"] = results_summary
+    call.set_variable("results_summary", results_summary)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -143,7 +143,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         patient_name = call.get_variable("patient_name")
         provider_name = call.get_variable("provider_name")
-        results_summary = call.data.get("results_summary", [])
+        results_summary = call.get_variable("results_summary") or []
 
         results_text = (
             "The following results are now available: " + "; ".join(results_summary) + "."
@@ -204,7 +204,7 @@ def on_done(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
     provider_name = call.get_variable("provider_name")
-    results_summary = call.data.get("results_summary", [])
+    results_summary = call.get_variable("results_summary") or []
 
     understood = call.get_field("understood") or "yes, understood"
     questions = call.get_field("questions") or ""

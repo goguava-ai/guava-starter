@@ -102,11 +102,9 @@ def on_call_start(call: guava.Call) -> None:
     )
     choices = ISSUE_CHOICES.get(issue_type, ["speak with support"])
 
-    call.data = {
-        "order": order,
-        "issue_description": issue_description,
-        "choices": choices,
-    }
+    call.set_variable("order", order)
+    call.set_variable("issue_description", issue_description)
+    call.set_variable("choices", choices)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -116,7 +114,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     if outcome == "unavailable":
         customer_name = call.get_variable("customer_name")
         order_id = call.get_variable("order_id")
-        issue_description = call.data.get("issue_description", "there is an issue with your order")
+        issue_description = call.get_variable("issue_description") or "there is an issue with your order"
         call.hangup(
             final_instructions=(
                 f"Leave a concise voicemail for {customer_name}. "
@@ -128,8 +126,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         customer_name = call.get_variable("customer_name")
         order_id = call.get_variable("order_id")
-        issue_description = call.data.get("issue_description", "there is an issue with your order")
-        choices = call.data.get("choices", ["speak with support"])
+        issue_description = call.get_variable("issue_description") or "there is an issue with your order"
+        choices = call.get_variable("choices") or ["speak with support"]
 
         call.set_task(
             "order_issue_resolution",

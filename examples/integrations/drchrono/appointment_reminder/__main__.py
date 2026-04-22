@@ -81,11 +81,9 @@ def on_call_start(call: guava.Call) -> None:
     reason = appointment.get("reason", "") if appointment else ""
     duration = appointment.get("duration", 30) if appointment else 30
 
-    call.data = {
-        "appt_display": scheduled_time,
-        "appt_reason": reason,
-        "appt_duration": duration,
-    }
+    call.set_variable("appt_display", scheduled_time)
+    call.set_variable("appt_reason", reason)
+    call.set_variable("appt_duration", duration)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -93,9 +91,9 @@ def on_call_start(call: guava.Call) -> None:
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     patient_name = call.get_variable("patient_name")
-    appt_display = call.data.get("appt_display", "your upcoming appointment")
-    appt_reason = call.data.get("appt_reason", "")
-    appt_duration = call.data.get("appt_duration", 30)
+    appt_display = call.get_variable("appt_display") or "your upcoming appointment"
+    appt_reason = call.get_variable("appt_reason") or ""
+    appt_duration = call.get_variable("appt_duration") or 30
 
     if outcome == "unavailable":
         logging.info("Unable to reach %s for appointment reminder.", patient_name)
@@ -157,7 +155,7 @@ def on_save_results(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
     appointment_id = call.get_variable("appointment_id")
-    appt_display = call.data.get("appt_display", "your upcoming appointment")
+    appt_display = call.get_variable("appt_display") or "your upcoming appointment"
 
     confirmation_status = call.get_field("confirmation_status") or "confirmed"
     has_questions = call.get_field("has_questions") or "no"

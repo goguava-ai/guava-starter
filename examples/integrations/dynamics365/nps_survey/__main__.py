@@ -90,15 +90,16 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch case %s pre-call: %s", case_id, e)
 
-    call.data = {"case_title": case_title, "ticket_number": ticket_number}
+    call.set_variable("case_title", case_title)
+    call.set_variable("ticket_number", ticket_number)
     call.reach_person(contact_full_name=contact_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     contact_name = call.get_variable("contact_name")
-    case_title = call.data.get("case_title", "your recently resolved support case")
-    ticket_number = call.data.get("ticket_number", "")
+    case_title = call.get_variable("case_title") or "your recently resolved support case"
+    ticket_number = call.get_variable("ticket_number") or ""
 
     if outcome == "unavailable":
         logging.info(
@@ -166,7 +167,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def on_save_results(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
     case_id = call.get_variable("case_id")
-    case_title = call.data.get("case_title", "your recently resolved support case")
+    case_title = call.get_variable("case_title") or "your recently resolved support case"
 
     nps_score = call.get_field("nps_score") or "not provided"
     primary_reason = call.get_field("primary_reason") or ""

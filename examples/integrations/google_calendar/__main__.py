@@ -16,6 +16,10 @@ from guava.helpers.genai import DatetimeFilter
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
+_datetime_filter: DatetimeFilter | None = None
+_calendar_service = None
+_calendar_id: str = ""
+
 APPOINTMENT_DURATION_MINS = int(os.environ.get("APPOINTMENT_DURATION_MINS", 30))
 BOOKING_WINDOW_DAYS = int(os.environ.get("BOOKING_WINDOW_DAYS", 14))
 BUSINESS_HOURS_START = int(os.environ.get("BUSINESS_HOURS_START", 9))
@@ -129,19 +133,18 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    calendar_id = os.environ["GOOGLE_CALENDAR_ID"]
-    service = build_calendar_service()
+    global _datetime_filter, _calendar_service, _calendar_id
+    _calendar_id = os.environ["GOOGLE_CALENDAR_ID"]
+    _calendar_service = build_calendar_service()
 
     # Fetch free slots once at call start and build a DatetimeFilter over them.
     # The filter uses Gemini to match natural language queries (e.g. "Tuesday morning")
     # against the ISO-8601 slot list without a round-trip per utterance.
-    free_slots = get_free_slots(service, calendar_id)
-    call.datetime_filter = DatetimeFilter(
+    free_slots = get_free_slots(_calendar_service, _calendar_id)
+    _datetime_filter = DatetimeFilter(
         source_list=free_slots,
         client=google_genai.Client(),
     )
-    call.calendar_id = calendar_id
-    call.calendar_service = service
 
     call.set_task(
         "finalize_booking",
@@ -181,7 +184,7 @@ def on_call_start(call: guava.Call) -> None:
 
 @agent.on_search_query("appointment_time")
 def search_appointment_time(call: guava.Call, query: str):
-    return call.datetime_filter.filter(query, max_results=3)
+    return _datetime_filter.filter(query, max_results=3) if _datetime_filter else []
 
 
 @agent.on_task_complete("finalize_booking")
@@ -201,8 +204,8 @@ def on_done(call: guava.Call) -> None:
 
     logging.info("Booking slot %s for %s", slot, caller_name)
     book_slot(
-        service=call.calendar_service,
-        calendar_id=call.calendar_id,
+        service=_calendar_service,
+        calendar_id=_calendar_id,
         iso_slot=slot,
         caller_name=caller_name,
     )

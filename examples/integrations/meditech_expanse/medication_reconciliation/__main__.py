@@ -184,7 +184,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 e,
             )
 
-        call.medications = medications
+        call.set_variable("medications", medications)
 
         if not medications:
             # No medications on file — still valuable to confirm and document.
@@ -336,7 +336,7 @@ def handle_no_medications_on_file(call: guava.Call) -> None:
 def process_reconciliation(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
-    medications = call.medications
+    medications = call.get_variable("medications")
     still_taking_all = call.get_field("still_taking_all")
     stopped_medications = call.get_field("stopped_medications")
     additional_medications = call.get_field("additional_medications")

@@ -87,7 +87,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch contact %s pre-call: %s", contact_id, e)
 
-    call.data = {"contact_email": contact_email}
+    call.set_variable("contact_email", contact_email)
     call.reach_person(contact_full_name=contact_name)
 
 

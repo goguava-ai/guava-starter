@@ -13,6 +13,8 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]
 SHEET_NAME = os.environ.get("SHEETS_SURVEY_TAB", "Survey Responses")
 
+_sheets_service = None
+
 
 def build_sheets_service():
     creds = service_account.Credentials.from_service_account_file(
@@ -57,7 +59,8 @@ agent = guava.Agent(
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.sheets_service = build_sheets_service()
+    global _sheets_service
+    _sheets_service = build_sheets_service()
     call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
 
@@ -146,7 +149,7 @@ def on_done(call: guava.Call) -> None:
 
     try:
         append_response(
-            call.sheets_service,
+            _sheets_service,
             customer_name,
             phone,
             rating,

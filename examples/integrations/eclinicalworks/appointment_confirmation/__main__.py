@@ -73,8 +73,8 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load appointment %s: %s", appointment_id, e)
 
-    call.headers = headers
-    call.appointment = appointment
+    call.set_variable("headers", headers)
+    call.set_variable("appointment", appointment)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -92,7 +92,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        appointment = call.appointment
+        appointment = call.get_variable("appointment")
         if not appointment:
             call.hangup(
                 final_instructions=(
@@ -152,14 +152,15 @@ def on_done(call: guava.Call) -> None:
     appointment_id = call.get_variable("appointment_id")
     attendance = call.get_field("attendance") or ""
     appt_type = "appointment"
-    if call.appointment and call.appointment.get("appointmentType"):
-        codings = call.appointment["appointmentType"].get("coding", [])
+    appointment = call.get_variable("appointment")
+    if appointment and appointment.get("appointmentType"):
+        codings = appointment["appointmentType"].get("coding", [])
         appt_type = codings[0].get("display", "appointment") if codings else "appointment"
 
     if "cancel" in attendance or "no" in attendance:
         cancelled = False
         try:
-            cancelled = cancel_appointment(appointment_id, call.headers)
+            cancelled = cancel_appointment(appointment_id, call.get_variable("headers"))
             logging.info("Appointment %s cancelled: %s", appointment_id, cancelled)
         except Exception as e:
             logging.error("Cancel failed for %s: %s", appointment_id, e)

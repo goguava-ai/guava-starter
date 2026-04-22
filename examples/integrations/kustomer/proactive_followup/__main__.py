@@ -82,8 +82,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch conversation %s pre-call: %s", conv_id, e)
 
-    call.issue_summary = issue_summary
-    call.conv_status = conv_status
+    call.set_variable("issue_summary", issue_summary)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -111,28 +110,30 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to add follow-up attempt note to conversation %s: %s", conv_id, e)
 
+        issue_summary = call.get_variable("issue_summary") or "your open support case"
         call.hangup(
             final_instructions=(
                 f"Leave a brief, friendly voicemail for {customer_name} on behalf of "
                 "Brightpath Support. Let them know you were calling to follow up on their open "
-                f"support case regarding {call.issue_summary}. Ask them to call back at their "
+                f"support case regarding {issue_summary}. Ask them to call back at their "
                 "convenience or reply to their case email if they have any updates. "
                 "Let them know our team is here to help."
             )
         )
     elif outcome == "available":
+        issue_summary = call.get_variable("issue_summary") or "your open support case"
         call.set_task(
             "handle_outcome",
             objective=(
                 f"Follow up with {customer_name} on their open support case "
-                f"{call.issue_summary} to check whether the issue has been resolved and "
+                f"{issue_summary} to check whether the issue has been resolved and "
                 "determine the best next step."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Taylor calling from Brightpath Support. "
                     f"I'm reaching out to follow up on your open support case regarding "
-                    f"{call.issue_summary}. We noticed it hasn't had any recent updates and "
+                    f"{issue_summary}. We noticed it hasn't had any recent updates and "
                     "wanted to check in with you."
                 ),
                 guava.Field(

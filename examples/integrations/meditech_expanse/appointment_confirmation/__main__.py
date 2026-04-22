@@ -40,7 +40,7 @@ def format_appointment_datetime(iso_str: str) -> str:
 
 def _update_appointment_status(appointment_id: str, new_status: str, cancellation_reason: str | None):
     """PATCH the Meditech FHIR Appointment resource to reflect the patient's decision."""
-    patch_ops = [
+    patch_ops: list[dict] = [
         {"op": "replace", "path": "/status", "value": new_status}
     ]
     if cancellation_reason:
@@ -124,8 +124,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Pre-fetch of appointment %s failed: %s", appointment_id, e)
 
-    call.appointment = appointment
-    call.appointment_display = appointment_display
+    call.set_variable("appointment_display", appointment_display)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -133,7 +132,7 @@ def on_call_start(call: guava.Call) -> None:
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     patient_name = call.get_variable("patient_name")
-    appointment_display = call.appointment_display
+    appointment_display = call.get_variable("appointment_display") or "your upcoming appointment"
 
     if outcome == "unavailable":
         call.hangup(
@@ -176,7 +175,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def handle_confirmation(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     appointment_id = call.get_variable("appointment_id")
-    appointment_display = call.appointment_display
+    appointment_display = call.get_variable("appointment_display") or "your upcoming appointment"
     status = call.get_field("confirmation_status")
 
     if status and status.strip().lower() == "cancelled":
@@ -225,7 +224,7 @@ def handle_confirmation(call: guava.Call) -> None:
 def process_cancellation(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     appointment_id = call.get_variable("appointment_id")
-    appointment_display = call.appointment_display
+    appointment_display = call.get_variable("appointment_display") or "your upcoming appointment"
     reason = call.get_field("cancellation_reason")
     _update_appointment_status(appointment_id, "cancelled", cancellation_reason=reason)
     call.hangup(

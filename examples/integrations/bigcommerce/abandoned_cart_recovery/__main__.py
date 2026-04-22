@@ -61,7 +61,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.warning("Could not fetch cart details for cart %s: %s", cart_id, e)
 
-    call.data = {"line_items_summary": line_items_summary}
+    call.set_variable("line_items_summary", line_items_summary)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -87,7 +87,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         customer_name = call.get_variable("customer_name")
         cart_total = call.get_variable("cart_total")
-        line_items_summary = call.data.get("line_items_summary", "")
+        line_items_summary = call.get_variable("line_items_summary") or ""
 
         items_mention = (
             f" — including {line_items_summary} —"

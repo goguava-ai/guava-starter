@@ -85,7 +85,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch contact %s pre-call: %s", contact_id, e)
 
-    call.company = company
+    call.set_variable("company", company)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -117,7 +117,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        company_note = f" at {call.company}" if call.company else ""
+        company = call.get_variable("company") or ""
+        company_note = f" at {company}" if company else ""
 
         call.set_task(
             "record_followup",

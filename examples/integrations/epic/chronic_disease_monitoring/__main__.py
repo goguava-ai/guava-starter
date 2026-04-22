@@ -74,9 +74,9 @@ def on_call_start(call: guava.Call) -> None:
         has_diabetes = True
         has_weight_management = True
 
-    call.has_hypertension = has_hypertension
-    call.has_diabetes = has_diabetes
-    call.has_weight_management = has_weight_management
+    call.set_variable("has_hypertension", has_hypertension)
+    call.set_variable("has_diabetes", has_diabetes)
+    call.set_variable("has_weight_management", has_weight_management)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -96,17 +96,20 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         # Build the checklist at runtime based on the condition flags set in on_call_start.
         # If no recognized conditions were found (e.g. Epic had no matching codes), collect
         # all vitals as a safe default rather than presenting an empty checklist.
-        collect_all = not any([call.has_hypertension, call.has_diabetes, call.has_weight_management])
+        has_hypertension = call.get_variable("has_hypertension")
+        has_diabetes = call.get_variable("has_diabetes")
+        has_weight_management = call.get_variable("has_weight_management")
+        collect_all = not any([has_hypertension, has_diabetes, has_weight_management])
 
         vitals_being_collected = []
-        if call.has_hypertension or collect_all:
+        if has_hypertension or collect_all:
             vitals_being_collected.append("blood pressure")
-        if call.has_diabetes or collect_all:
+        if has_diabetes or collect_all:
             vitals_being_collected.append("blood glucose")
-        if call.has_weight_management or collect_all:
+        if has_weight_management or collect_all:
             vitals_being_collected.append("weight")
 
-        checklist = [
+        checklist: list[guava.Field | guava.Say | str] = [
             guava.Say(
                 f"Hi {patient_name}, this is Jamie calling from Cedar Health. "
                 "I'm calling for your routine health check-in to collect today's readings. "
@@ -114,7 +117,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             ),
         ]
 
-        if call.has_hypertension or collect_all:
+        if has_hypertension or collect_all:
             checklist.append(
                 guava.Field(
                     key="blood_pressure_systolic",
@@ -139,7 +142,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 )
             )
 
-        if call.has_diabetes or collect_all:
+        if has_diabetes or collect_all:
             checklist.append(
                 guava.Field(
                     key="blood_glucose",
@@ -152,7 +155,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 )
             )
 
-        if call.has_weight_management or collect_all:
+        if has_weight_management or collect_all:
             checklist.append(
                 guava.Field(
                     key="weight",
@@ -219,9 +222,9 @@ def on_done(call: guava.Call) -> None:
         "patient_name": patient_name,
         "patient_id": patient_id,
         "conditions_monitored": {
-            "hypertension": call.has_hypertension,
-            "diabetes": call.has_diabetes,
-            "weight_management": call.has_weight_management,
+            "hypertension": call.get_variable("has_hypertension"),
+            "diabetes": call.get_variable("has_diabetes"),
+            "weight_management": call.get_variable("has_weight_management"),
         },
         "fields": {
             "blood_pressure_systolic": bp_systolic,

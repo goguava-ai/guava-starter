@@ -70,7 +70,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load subscription %s: %s", subscription_id, e)
 
-    call.data = {"total_owed_str": total_owed_str}
+    call.set_variable("total_owed_str", total_owed_str)
     call.reach_person(contact_full_name=customer_name)
 
 
@@ -88,7 +88,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        total_owed_str = call.data.get("total_owed_str", "")
+        total_owed_str = call.get_variable("total_owed_str") or ""
         amount_note = f" totaling {total_owed_str}" if total_owed_str else ""
 
         call.set_task(

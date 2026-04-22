@@ -166,13 +166,13 @@ def verify_and_cancel(call: guava.Call) -> None:
         # Order may already be picked — attempt cancel but warn the customer
         logging.info("Order %s is in '%s' status — attempting cancel", order_number, order_status)
 
-    call.order_id = order_id
-    call.order_number = order_number
-    call.caller_name = caller_name
-    call.grand_total = grand_total
-    call.currency = currency
-    call.cancel_reason = cancel_reason
-    call.order_status = order_status
+    call.set_variable("order_id", order_id)
+    call.set_variable("order_number", order_number)
+    call.set_variable("caller_name", caller_name)
+    call.set_variable("grand_total", grand_total)
+    call.set_variable("currency", currency)
+    call.set_variable("cancel_reason", cancel_reason)
+    call.set_variable("order_status", order_status)
 
     call.set_task(
         "confirm_cancellation",
@@ -198,13 +198,13 @@ def verify_and_cancel(call: guava.Call) -> None:
 @agent.on_task_complete("confirm_cancellation")
 def execute_cancellation(call: guava.Call) -> None:
     confirmed = call.get_field("cancellation_confirmed")
-    order_id = call.order_id
-    order_number = call.order_number
-    caller_name = call.caller_name
-    grand_total = call.grand_total
-    currency = call.currency
-    cancel_reason = call.cancel_reason
-    order_status = call.order_status
+    order_id = call.get_variable("order_id")
+    order_number = call.get_variable("order_number")
+    caller_name = call.get_variable("caller_name")
+    grand_total = call.get_variable("grand_total")
+    currency = call.get_variable("currency")
+    cancel_reason = call.get_variable("cancel_reason")
+    order_status = call.get_variable("order_status")
 
     if confirmed != "yes, cancel it":
         call.hangup(

@@ -99,9 +99,7 @@ def on_call_start(call: guava.Call) -> None:
         except Exception as e:
             logging.error("Error extracting payment profile ID: %s", e)
 
-    call.data = {
-        "payment_profile_id": payment_profile_id,
-    }
+    call.set_variable("payment_profile_id", payment_profile_id)
 
     call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
@@ -171,7 +169,7 @@ def on_done(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     failed_amount = call.get_variable("failed_amount")
     customer_profile_id = call.get_variable("customer_profile_id")
-    payment_profile_id = call.data.get("payment_profile_id")
+    payment_profile_id = call.get_variable("payment_profile_id")
 
     resolution = call.get_field("resolution_choice")
 
@@ -217,7 +215,7 @@ def on_done(call: guava.Call) -> None:
                 )
             )
         else:
-            trans_id = charge_result.get("transactionResponse", {}).get("transId", "N/A")
+            trans_id = (charge_result or {}).get("transactionResponse", {}).get("transId", "N/A")
             call.hangup(
                 final_instructions=(
                     f"Tell {customer_name} that their payment of ${failed_amount} was "

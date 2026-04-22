@@ -48,18 +48,19 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch Epic Appointment: %s", e)
 
-    call.appointment_display = appointment_display
+    call.set_variable("appointment_display", appointment_display)
     call.reach_person(contact_full_name=patient_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     patient_name = call.get_variable("patient_name")
+    appointment_display = call.get_variable("appointment_display")
     if outcome == "unavailable":
         call.hangup(
             final_instructions=(
                 "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
-                f"asking them to call back to confirm or cancel their appointment on {call.appointment_display}."
+                f"asking them to call back to confirm or cancel their appointment on {appointment_display}."
             )
         )
     elif outcome == "available":
@@ -67,12 +68,12 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             "appointment_confirmation",
             objective=(
                 f"Confirm or cancel {patient_name}'s appointment at Cedar Health "
-                f"scheduled for {call.appointment_display}. Be warm, concise, and respectful."
+                f"scheduled for {appointment_display}. Be warm, concise, and respectful."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {patient_name}, this is Maya calling from Cedar Health. "
-                    f"I'm reaching out to confirm your appointment scheduled for {call.appointment_display}."
+                    f"I'm reaching out to confirm your appointment scheduled for {appointment_display}."
                 ),
                 guava.Field(
                     key="confirmation",

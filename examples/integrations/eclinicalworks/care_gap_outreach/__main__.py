@@ -47,7 +47,7 @@ def on_call_start(call: guava.Call) -> None:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     except Exception as e:
         logging.error("Token error: %s", e)
-    call.headers = headers
+    call.set_variable("headers", headers)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -118,7 +118,7 @@ def on_done(call: guava.Call) -> None:
     )
 
     try:
-        post_communication_request(patient_id, care_gap, intent, call.headers)
+        post_communication_request(patient_id, care_gap, intent, call.get_variable("headers"))
     except Exception as e:
         logging.error("Failed to post CommunicationRequest: %s", e)
 

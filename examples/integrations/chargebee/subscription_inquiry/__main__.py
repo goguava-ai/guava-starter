@@ -3,7 +3,7 @@ import os
 import logging
 from guava import logging_utils
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 SITE = os.environ["CHARGEBEE_SITE"]
@@ -36,7 +36,7 @@ def format_amount(cents: int, currency: str = "USD") -> str:
 
 
 def format_date(unix_ts: int) -> str:
-    return datetime.utcfromtimestamp(unix_ts).strftime("%B %d, %Y")
+    return datetime.fromtimestamp(unix_ts, tz=timezone.utc).strftime("%B %d, %Y")
 
 
 agent = guava.Agent(

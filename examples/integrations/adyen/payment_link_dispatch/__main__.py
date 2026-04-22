@@ -87,7 +87,8 @@ def on_call_start(call: guava.Call) -> None:
         logging.error("Failed to create payment link before call: %s", exc)
         link_creation_error = True
 
-    call.data = {"payment_link": payment_link, "link_creation_error": link_creation_error}
+    call.set_variable("payment_link", payment_link)
+    call.set_variable("link_creation_error", link_creation_error)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -147,8 +148,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
 def handle_response(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     reference = call.get_variable("reference")
-    payment_link = call.data["payment_link"]
-    link_creation_error = call.data["link_creation_error"]
+    payment_link = call.get_variable("payment_link")
+    link_creation_error = call.get_variable("link_creation_error")
     ready_to_pay = (call.get_field("ready_to_pay") or "").lower()
 
     if "yes" in ready_to_pay:

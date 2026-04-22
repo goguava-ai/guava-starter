@@ -87,16 +87,17 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        call.headers = {}
+        headers: dict = {}
         try:
             token = get_access_token()
-            call.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         except Exception as e:
             logging.error("Token error: %s", e)
+        call.set_variable("headers", headers)
 
         med_names, allergy_names = [], []
         try:
-            meds = get_medications(patient_id, call.headers)
+            meds = get_medications(patient_id, headers)
             for e in meds:
                 r = e.get("resource", {})
                 name = r.get("medicationCodeableConcept", {}).get("text", "") or r.get("medicationReference", {}).get("display", "")
@@ -106,7 +107,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             logging.warning("Could not load medications: %s", e)
 
         try:
-            allergies = get_allergies(patient_id, call.headers)
+            allergies = get_allergies(patient_id, headers)
             for e in allergies:
                 r = e.get("resource", {})
                 name = r.get("code", {}).get("text", "")
@@ -181,7 +182,7 @@ def on_patient_intake_done(call: guava.Call) -> None:
     logging.info("Intake for patient %s:\n%s", patient_id, note)
 
     try:
-        posted = post_document_reference(patient_id, note, call.headers)
+        posted = post_document_reference(patient_id, note, call.get_variable("headers"))
         logging.info("DocumentReference posted: %s", posted)
     except Exception as e:
         logging.error("Failed to post document: %s", e)

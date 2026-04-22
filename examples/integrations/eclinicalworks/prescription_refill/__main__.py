@@ -49,7 +49,7 @@ def on_call_start(call: guava.Call) -> None:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     except Exception as e:
         logging.error("Token error: %s", e)
-    call.headers = headers
+    call.set_variable("headers", headers)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -129,7 +129,7 @@ def on_done(call: guava.Call) -> None:
 
     success = False
     try:
-        success = post_medication_request(patient_id, medication, pharmacy, call.headers)
+        success = post_medication_request(patient_id, medication, pharmacy, call.get_variable("headers"))
         logging.info("MedicationRequest posted: %s", success)
     except Exception as e:
         logging.error("Failed to post MedicationRequest: %s", e)

@@ -90,7 +90,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to get Athenahealth token at startup: %s", e)
 
-    call.data = {"headers": headers, "patient_id": None, "selected_appointment": None}
+    call.set_variable("headers", headers)
+    call.set_variable("patient_id", None)
+    call.set_variable("selected_appointment", None)
 
     call.set_task(
         "collect_scheduling_preferences",
@@ -163,7 +165,7 @@ def on_preferences_collected(call: guava.Call) -> None:
 
     logging.info("Scheduling request: %s %s, DOB %s, reason: %s", first_name, last_name, dob, reason)
 
-    headers = call.data.get("headers", {}) if call.data else {}
+    headers = call.get_variable("headers") or {}
 
     # Look up patient in Athenahealth
     patient_id = None
@@ -197,13 +199,11 @@ def on_preferences_collected(call: guava.Call) -> None:
 
         display_time = f"{appt_date} at {appt_time} with {provider}"
 
-        call.data = {
-            "headers": headers,
-            "patient_id": patient_id,
-            "selected_appointment": selected_appointment,
-            "appt_id": appt_id,
-            "display_time": display_time,
-        }
+        call.set_variable("headers", headers)
+        call.set_variable("patient_id", patient_id)
+        call.set_variable("selected_appointment", selected_appointment)
+        call.set_variable("appt_id", appt_id)
+        call.set_variable("display_time", display_time)
 
         call.set_task(
             "confirm_appointment_booking",
@@ -245,11 +245,10 @@ def on_booking_confirmed(call: guava.Call) -> None:
     last_name = call.get_field("last_name")
     reason = call.get_field("reason_for_visit")
 
-    data = call.data or {}
-    headers = data.get("headers", {})
-    patient_id = data.get("patient_id")
-    appt_id = data.get("appt_id", "")
-    display_time = data.get("display_time", "")
+    headers = call.get_variable("headers") or {}
+    patient_id = call.get_variable("patient_id")
+    appt_id = call.get_variable("appt_id") or ""
+    display_time = call.get_variable("display_time") or ""
 
     if confirmed.lower() != "yes":
         call.hangup(

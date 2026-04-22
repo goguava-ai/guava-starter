@@ -91,7 +91,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to load pre-call data for patient %s: %s", patient_id, e)
 
-    call.headers = headers
+    call.set_variable("headers", headers)
 
     med_names = []
     for e in existing_meds:
@@ -118,8 +118,8 @@ def on_call_start(call: guava.Call) -> None:
         "No allergies on file. Ask if they have any known drug or environmental allergies."
     )
 
-    call.meds_context = meds_context
-    call.allergies_context = allergies_context
+    call.set_variable("meds_context", meds_context)
+    call.set_variable("allergies_context", allergies_context)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -159,13 +159,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="medications",
                     field_type="text",
-                    description=call.meds_context,
+                    description=call.get_variable("meds_context"),
                     required=True,
                 ),
                 guava.Field(
                     key="allergies",
                     field_type="text",
-                    description=call.allergies_context,
+                    description=call.get_variable("allergies_context"),
                     required=True,
                 ),
                 guava.Field(
@@ -198,7 +198,7 @@ def on_done(call: guava.Call) -> None:
     logging.info("Intake for patient %s:\n%s", patient_id, note)
 
     try:
-        posted = post_document_reference(patient_id, note, call.headers)
+        posted = post_document_reference(patient_id, note, call.get_variable("headers"))
         logging.info("Intake DocumentReference posted: %s", posted)
     except Exception as e:
         logging.error("Failed to post intake document: %s", e)

@@ -79,7 +79,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch conversation %s pre-call: %s", conv_id, e)
 
-    call.issue_summary = issue_summary
+    call.set_variable("issue_summary", issue_summary)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -101,17 +101,18 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        issue_summary = call.get_variable("issue_summary") or "your recent support case"
         call.set_task(
             "save_results",
             objective=(
                 f"Collect CSAT feedback from {customer_name} regarding their recently "
-                f"resolved support case {call.issue_summary}."
+                f"resolved support case {issue_summary}."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Morgan calling from Brightpath Support. "
                     f"I'm following up on your recently resolved support case regarding "
-                    f"{call.issue_summary}. I have just a couple of quick questions — "
+                    f"{issue_summary}. I have just a couple of quick questions — "
                     "this will only take about a minute."
                 ),
                 guava.Field(

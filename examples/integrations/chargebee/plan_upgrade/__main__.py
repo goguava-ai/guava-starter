@@ -61,7 +61,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.warning("Could not pre-load plans: %s", e)
 
-    call.data = {"plans": plans}
+    call.set_variable("plans", plans)
 
     plan_names = [p.get("name", "") for p in plans if p.get("name")]
     plan_hint = f"Available plans: {', '.join(plan_names)}." if plan_names else ""
@@ -105,7 +105,7 @@ def on_call_start(call: guava.Call) -> None:
 
 @agent.on_task_complete("process_upgrade")
 def on_process_upgrade(call: guava.Call) -> None:
-    plans = call.data.get("plans", [])
+    plans = call.get_variable("plans") or []
     subscription_id = (call.get_field("subscription_id") or "").strip()
     desired_plan = (call.get_field("desired_plan") or "").strip().lower()
     confirmed = call.get_field("confirmed") or ""

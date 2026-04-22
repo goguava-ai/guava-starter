@@ -89,15 +89,12 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.patient_id = None
-    call.selected_slot = None
-    call.headers = {}
-
     try:
         token = get_access_token()
-        call.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        call.set_variable("headers", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     except Exception as e:
         logging.error("Token error at startup: %s", e)
+        call.set_variable("headers", {})
 
     call.set_task(
         "collect_scheduling_info",
@@ -156,18 +153,20 @@ def on_collect_scheduling_info_done(call: guava.Call) -> None:
                  first_name, last_name, dob, reason, preferred_date)
 
     try:
-        patients = search_patients(last_name, dob, call.headers)
+        patients = search_patients(last_name, dob, call.get_variable("headers"))
         if patients:
-            call.patient_id = patients[0]["resource"]["id"]
-            logging.info("Found patient: %s", call.patient_id)
+            patient_id = patients[0]["resource"]["id"]
+            call.set_variable("patient_id", patient_id)
+            logging.info("Found patient: %s", patient_id)
     except Exception as e:
         logging.warning("Patient search failed: %s", e)
 
     try:
-        slots = search_slots(preferred_date, reason, call.headers)
+        slots = search_slots(preferred_date, reason, call.get_variable("headers"))
         if slots:
-            call.selected_slot = slots[0]["resource"]
-            slot_start = call.selected_slot.get("start", "")
+            selected_slot = slots[0]["resource"]
+            call.set_variable("selected_slot", selected_slot)
+            slot_start = selected_slot.get("start", "")
             try:
                 dt = datetime.fromisoformat(slot_start.replace("Z", "+00:00"))
                 display_time = dt.strftime("%A, %B %-d at %-I:%M %p")
@@ -208,7 +207,8 @@ def on_confirm_slot_done(call: guava.Call) -> None:
     reason = call.get_field("reason_for_visit")
     confirmed = call.get_field("confirmed") or ""
 
-    slot_start = call.selected_slot.get("start", "") if call.selected_slot else ""
+    selected_slot = call.get_variable("selected_slot")
+    slot_start = selected_slot.get("start", "") if selected_slot else ""
     try:
         dt = datetime.fromisoformat(slot_start.replace("Z", "+00:00"))
         display_time = dt.strftime("%A, %B %-d at %-I:%M %p")
@@ -227,11 +227,11 @@ def on_confirm_slot_done(call: guava.Call) -> None:
     appointment = None
     try:
         appointment = post_appointment(
-            call.patient_id,
+            call.get_variable("patient_id"),
             f"{first_name} {last_name}",
-            call.selected_slot,
+            selected_slot,
             reason,
-            call.headers,
+            call.get_variable("headers"),
         )
         logging.info("Appointment booked: %s", appointment.get("id") if appointment else None)
     except Exception as e:

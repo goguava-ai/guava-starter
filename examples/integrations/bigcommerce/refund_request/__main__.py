@@ -102,7 +102,7 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="order_id",
-                field_type="number",
+                field_type="integer",
                 description="Ask the caller for their order number.",
                 required=True,
             ),

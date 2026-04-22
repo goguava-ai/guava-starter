@@ -47,33 +47,36 @@ def on_call_start(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     dispute_id = call.get_variable("dispute_id")
 
-    call.customer_name = customer_name
-    call.dispute_id = dispute_id
-    call.dispute = None
-
+    dispute = None
     try:
         token = get_access_token()
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        call.dispute = get_dispute(dispute_id, headers)
+        dispute = get_dispute(dispute_id, headers)
         logging.info(
             "Dispute %s loaded: status=%s",
             dispute_id,
-            call.dispute.get("status") if call.dispute else "not found",
+            dispute.get("status") if dispute else "not found",
         )
     except Exception as e:
         logging.error("Failed to load dispute %s: %s", dispute_id, e)
+
+    call.set_variable("dispute", dispute)
 
     call.reach_person(contact_full_name=customer_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    dispute_id = call.get_variable("dispute_id")
+    dispute = call.get_variable("dispute")
+
     if outcome == "unavailable":
-        logging.info("Unable to reach %s for dispute notification.", call.customer_name)
+        logging.info("Unable to reach %s for dispute notification.", customer_name)
         call.hangup(
             final_instructions=(
-                f"Leave a professional voicemail for {call.customer_name} from Northgate Commerce. "
-                f"Let them know you're calling about an open PayPal dispute (ID: {call.dispute_id}) "
+                f"Leave a professional voicemail for {customer_name} from Northgate Commerce. "
+                f"Let them know you're calling about an open PayPal dispute (ID: {dispute_id}) "
                 "and ask them to call back or check their email for details. "
                 "Keep it brief and non-alarming."
             )
@@ -83,24 +86,24 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         amount_str = ""
         status = "open"
 
-        if call.dispute:
-            reason = call.dispute.get("reason", "UNKNOWN").replace("_", " ").lower()
-            status = call.dispute.get("status", "open").replace("_", " ").lower()
-            disputed_amount = call.dispute.get("disputed_amount", {})
+        if dispute:
+            reason = dispute.get("reason", "UNKNOWN").replace("_", " ").lower()
+            status = dispute.get("status", "open").replace("_", " ").lower()
+            disputed_amount = dispute.get("disputed_amount", {})
             if disputed_amount.get("value"):
                 amount_str = f"${disputed_amount['value']} {disputed_amount.get('currency_code', 'USD')}"
 
         call.set_task(
             "handle_resolution",
             objective=(
-                f"Notify {call.customer_name} about an open PayPal dispute on their account. "
+                f"Notify {customer_name} about an open PayPal dispute on their account. "
                 "Explain the dispute, collect their preferred resolution, and provide next steps."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {call.customer_name}, this is Alex calling from Northgate Commerce. "
+                    f"Hi {customer_name}, this is Alex calling from Northgate Commerce. "
                     f"I'm reaching out because there's an open PayPal dispute on your account "
-                    f"(dispute ID: {call.dispute_id}) — the reason listed is '{reason}'"
+                    f"(dispute ID: {dispute_id}) — the reason listed is '{reason}'"
                     + (f" for {amount_str}" if amount_str else "")
                     + ". I wanted to reach out personally to understand the situation and help resolve it."
                 ),
@@ -131,15 +134,18 @@ def on_done(call: guava.Call) -> None:
     aware = call.get_field("aware") or ""
     preference = call.get_field("resolution_preference") or ""
 
+    customer_name = call.get_variable("customer_name")
+    dispute_id = call.get_variable("dispute_id")
+
     logging.info(
         "Dispute %s — customer aware: %s, preference: %s",
-        call.dispute_id, aware, preference,
+        dispute_id, aware, preference,
     )
 
     if "fraud" in preference or "didn't file" in aware:
         call.hangup(
             final_instructions=(
-                f"Let {call.customer_name} know you've flagged their account for a potential unauthorized "
+                f"Let {customer_name} know you've flagged their account for a potential unauthorized "
                 "dispute. Our team will investigate within one business day and they'll receive an email "
                 "update. Recommend they also report the dispute to PayPal. Apologize for the inconvenience "
                 "and thank them for flagging it."
@@ -148,7 +154,7 @@ def on_done(call: guava.Call) -> None:
     elif "refund" in preference:
         call.hangup(
             final_instructions=(
-                f"Let {call.customer_name} know you've noted their preference for a refund. "
+                f"Let {customer_name} know you've noted their preference for a refund. "
                 "Let them know our team will review the dispute and process a refund within "
                 "3–5 business days if eligible. They'll receive a PayPal notification. "
                 "Thank them for their patience and wish them a great day."
@@ -157,7 +163,7 @@ def on_done(call: guava.Call) -> None:
     elif "replacement" in preference:
         call.hangup(
             final_instructions=(
-                f"Let {call.customer_name} know you've noted their preference for a replacement. "
+                f"Let {customer_name} know you've noted their preference for a replacement. "
                 "Our fulfillment team will reach out by email within one business day with next steps. "
                 "Thank them and wish them a great day."
             )
@@ -165,7 +171,7 @@ def on_done(call: guava.Call) -> None:
     else:
         call.hangup(
             final_instructions=(
-                f"Let {call.customer_name} know the dispute (ID: {call.dispute_id}) remains open. "
+                f"Let {customer_name} know the dispute (ID: {dispute_id}) remains open. "
                 "PayPal will continue to mediate, and they'll receive updates via email. "
                 "Thank them for taking the time to talk and wish them a great day."
             )

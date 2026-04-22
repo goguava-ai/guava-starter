@@ -165,7 +165,7 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.data["caller_number"] = call.from_number
+    call.set_variable("caller_number", None)
     call.set_task(
         "collect_details",
         objective="Determine what kind of meeting the caller needs and collect their details.",
@@ -225,7 +225,7 @@ def on_details_done(call: guava.Call) -> None:
         )
         return
 
-    call.data["selected_event_type"] = selected_event_type
+    call.set_variable("selected_event_type", selected_event_type)
     caller_name = call.get_field("caller_name")
 
     def filter_slots(query: str) -> tuple[list[str], list[str]]:
@@ -279,9 +279,9 @@ def on_booking_done(call: guava.Call) -> None:
     email = call.get_field("caller_email")
     timezone = call.get_field("caller_timezone") or "UTC"
     slot = call.get_field("appointment_time")
-    selected_event_type = call.data.get("selected_event_type", {})
+    selected_event_type = call.get_variable("selected_event_type") or {}
     meeting_type = selected_event_type.get("name", "")
-    caller_number = call.data.get("caller_number")
+    caller_number = call.get_variable("caller_number")
 
     if not slot or not email:
         logging.error("Missing required booking fields — slot: %s, email: %s", slot, email)

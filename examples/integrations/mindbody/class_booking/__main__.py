@@ -161,8 +161,8 @@ def lookup_client(call: guava.Call) -> None:
         )
         return
 
-    call.client_id = client_id
-    call.client_name = client_name
+    call.set_variable("client_id", client_id)
+    call.set_variable("client_name", client_name)
 
     # Verify the member has active class credits before searching for classes.
     try:
@@ -320,7 +320,7 @@ def lookup_client(call: guava.Call) -> None:
         )
         return
 
-    call.selected_class = selected_class
+    call.set_variable("selected_class", selected_class)
 
     # Present the class and ask for confirmation.
     call.set_task(
@@ -354,9 +354,9 @@ def lookup_client(call: guava.Call) -> None:
 def finalize_booking(call: guava.Call) -> None:
     confirm = call.get_field("confirm_booking")
     class_type = call.get_field("class_type")
-    client_id = call.client_id
-    client_name = call.client_name
-    selected_class = call.selected_class
+    client_id = call.get_variable("client_id")
+    client_name = call.get_variable("client_name")
+    selected_class = call.get_variable("selected_class")
 
     if confirm != "yes, book it":
         call.hangup(

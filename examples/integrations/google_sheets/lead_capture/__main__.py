@@ -10,6 +10,8 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]
+
+_sheets_service = None
 SHEET_NAME = os.environ.get("SHEETS_LEAD_TAB", "Leads")
 
 
@@ -55,7 +57,8 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.sheets_service = build_sheets_service()
+    global _sheets_service
+    _sheets_service = build_sheets_service()
 
     call.set_task(
         "log_lead",
@@ -118,7 +121,7 @@ def on_done(call: guava.Call) -> None:
     logging.info("Logging lead — name: %s, interest: %s", name, interest)
 
     try:
-        append_lead(call.sheets_service, name, email, phone, interest)
+        append_lead(_sheets_service, name, email, phone, interest)
         logging.info("Lead appended to sheet for %s", name)
     except Exception as e:
         logging.error("Failed to append lead: %s", e)

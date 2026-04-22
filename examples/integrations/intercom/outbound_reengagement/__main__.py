@@ -92,12 +92,11 @@ def on_call_start(call: guava.Call) -> None:
             contact_email = contact.get("email") or ""
             last_ts = contact.get("last_seen_at")
             if last_ts:
-                last_seen = datetime.utcfromtimestamp(last_ts).strftime("%B %Y")
+                last_seen = datetime.fromtimestamp(last_ts, tz=timezone.utc).strftime("%B %Y")
     except Exception as e:
         logging.error("Failed to fetch contact %s pre-call: %s", contact_id, e)
 
-    call.contact_email = contact_email
-    call.last_seen = last_seen
+    call.set_variable("last_seen", last_seen)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -123,7 +122,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        last_seen_note = f" We noticed you haven't been active since {call.last_seen}." if call.last_seen else ""
+        last_seen = call.get_variable("last_seen") or ""
+        last_seen_note = f" We noticed you haven't been active since {last_seen}." if last_seen else ""
 
         call.set_task(
             "record_outcome",

@@ -184,6 +184,14 @@ def create_return(call: guava.Call) -> None:
         return
 
     order_id = order.get("entity_id")
+    if order_id is None:
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {customer_name} — there was an issue looking up that order. "
+                "Ask them to contact customer service for further assistance."
+            )
+        )
+        return
     order_items = order.get("items", [])
     # Build return item list — use the first matching item or all items
     rma_items = []

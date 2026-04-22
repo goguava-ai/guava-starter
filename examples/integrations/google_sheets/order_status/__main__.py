@@ -11,6 +11,8 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]
 SHEET_NAME = os.environ.get("SHEETS_ORDERS_TAB", "Orders")
 
+_sheets_service = None
+
 # Expected sheet columns (0-indexed):
 # Order ID | Last Name | Status | Est. Delivery | Items Summary | Tracking Number
 COL_ORDER_ID = 0
@@ -79,7 +81,8 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.sheets_service = build_sheets_service()
+    global _sheets_service
+    _sheets_service = build_sheets_service()
 
     call.set_task(
         "deliver_status",
@@ -120,7 +123,7 @@ def on_done(call: guava.Call) -> None:
     logging.info("Order lookup — order_id: '%s', last_name: '%s'", order_id, last_name)
 
     try:
-        order = find_order(call.sheets_service, order_id, last_name)
+        order = find_order(_sheets_service, order_id, last_name)
     except Exception as e:
         logging.error("Sheets lookup failed: %s", e)
         call.hangup(

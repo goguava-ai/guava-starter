@@ -69,9 +69,9 @@ def on_call_start(call: guava.Call) -> None:
 
     status = tracker.get("status", "unknown") if tracker else "unknown"
     carrier = tracker.get("carrier", "the carrier") if tracker else "the carrier"
-    call.tracker = tracker
-    call.status = status
-    call.carrier = carrier
+    call.set_variable("tracker", tracker)
+    call.set_variable("status", status)
+    call.set_variable("carrier", carrier)
 
     call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
@@ -92,17 +92,19 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         customer_name = call.get_variable("customer_name")
         order_number = call.get_variable("order_number")
+        delivery_status = call.get_variable("status")
+        carrier = call.get_variable("carrier")
         call.set_task(
             "delivery_followup",
             objective=(
                 f"Inform {customer_name} that their package (order {order_number}) "
-                f"encountered a delivery issue and has a status of '{call.status}'. "
+                f"encountered a delivery issue and has a status of '{delivery_status}'. "
                 "Collect a corrected shipping address and confirm how they would like to proceed."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {customer_name}, this is Alex calling from Summit Outfitters regarding your recent order, number {order_number}. "
-                    f"I'm calling because we received a notification that your package had a delivery issue with {call.carrier} and could not be delivered as expected."
+                    f"I'm calling because we received a notification that your package had a delivery issue with {carrier} and could not be delivered as expected."
                 ),
                 guava.Field(
                     key="issue_acknowledged",

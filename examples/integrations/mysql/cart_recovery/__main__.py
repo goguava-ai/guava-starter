@@ -107,29 +107,29 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             if cart:
                 total = cart.get("total_amount")
                 currency = (cart.get("currency") or "USD").upper()
-                call.total_str = f"${float(total):,.2f} {currency}" if total else ""
+                total_str = f"${float(total):,.2f} {currency}" if total else ""
             else:
-                call.total_str = ""
+                total_str = ""
             items = get_cart_items(cart_id)
             if items:
                 lines = [f"{r['product_name']} ×{r['quantity']}" for r in items]
-                call.item_summary = ", ".join(lines)
+                item_summary = ", ".join(lines)
             else:
-                call.item_summary = ""
+                item_summary = ""
         except Exception as e:
             logging.error("Failed to fetch cart %d: %s", cart_id, e)
-            call.total_str = ""
-            call.item_summary = ""
+            total_str = ""
+            item_summary = ""
 
-        cart_note = f" You had {call.item_summary} in your cart." if call.item_summary else ""
-        total_note = f" The total comes to {call.total_str}." if call.total_str else ""
+        cart_note = f" You had {item_summary} in your cart." if item_summary else ""
+        total_note = f" The total comes to {total_str}." if total_str else ""
 
         call.set_task(
             "cart_followup",
             objective=(
                 f"Follow up with {customer_name} about items left in their Peak Outdoors cart. "
-                + (f"Cart contents: {call.item_summary}." if call.item_summary else "")
-                + (f" Cart total: {call.total_str}." if call.total_str else "")
+                + (f"Cart contents: {item_summary}." if item_summary else "")
+                + (f" Cart total: {total_str}." if total_str else "")
                 + " Find out if they have questions and help them complete the purchase."
             ),
             checklist=[

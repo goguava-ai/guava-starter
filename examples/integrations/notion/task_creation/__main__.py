@@ -32,7 +32,7 @@ def create_task(title: str, description: str, assignee: str, due_date: str, prio
     if priority:
         properties["Priority"] = {"select": {"name": priority}}
 
-    payload = {
+    payload: dict = {
         "parent": {"database_id": DATABASE_ID},
         "properties": properties,
     }

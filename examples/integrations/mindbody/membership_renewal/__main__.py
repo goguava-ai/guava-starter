@@ -78,7 +78,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to pre-fetch client account for %s: %s", client_id, e)
 
-    call.account = account
+    call.set_variable("account", account)
     call.reach_person(contact_full_name=client_name)
 
 
@@ -99,7 +99,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        account = call.account
+        account = call.get_variable("account")
 
         # Determine remaining credits to personalize the message.
         remaining_credits = 0

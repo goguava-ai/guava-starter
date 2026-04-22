@@ -135,8 +135,8 @@ def lookup_client(call: guava.Call) -> None:
         )
         return
 
-    call.client_id = client_id
-    call.client_name = client_name
+    call.set_variable("client_id", client_id)
+    call.set_variable("client_name", client_name)
 
     # Route to the appropriate cancellation flow based on type.
     if cancel_type == "a class booking":
@@ -212,8 +212,8 @@ def _fetch_and_present_class(call: guava.Call, client_id: str, client_name: str)
         )
         return
 
-    call.upcoming_visit = upcoming_visit
-    call.is_late_cancel = is_late_cancel
+    call.set_variable("upcoming_visit", upcoming_visit)
+    call.set_variable("is_late_cancel", is_late_cancel)
 
     # Build the late-cancel warning if needed, then ask for confirmation.
     class_name = upcoming_visit.get("Name", "your class")
@@ -258,10 +258,10 @@ def _fetch_and_present_class(call: guava.Call, client_id: str, client_name: str)
 @agent.on_task_complete("confirm_class_cancel")
 def execute_class_cancellation(call: guava.Call) -> None:
     confirm = call.get_field("confirm_cancel")
-    client_id = call.client_id
-    client_name = call.client_name
-    upcoming_visit = call.upcoming_visit
-    is_late_cancel = call.is_late_cancel
+    client_id = call.get_variable("client_id")
+    client_name = call.get_variable("client_name")
+    upcoming_visit = call.get_variable("upcoming_visit")
+    is_late_cancel = call.get_variable("is_late_cancel")
 
     class_name = upcoming_visit.get("Name", "your class")
     start_raw = upcoming_visit.get("StartDateTime", "")
@@ -399,11 +399,10 @@ def _fetch_and_present_appointment(call: guava.Call, client_id: str, client_name
             appt_id, display_time, staff_name, is_late_cancel,
         )
 
-        call.pending_appt_id = appt_id
-        call.pending_appt_display = display_time
-        call.pending_staff_name = staff_name
-        call.pending_start_raw = start_raw
-        call.is_late_cancel = is_late_cancel
+        call.set_variable("pending_appt_id", appt_id)
+        call.set_variable("pending_appt_display", display_time)
+        call.set_variable("pending_start_raw", start_raw)
+        call.set_variable("is_late_cancel", is_late_cancel)
 
     except Exception as e:
         logging.error("Failed to fetch appointments: %s", e)
@@ -450,12 +449,12 @@ def _fetch_and_present_appointment(call: guava.Call, client_id: str, client_name
 def execute_appointment_cancellation(call: guava.Call) -> None:
     confirm = call.get_field("confirm_cancel")
     cancel_type = call.get_field("cancel_type")
-    client_id = call.client_id
-    client_name = call.client_name
-    appt_id = call.pending_appt_id
-    display_time = call.pending_appt_display
-    start_raw = call.pending_start_raw
-    is_late_cancel = call.is_late_cancel
+    client_id = call.get_variable("client_id")
+    client_name = call.get_variable("client_name")
+    appt_id = call.get_variable("pending_appt_id")
+    display_time = call.get_variable("pending_appt_display")
+    start_raw = call.get_variable("pending_start_raw")
+    is_late_cancel = call.get_variable("is_late_cancel")
 
     if confirm != "yes, cancel it":
         call.hangup(

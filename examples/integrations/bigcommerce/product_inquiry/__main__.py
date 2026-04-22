@@ -185,7 +185,7 @@ def on_collect_done(call: guava.Call) -> None:
     else:
         detail_line = f"{product_full_name} is {availability_label} and priced at ${price}."
 
-    call.data = {"product": product}
+    call.set_variable("product", product)
 
     call.set_task(
         "product_inquiry_followup",
@@ -218,7 +218,7 @@ def on_collect_done(call: guava.Call) -> None:
 @agent.on_task_complete("product_inquiry_followup")
 def on_followup_done(call: guava.Call) -> None:
     action = call.get_field("next_action")
-    product = call.data.get("product", {}) if call.data else {}
+    product = call.get_variable("product") or {}
     product_full_name = product.get("name", "the item")
     label = (action or "").strip().lower()
 

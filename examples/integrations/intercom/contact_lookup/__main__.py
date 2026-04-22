@@ -3,7 +3,7 @@ import os
 import logging
 from guava import logging_utils
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 INTERCOM_ACCESS_TOKEN = os.environ["INTERCOM_ACCESS_TOKEN"]
@@ -40,7 +40,7 @@ def find_contact_by_email(email: str) -> dict | None:
 def format_last_seen(ts: int | None) -> str:
     if not ts:
         return "never"
-    return datetime.utcfromtimestamp(ts).strftime("%B %d, %Y")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%B %d, %Y")
 
 
 agent = guava.Agent(

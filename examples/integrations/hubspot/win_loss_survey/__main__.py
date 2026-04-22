@@ -79,7 +79,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
 
-    call.deal_name = deal_name
+    call.set_variable("deal_name", deal_name)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -88,6 +88,7 @@ def on_call_start(call: guava.Call) -> None:
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     customer_name = call.get_variable("customer_name")
     deal_outcome = call.get_variable("outcome")
+    deal_name = call.get_variable("deal_name") or "our recent proposal"
 
     if outcome == "unavailable":
         logging.info(
@@ -103,6 +104,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
+        checklist: list[guava.Field | guava.Say | str]
         if deal_outcome == "won":
             opener = (
                 f"Hi {customer_name}, this is Casey from Apex Solutions. "
@@ -112,7 +114,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             objective = (
                 f"Conduct a brief win interview with {customer_name} "
-                f"about '{call.deal_name}'. Understand why they chose Apex Solutions."
+                f"about '{deal_name}'. Understand why they chose Apex Solutions."
             )
             checklist = [
                 guava.Say(opener),
@@ -152,7 +154,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
             objective = (
                 f"Conduct a brief loss interview with {customer_name} "
-                f"about '{call.deal_name}'. Understand why they chose a competitor."
+                f"about '{deal_name}'. Understand why they chose a competitor."
             )
             checklist = [
                 guava.Say(opener),
@@ -199,6 +201,7 @@ def on_done(call: guava.Call) -> None:
     deal_id = call.get_variable("deal_id")
     contact_id = call.get_variable("contact_id")
     deal_outcome = call.get_variable("outcome")
+    deal_name = call.get_variable("deal_name") or ""
 
     primary_reason = call.get_field("primary_reason") or ""
     improvement = call.get_field("improvement_suggestion") or ""
@@ -209,7 +212,7 @@ def on_done(call: guava.Call) -> None:
     note_lines = [
         f"Win/Loss Survey — {deal_outcome.upper()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
         f"Contact: {customer_name}",
-        f"Deal: {call.deal_name}",
+        f"Deal: {deal_name}",
         f"Primary reason: {primary_reason}",
     ]
     if standout:

@@ -63,10 +63,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         try:
             token = get_access_token()
-            call.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            call.set_variable("headers", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
         except Exception as e:
             logging.error("Token error: %s", e)
-            call.headers = {}
+            call.set_variable("headers", {})
 
         call.set_task(
             "referral_followup",
@@ -136,7 +136,7 @@ def on_referral_followup_done(call: guava.Call) -> None:
     intent = f"received={received}, scheduled={scheduled}, date={appt_date}, barriers={barriers}"
 
     try:
-        post_communication(patient_id, referral_specialty, intent, call.headers)
+        post_communication(patient_id, referral_specialty, intent, call.get_variable("headers"))
     except Exception as e:
         logging.error("Failed to log Communication: %s", e)
 

@@ -180,7 +180,7 @@ def on_collect_done(call: guava.Call) -> None:
         "items_summary": items_summary,
     }, indent=2))
 
-    call.data = {"order": order}
+    call.set_variable("order", order)
 
     items_line = f" Your order includes: {items_summary}." if items_summary else ""
     greeting = f"{first_name}, " if first_name else ""

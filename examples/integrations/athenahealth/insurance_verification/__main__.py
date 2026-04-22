@@ -88,7 +88,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to load insurance for patient %s: %s", patient_id, e)
 
-        call.data = {"headers": headers, "existing_insurance": existing_insurance}
+        call.set_variable("headers", headers)
+        call.set_variable("existing_insurance", existing_insurance)
 
         if existing_insurance:
             ins_name = existing_insurance.get("insuranceplanname", "your current plan")
@@ -161,7 +162,7 @@ def on_done(call: guava.Call) -> None:
     group_number = call.get_field("group_number") or ""
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
-    headers = call.data.get("headers", {}) if call.data else {}
+    headers = call.get_variable("headers") or {}
 
     if "yes" in insurance_current:
         logging.info("Insurance verified as current for patient %s.", patient_id)

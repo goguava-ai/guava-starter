@@ -95,11 +95,9 @@ def on_call_start(call: guava.Call) -> None:
         except Exception as e:
             logging.error("Error extracting payment profile: %s", e)
 
-    call.data = {
-        "profile_data": profile_data,
-        "payment_profile_id": payment_profile_id,
-        "card_last_four": card_last_four,
-    }
+    call.set_variable("profile_data", profile_data)
+    call.set_variable("payment_profile_id", payment_profile_id)
+    call.set_variable("card_last_four", card_last_four)
 
     call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
@@ -122,7 +120,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     elif outcome == "available":
         customer_name = call.get_variable("customer_name")
         outstanding_balance = call.get_variable("outstanding_balance")
-        card_last_four = call.data.get("card_last_four")
+        card_last_four = call.get_variable("card_last_four")
         card_description = (
             f"ending in {card_last_four}" if card_last_four else "on file"
         )
@@ -203,7 +201,7 @@ def on_done(call: guava.Call) -> None:
     customer_name = call.get_variable("customer_name")
     outstanding_balance = call.get_variable("outstanding_balance")
     customer_profile_id = call.get_variable("customer_profile_id")
-    payment_profile_id = call.data.get("payment_profile_id")
+    payment_profile_id = call.get_variable("payment_profile_id")
 
     balance_confirmed = call.get_field("balance_confirmed")
     payment_method = call.get_field("payment_method")
@@ -312,7 +310,7 @@ def on_done(call: guava.Call) -> None:
             )
         )
     else:
-        trans_id = charge_result.get("transactionResponse", {}).get("transId", "N/A")
+        trans_id = (charge_result or {}).get("transactionResponse", {}).get("transId", "N/A")
         remaining = ""
         try:
             original = float(outstanding_balance.replace("$", "").replace(",", ""))

@@ -76,8 +76,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             appointment = None
             headers = {}
 
-        call.appointment = appointment
-        call.headers = headers
+        call.set_variable("appointment", appointment)
+        call.set_variable("headers", headers)
 
         if not appointment:
             call.hangup(
@@ -135,7 +135,7 @@ def on_appointment_confirmation_done(call: guava.Call) -> None:
     attendance = call.get_field("attendance") or ""
 
     # Reconstruct appt_type and display_time from stored appointment data
-    appointment = call.appointment
+    appointment = call.get_variable("appointment")
     appt_type = "appointment"
     if appointment:
         appt_type_coding = appointment.get("appointmentType", {}).get("coding", [])
@@ -151,7 +151,7 @@ def on_appointment_confirmation_done(call: guava.Call) -> None:
 
     if "cancel" in attendance:
         try:
-            cancelled = cancel_appointment(appointment_id, call.headers)
+            cancelled = cancel_appointment(appointment_id, call.get_variable("headers"))
             logging.info("Appointment %s cancelled: %s", appointment_id, cancelled)
         except Exception as e:
             logging.error("Cancel failed: %s", e)

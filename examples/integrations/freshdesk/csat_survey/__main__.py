@@ -78,8 +78,6 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
 
-    call.ticket_subject = ticket_subject
-
     call.set_task(
         "collect_csat",
         objective=(
@@ -146,8 +144,6 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ticket_subject = f"'{ticket['subject']}'"
         except Exception as e:
             logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
-
-        call.ticket_subject = ticket_subject
 
         call.set_task(
             "collect_csat",

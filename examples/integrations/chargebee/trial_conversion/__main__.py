@@ -33,7 +33,7 @@ def end_trial_now(subscription_id: str) -> dict | None:
 
 
 def format_date(unix_ts: int) -> str:
-    return datetime.utcfromtimestamp(unix_ts).strftime("%B %d, %Y")
+    return datetime.fromtimestamp(unix_ts, tz=timezone.utc).strftime("%B %d, %Y")
 
 
 def format_amount(cents: int, currency: str = "USD") -> str:
@@ -70,7 +70,8 @@ def on_call_start(call: guava.Call) -> None:
         if plan_amount:
             amount_str = format_amount(plan_amount, currency)
 
-    call.data = {"amount_str": amount_str, "period": period}
+    call.set_variable("amount_str", amount_str)
+    call.set_variable("period", period)
     call.reach_person(contact_full_name=customer_name)
 
 
@@ -89,8 +90,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        amount_str = call.data.get("amount_str", "")
-        period = call.data.get("period", "month")
+        amount_str = call.get_variable("amount_str") or ""
+        period = call.get_variable("period") or "month"
         call.set_task(
             "handle_conversion",
             objective=(

@@ -24,8 +24,8 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.patient_fhir_id = None
-    call.selected_slot = None
+    call.set_variable("patient_fhir_id", None)
+    call.set_variable("selected_slot", None)
 
     call.set_task(
         "collect_preferences",
@@ -138,8 +138,8 @@ def on_preferences_done(call: guava.Call) -> None:
         patient_resp.raise_for_status()
         patient_entries = patient_resp.json().get("entry", [])
         if patient_entries:
-            call.patient_fhir_id = patient_entries[0]["resource"]["id"]
-            logging.info("Found patient in Epic: %s", call.patient_fhir_id)
+            call.set_variable("patient_fhir_id", patient_entries[0]["resource"]["id"])
+            logging.info("Found patient in Epic: %s", call.get_variable("patient_fhir_id"))
         else:
             # Patient not found — booking will proceed with display name only
             logging.warning(
@@ -164,9 +164,10 @@ def on_preferences_done(call: guava.Call) -> None:
         slot_entries = slot_resp.json().get("entry", [])
 
         if slot_entries:
-            call.selected_slot = slot_entries[0]["resource"]
-            slot_start = call.selected_slot.get("start", "")
-            slot_id = call.selected_slot.get("id", "")
+            call.set_variable("selected_slot", slot_entries[0]["resource"])
+            selected_slot = call.get_variable("selected_slot") or {}
+            slot_start = selected_slot.get("start", "")
+            slot_id = selected_slot.get("id", "")
             logging.info("Found available slot: %s (start: %s)", slot_id, slot_start)
 
             try:
@@ -230,9 +231,10 @@ def on_booking_done(call: guava.Call) -> None:
         )
         return
 
-    slot_id = call.selected_slot.get("id", "")
-    slot_start = call.selected_slot.get("start", "")
-    slot_end = call.selected_slot.get("end", "")
+    selected_slot = call.get_variable("selected_slot") or {}
+    slot_id = selected_slot.get("id", "")
+    slot_start = selected_slot.get("start", "")
+    slot_end = selected_slot.get("end", "")
 
     # Patient confirmed the slot — POST a new Appointment resource to Epic.
     # Link the slot reference and patient FHIR ID (or display name if lookup failed).
@@ -245,9 +247,10 @@ def on_booking_done(call: guava.Call) -> None:
         }
 
         participant = []
-        if call.patient_fhir_id:
+        patient_fhir_id = call.get_variable("patient_fhir_id")
+        if patient_fhir_id:
             participant.append({
-                "actor": {"reference": f"Patient/{call.patient_fhir_id}"},
+                "actor": {"reference": f"Patient/{patient_fhir_id}"},
                 "status": "accepted",
             })
         else:
@@ -285,7 +288,7 @@ def on_booking_done(call: guava.Call) -> None:
         "organization": "Cedar Health",
         "use_case": "appointment_scheduling",
         "phase": "booked",
-        "patient_fhir_id": call.patient_fhir_id,
+        "patient_fhir_id": patient_fhir_id,
         "slot_id": slot_id,
         "appointment_start": slot_start,
         "appointment_end": slot_end,

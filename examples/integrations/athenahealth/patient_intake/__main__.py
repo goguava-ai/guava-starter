@@ -104,7 +104,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to load patient pre-call data for %s: %s", patient_id, e)
 
-        call.data = {"headers": headers}
+        call.set_variable("headers", headers)
 
         med_names = [m.get("medicationname", "") for m in existing_meds if m.get("medicationname")]
         allergy_names = [a.get("allergenname", "") for a in existing_allergies if a.get("allergenname")]
@@ -178,7 +178,7 @@ def on_done(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
     appointment_time = call.get_variable("appointment_time")
-    headers = call.data.get("headers", {}) if call.data else {}
+    headers = call.get_variable("headers") or {}
 
     summary = (
         f"Pre-visit intake — {appointment_time}\n"

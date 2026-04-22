@@ -62,60 +62,62 @@ def on_call_start(call: guava.Call) -> None:
     user_id = call.get_variable("user_id")
     message_id = call.get_variable("message_id")
 
-    call.subject = ""
-    call.body_preview = ""
-    call.received_date = ""
-    call.user_id = user_id
-    call.message_id = message_id
-    call.contact_name = contact_name
+    subject = ""
+    received_date = ""
 
     # Fetch the email details before reaching the person so the agent has full context
     try:
         msg = get_message(user_id, message_id)
-        call.subject = msg.get("subject") or "(no subject)"
-        call.body_preview = msg.get("bodyPreview") or ""
+        subject = msg.get("subject") or "(no subject)"
         received_raw = msg.get("receivedDateTime", "")
         if received_raw:
             try:
                 dt = datetime.fromisoformat(received_raw.replace("Z", "+00:00"))
-                call.received_date = dt.strftime("%B %-d")
+                received_date = dt.strftime("%B %-d")
             except (ValueError, AttributeError):
-                call.received_date = received_raw
+                received_date = received_raw
         logging.info(
-            "Email fetched — subject: '%s', received: %s", call.subject, call.received_date
+            "Email fetched — subject: '%s', received: %s", subject, received_date
         )
     except Exception as e:
         logging.error("Failed to fetch email %s for user %s: %s", message_id, user_id, e)
+
+    call.set_variable("subject", subject)
+    call.set_variable("received_date", received_date)
 
     call.reach_person(contact_full_name=contact_name)
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    subject = call.get_variable("subject") or ""
+    received_date = call.get_variable("received_date") or ""
+
     if outcome == "unavailable":
-        logging.info("Unable to reach %s for email follow-up", call.contact_name)
-        subject_note = f" regarding '{call.subject}'" if call.subject else ""
+        logging.info("Unable to reach %s for email follow-up", contact_name)
+        subject_note = f" regarding '{subject}'" if subject else ""
         call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {call.contact_name} from Meridian Partners. "
+                f"Leave a brief voicemail for {contact_name} from Meridian Partners. "
                 f"Let them know you're calling to follow up on an email{subject_note} "
                 "and ask them to reply at their earliest convenience or call back. "
                 "Keep it professional and brief."
             )
         )
     elif outcome == "available":
-        subject_note = f" regarding '{call.subject}'" if call.subject else ""
-        date_note = f" that was sent on {call.received_date}" if call.received_date else ""
+        subject_note = f" regarding '{subject}'" if subject else ""
+        date_note = f" that was sent on {received_date}" if received_date else ""
 
         call.set_task(
             "handle_response",
             objective=(
-                f"Follow up with {call.contact_name} about an email{subject_note}{date_note}. "
+                f"Follow up with {contact_name} about an email{subject_note}{date_note}. "
                 "Understand their response and record any action items."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {call.contact_name}, this is Sam calling from Meridian Partners. "
+                    f"Hi {contact_name}, this is Sam calling from Meridian Partners. "
                     f"I'm reaching out to follow up on an email{subject_note}{date_note}."
                 ),
                 guava.Field(
@@ -123,7 +125,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     field_type="multiple_choice",
                     description=(
                         f"Ask if they received and had a chance to review "
-                        f"the email about '{call.subject}'."
+                        f"the email about '{subject}'."
                     ),
                     choices=["yes, I've reviewed it", "I received it but haven't reviewed it", "I didn't receive it"],
                     required=True,
@@ -147,22 +149,26 @@ def on_done(call: guava.Call) -> None:
     received = call.get_field("received_email") or ""
     response = call.get_field("response_or_action") or ""
 
+    contact_name = call.get_variable("contact_name")
+    user_id = call.get_variable("user_id")
+    message_id = call.get_variable("message_id")
+
     logging.info(
         "Follow-up outcome for %s — received: %s, response: %s",
-        call.contact_name, received, response,
+        contact_name, received, response,
     )
 
     # Mark the email as read since we've followed up
     try:
-        mark_message_read(call.user_id, call.message_id)
-        logging.info("Message %s marked as read", call.message_id)
+        mark_message_read(user_id, message_id)
+        logging.info("Message %s marked as read", message_id)
     except Exception as e:
         logging.warning("Could not mark message as read: %s", e)
 
     if "reviewed" in received and response:
         call.hangup(
             final_instructions=(
-                f"Thank {call.contact_name} for their time. "
+                f"Thank {contact_name} for their time. "
                 f"Confirm you've noted their response: '{response}'. "
                 "Let them know our team will follow up by email with next steps. "
                 "Wish them a great day."
@@ -171,14 +177,14 @@ def on_done(call: guava.Call) -> None:
     elif "haven't reviewed" in received:
         # Flag the email for re-follow-up
         try:
-            flag_message(call.user_id, call.message_id)
-            logging.info("Message %s flagged for re-follow-up", call.message_id)
+            flag_message(user_id, message_id)
+            logging.info("Message %s flagged for re-follow-up", message_id)
         except Exception as e:
             logging.warning("Could not flag message: %s", e)
 
         call.hangup(
             final_instructions=(
-                f"Thank {call.contact_name} for letting us know. "
+                f"Thank {contact_name} for letting us know. "
                 "Let them know our team will follow up again once they've had a chance to review. "
                 "If they have any questions in the meantime, they can reply to the email. "
                 "Wish them well."
@@ -187,7 +193,7 @@ def on_done(call: guava.Call) -> None:
     else:
         call.hangup(
             final_instructions=(
-                f"Let {call.contact_name} know we'll resend the email and follow up again shortly. "
+                f"Let {contact_name} know we'll resend the email and follow up again shortly. "
                 "Apologize for any inconvenience. Thank them for their time."
             )
         )

@@ -85,11 +85,9 @@ def on_call_start(call: guava.Call) -> None:
     lab_name = lab_doc.get("lab_name", "") if lab_doc else ""
     document_date = lab_doc.get("document_date", "") if lab_doc else ""
 
-    call.data = {
-        "lab_description": description,
-        "lab_name": lab_name,
-        "lab_date": document_date,
-    }
+    call.set_variable("lab_description", description)
+    call.set_variable("lab_name", lab_name)
+    call.set_variable("lab_date", document_date)
 
     call.reach_person(contact_full_name=patient_name)
 
@@ -97,9 +95,9 @@ def on_call_start(call: guava.Call) -> None:
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     patient_name = call.get_variable("patient_name")
-    lab_description = call.data.get("lab_description", "lab work")
-    lab_name = call.data.get("lab_name", "")
-    lab_date = call.data.get("lab_date", "")
+    lab_description = call.get_variable("lab_description") or "lab work"
+    lab_name = call.get_variable("lab_name") or ""
+    lab_date = call.get_variable("lab_date") or ""
 
     if outcome == "unavailable":
         logging.info("Unable to reach %s for lab results notification.", patient_name)
@@ -176,7 +174,7 @@ def on_save_results(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
     lab_doc_id = call.get_variable("lab_doc_id")
-    lab_description = call.data.get("lab_description", "lab work")
+    lab_description = call.get_variable("lab_description") or "lab work"
 
     acknowledged = call.get_field("acknowledged") or "yes"
     wants_appointment = call.get_field("wants_appointment") or "no"

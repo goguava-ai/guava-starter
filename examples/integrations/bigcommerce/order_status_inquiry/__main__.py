@@ -95,7 +95,7 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="email",
-                field_type="email",
+                field_type="text",
                 description="Ask the caller for the email address on their account.",
                 required=True,
             ),

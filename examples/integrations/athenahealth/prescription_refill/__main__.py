@@ -77,7 +77,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         except Exception as e:
             logging.error("Failed to get Athenahealth token: %s", e)
 
-        call.data = {"headers": headers}
+        call.set_variable("headers", headers)
 
         call.set_task(
             "submit_refill",
@@ -137,7 +137,7 @@ def on_done(call: guava.Call) -> None:
     patient_name = call.get_variable("patient_name")
     patient_id = call.get_variable("patient_id")
     medication = call.get_variable("medication")
-    headers = call.data.get("headers", {}) if call.data else {}
+    headers = call.get_variable("headers") or {}
 
     if "no" in still_needs:
         logging.info("Patient %s no longer needs refill for %s.", patient_id, medication)

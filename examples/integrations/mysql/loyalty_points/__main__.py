@@ -138,9 +138,10 @@ def on_loyalty_points_lookup_done(call: guava.Call) -> None:
     tier_info = TIERS.get(tier, TIERS["bronze"])
     perk = tier_info["perk"]
     next_tier = tier_info["next_name"]
+    next_threshold = tier_info["next"]
     points_to_next = (
-        tier_info["next"] - points
-        if tier_info["next"] is not None and points < tier_info["next"]
+        next_threshold - points
+        if isinstance(next_threshold, int) and points < next_threshold
         else 0
     )
 

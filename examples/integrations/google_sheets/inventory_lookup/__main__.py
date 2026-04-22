@@ -11,6 +11,8 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]
 SHEET_NAME = os.environ.get("SHEETS_INVENTORY_TAB", "Inventory")
 
+_sheets_service = None
+
 # Expected sheet columns (0-indexed): SKU | Product Name | Quantity | Location | Unit
 COL_SKU = 0
 COL_NAME = 1
@@ -74,7 +76,8 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.sheets_service = build_sheets_service()
+    global _sheets_service
+    _sheets_service = build_sheets_service()
 
     call.set_task(
         "report_inventory",
@@ -106,7 +109,7 @@ def on_done(call: guava.Call) -> None:
     logging.info("Inventory lookup — query: '%s'", query)
 
     try:
-        product = lookup_product(call.sheets_service, query)
+        product = lookup_product(_sheets_service, query)
     except Exception as e:
         logging.error("Sheets lookup failed: %s", e)
         call.hangup(

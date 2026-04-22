@@ -74,7 +74,7 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch conversation %s pre-call: %s", conversation_id, e)
 
-    call.conv_subject = conv_subject
+    call.set_variable("conv_subject", conv_subject)
 
     call.reach_person(contact_full_name=contact_name)
 
@@ -85,7 +85,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         contact_name = call.get_variable("contact_name")
         conversation_id = call.get_variable("conversation_id")
         author_id = call.get_variable("author_id")
-        conv_subject = call.conv_subject
+        conv_subject = call.get_variable("conv_subject")
 
         logging.info("Unable to reach %s for follow-up on conversation %s.", contact_name, conversation_id)
         try:
@@ -107,7 +107,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         )
     elif outcome == "available":
         contact_name = call.get_variable("contact_name")
-        conv_subject = call.conv_subject
+        conv_subject = call.get_variable("conv_subject")
 
         call.set_task(
             "log_and_update",

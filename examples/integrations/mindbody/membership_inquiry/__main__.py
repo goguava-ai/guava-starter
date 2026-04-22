@@ -132,8 +132,8 @@ def lookup_client(call: guava.Call) -> None:
         )
         return
 
-    call.client_id = client_id
-    call.client_name = client_name
+    call.set_variable("client_id", client_id)
+    call.set_variable("client_name", client_name)
 
     # Fetch the member's active services (memberships and class packs).
     active_services = []
@@ -159,7 +159,7 @@ def lookup_client(call: guava.Call) -> None:
         logging.error("Failed to fetch client services: %s", e)
         active_services = []
 
-    call.active_services = active_services
+    call.set_variable("active_services", active_services)
 
     # Build a spoken membership summary and present it to the member.
     if not active_services:
@@ -215,9 +215,9 @@ def lookup_client(call: guava.Call) -> None:
 @agent.on_task_complete("handle_next_action")
 def route_next_action(call: guava.Call) -> None:
     action = call.get_field("next_action")
-    client_id = call.client_id
-    client_name = call.client_name
-    active_services = call.active_services
+    client_id = call.get_variable("client_id")
+    client_name = call.get_variable("client_name")
+    active_services = call.get_variable("active_services")
 
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -29,6 +29,8 @@ def index_call_record(record: dict) -> str:
     return response.get("_id", "")
 
 
+_call_start: datetime | None = None
+
 agent = guava.Agent(
     name="Morgan",
     organization="Clearline Financial",
@@ -46,7 +48,8 @@ def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call._call_start = datetime.now(timezone.utc)
+    global _call_start
+    _call_start = datetime.now(timezone.utc)
     call.set_task(
         "index_and_close",
         objective=(
@@ -132,7 +135,8 @@ def on_done(call: guava.Call) -> None:
     sentiment = call.get_field("caller_sentiment") or "neutral"
 
     call_duration_seconds = int(
-        (datetime.now(timezone.utc) - call._call_start).total_seconds()
+        (datetime.now(timezone.utc) - _call_start).total_seconds()
+        if _call_start else 0
     )
 
     record = {
@@ -142,7 +146,7 @@ def on_done(call: guava.Call) -> None:
         "inquiry_detail": detail,
         "resolution": resolution,
         "caller_sentiment": sentiment,
-        "call_timestamp": call._call_start.isoformat(),
+        "call_timestamp": _call_start.isoformat() if _call_start else "",
         "call_duration_seconds": call_duration_seconds,
         "agent": "Morgan",
         "channel": "voice",

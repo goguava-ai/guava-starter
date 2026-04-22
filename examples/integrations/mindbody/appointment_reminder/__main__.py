@@ -82,7 +82,6 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to pre-fetch appointment: %s", e)
 
-    call.appointment = appointment
     call.reach_person(contact_full_name=client_name)
 
 

@@ -162,8 +162,8 @@ def lookup_medications(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to look up medications in Meditech: %s", e)
 
-    call.patient_fhir_id = patient_fhir_id
-    call.active_medications = active_medications
+    call.set_variable("patient_fhir_id", patient_fhir_id)
+    call.set_variable("active_medications", active_medications)
 
     if active_medications:
         med_count = len(active_medications)
@@ -212,8 +212,8 @@ def handle_inquiry_reason(call: guava.Call) -> None:
     first_name = call.get_field("first_name")
     last_name = call.get_field("last_name")
     inquiry_reason = call.get_field("inquiry_reason")
-    patient_fhir_id = call.patient_fhir_id
-    active_medications = call.active_medications
+    patient_fhir_id = call.get_variable("patient_fhir_id")
+    active_medications = call.get_variable("active_medications")
 
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

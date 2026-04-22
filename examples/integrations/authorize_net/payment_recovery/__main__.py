@@ -91,10 +91,8 @@ def on_call_start(call: guava.Call) -> None:
             "Failed to fetch subscription %s before call: %s", subscription_id, e
         )
 
-    call.data = {
-        "subscription": subscription,
-        "customer_profile_id": customer_profile_id,
-    }
+    call.set_variable("subscription", subscription)
+    call.set_variable("customer_profile_id", customer_profile_id)
 
     call.reach_person(contact_full_name=call.get_variable("customer_name"))
 

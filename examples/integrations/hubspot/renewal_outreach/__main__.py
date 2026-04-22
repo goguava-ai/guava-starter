@@ -94,9 +94,9 @@ def on_call_start(call: guava.Call) -> None:
     except Exception as e:
         logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
 
-    call.deal_name = deal_name
-    call.deal_amount = deal_amount
-    call.close_date = close_date
+    call.set_variable("deal_name", deal_name)
+    call.set_variable("deal_amount", deal_amount)
+    call.set_variable("close_date", close_date)
 
     call.reach_person(contact_full_name=customer_name)
 
@@ -105,6 +105,10 @@ def on_call_start(call: guava.Call) -> None:
 def on_reach_person(call: guava.Call, outcome: str) -> None:
     customer_name = call.get_variable("customer_name")
     deal_id = call.get_variable("deal_id")
+
+    deal_name = call.get_variable("deal_name") or "your current plan"
+    deal_amount = call.get_variable("deal_amount") or ""
+    close_date = call.get_variable("close_date") or ""
 
     if outcome == "unavailable":
         logging.info(
@@ -122,19 +126,19 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         call.hangup(
             final_instructions=(
                 f"Leave a friendly voicemail for {customer_name} on behalf of Apex Solutions. "
-                f"Let them know you're calling about their upcoming renewal for {call.deal_name} "
+                f"Let them know you're calling about their upcoming renewal for {deal_name} "
                 "and ask them to call back or look out for an email from our team with next steps. "
                 "Keep it brief and warm."
             )
         )
     elif outcome == "available":
-        amount_note = f" valued at {call.deal_amount}" if call.deal_amount else ""
-        date_note = f" on {call.close_date}" if call.close_date else " coming up soon"
+        amount_note = f" valued at {deal_amount}" if deal_amount else ""
+        date_note = f" on {close_date}" if close_date else " coming up soon"
 
         call.set_task(
             "record_outcome",
             objective=(
-                f"Speak with {customer_name} about renewing '{call.deal_name}'"
+                f"Speak with {customer_name} about renewing '{deal_name}'"
                 f"{amount_note}, with their renewal date{date_note}. "
                 "Understand their renewal intent and capture any concerns."
             ),

@@ -99,7 +99,7 @@ def on_call_start(call: guava.Call) -> None:
         # Proceed optimistically; let the enrollment call surface the error if needed.
         spot_still_available = True
 
-    call.spot_still_available = spot_still_available
+    call.set_variable("spot_still_available", spot_still_available)
     call.reach_person(contact_full_name=client_name)
 
 
@@ -121,7 +121,7 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
             )
         )
     elif outcome == "available":
-        spot_still_available = call.spot_still_available
+        spot_still_available = call.get_variable("spot_still_available")
 
         if not spot_still_available:
             # Spot was taken between the pre-check and the call connecting — inform client gracefully.

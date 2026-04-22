@@ -208,8 +208,8 @@ def search_availability(call: guava.Call) -> None:
             except (ValueError, AttributeError):
                 display_time = slot_start
 
-            call.patient_fhir_id = patient_fhir_id
-            call.selected_slot = selected_slot
+            call.set_variable("patient_fhir_id", patient_fhir_id)
+            call.set_variable("selected_slot", selected_slot)
 
             call.set_task(
                 "confirm_booking",
@@ -256,8 +256,8 @@ def finalize_booking(call: guava.Call) -> None:
     first_name = call.get_field("first_name")
     last_name = call.get_field("last_name")
     appointment_type = call.get_field("appointment_type")
-    patient_fhir_id = call.patient_fhir_id
-    selected_slot = call.selected_slot
+    patient_fhir_id = call.get_variable("patient_fhir_id")
+    selected_slot = call.get_variable("selected_slot")
 
     if not confirmed or confirmed.strip().lower() != "yes":
         call.hangup(
