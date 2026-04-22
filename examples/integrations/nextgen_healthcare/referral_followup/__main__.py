@@ -31,29 +31,45 @@ def post_communication(patient_id: str, specialty: str, intent: str, headers: di
     return resp.ok
 
 
-class ReferralFollowupController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, referral_specialty: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.referral_specialty = referral_specialty
-        self.headers = {}
+agent = guava.Agent(
+    name="Morgan",
+    organization="Metro Specialty Clinic",
+    purpose=(
+        "to follow up with patients who received specialist referrals and ensure they've connected with the specialist"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    referral_specialty = call.get_variable("referral_specialty")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for referral followup.", patient_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {patient_name} from Metro Specialty Clinic. "
+                f"Let them know you're following up on their referral to {referral_specialty} "
+                "and ask them to call back if they have any questions or need help scheduling. "
+                "Keep it brief and warm."
+            )
+        )
+    elif outcome == "available":
         try:
             token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            call.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         except Exception as e:
             logging.error("Token error: %s", e)
+            call.headers = {}
 
-        self.set_persona(
-            organization_name="Metro Specialty Clinic",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to follow up with patients who received specialist referrals and ensure they've connected with the specialist"
-            ),
-        )
-
-        self.set_task(
+        call.set_task(
+            "referral_followup",
             objective=(
                 f"Follow up with {patient_name} on their referral to {referral_specialty}. "
                 "Confirm they received it, check if they've scheduled with the specialist, "
@@ -98,69 +114,57 @@ class ReferralFollowupController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_followup,
         )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=lambda: None,
-            on_failure=self.leave_voicemail,
-        )
 
-    def handle_followup(self):
-        received = self.get_field("received_referral") or ""
-        scheduled = self.get_field("appointment_scheduled") or ""
-        appt_date = self.get_field("appointment_date") or ""
-        barriers = self.get_field("barriers") or ""
+@agent.on_task_complete("referral_followup")
+def on_referral_followup_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    referral_specialty = call.get_variable("referral_specialty")
 
-        logging.info(
-            "Referral followup — patient %s, specialty: %s, received: %s, scheduled: %s",
-            self.patient_id, self.referral_specialty, received, scheduled,
-        )
+    received = call.get_field("received_referral") or ""
+    scheduled = call.get_field("appointment_scheduled") or ""
+    appt_date = call.get_field("appointment_date") or ""
+    barriers = call.get_field("barriers") or ""
 
-        intent = f"received={received}, scheduled={scheduled}, date={appt_date}, barriers={barriers}"
+    logging.info(
+        "Referral followup — patient %s, specialty: %s, received: %s, scheduled: %s",
+        patient_id, referral_specialty, received, scheduled,
+    )
 
-        try:
-            post_communication(self.patient_id, self.referral_specialty, intent, self.headers)
-        except Exception as e:
-            logging.error("Failed to log Communication: %s", e)
+    intent = f"received={received}, scheduled={scheduled}, date={appt_date}, barriers={barriers}"
 
-        if "yes, scheduled" in scheduled and appt_date:
-            self.hangup(
-                final_instructions=(
-                    f"Great — let {self.patient_name} know you're glad they've got the appointment set "
-                    f"for {appt_date} with the {self.referral_specialty} specialist. "
-                    "Let them know the care team is here if they have any questions before then. "
-                    "Wish them a great day."
-                )
-            )
-        elif "trouble" in scheduled or barriers:
-            self.hangup(
-                final_instructions=(
-                    f"Empathize with {self.patient_name} about the difficulty. "
-                    "Let them know you'll flag their barriers to the care coordinator, who will "
-                    "reach out with help finding an in-network specialist. "
-                    "Thank them for letting us know and wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Encourage {self.patient_name} to reach out to the {self.referral_specialty} "
-                    "specialist at their earliest convenience. Let them know the referral should be "
-                    "on file with the specialist's office. They can also call us if they need help "
-                    "navigating the process. Thank them and wish them a great day."
-                )
-            )
+    try:
+        post_communication(patient_id, referral_specialty, intent, call.headers)
+    except Exception as e:
+        logging.error("Failed to log Communication: %s", e)
 
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for referral followup.", self.patient_name)
-        self.hangup(
+    if "yes, scheduled" in scheduled and appt_date:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Metro Specialty Clinic. "
-                f"Let them know you're following up on their referral to {self.referral_specialty} "
-                "and ask them to call back if they have any questions or need help scheduling. "
-                "Keep it brief and warm."
+                f"Great — let {patient_name} know you're glad they've got the appointment set "
+                f"for {appt_date} with the {referral_specialty} specialist. "
+                "Let them know the care team is here if they have any questions before then. "
+                "Wish them a great day."
+            )
+        )
+    elif "trouble" in scheduled or barriers:
+        call.hangup(
+            final_instructions=(
+                f"Empathize with {patient_name} about the difficulty. "
+                "Let them know you'll flag their barriers to the care coordinator, who will "
+                "reach out with help finding an in-network specialist. "
+                "Thank them for letting us know and wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Encourage {patient_name} to reach out to the {referral_specialty} "
+                "specialist at their earliest convenience. Let them know the referral should be "
+                "on file with the specialist's office. They can also call us if they need help "
+                "navigating the process. Thank them and wish them a great day."
             )
         )
 
@@ -174,12 +178,12 @@ if __name__ == "__main__":
     parser.add_argument("--referral-specialty", required=True, help="Specialist referral type (e.g. 'Cardiology')")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ReferralFollowupController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            referral_specialty=args.referral_specialty,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "referral_specialty": args.referral_specialty,
+        },
     )

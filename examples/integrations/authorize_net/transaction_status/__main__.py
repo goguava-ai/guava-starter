@@ -66,138 +66,141 @@ def format_date(dt_str: str) -> str:
         return dt_str
 
 
-class TransactionStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Pinnacle Payments",
+    purpose="to help Pinnacle Payments customers check the status of their transactions",
+)
 
-        self.set_persona(
-            organization_name="Pinnacle Payments",
-            agent_name="Alex",
-            agent_purpose="to help Pinnacle Payments customers check the status of their transactions",
-        )
 
-        self.set_task(
-            objective=(
-                "A customer has called to check whether a payment went through. "
-                "Collect their email address and transaction ID, look up the transaction "
-                "in Authorize.net, then read back the status, amount, and date submitted."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "collect_transaction_info",
+        objective=(
+            "A customer has called to check whether a payment went through. "
+            "Collect their email address and transaction ID, look up the transaction "
+            "in Authorize.net, then read back the status, amount, and date submitted."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Pinnacle Payments. I'm Alex, and I'm here to help "
+                "you check the status of a transaction. Let me pull that up for you."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Pinnacle Payments. I'm Alex, and I'm here to help "
-                    "you check the status of a transaction. Let me pull that up for you."
-                ),
-                guava.Field(
-                    key="email",
-                    field_type="text",
-                    description="Ask for the customer's email address on file.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="transaction_id",
-                    field_type="text",
-                    description=(
-                        "Ask for their transaction ID — it's a string of numbers found in "
-                        "their receipt email or bank statement reference."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.handle,
-        )
-
-        self.accept_call()
-
-    def handle(self):
-        email = self.get_field("email") or ""
-        trans_id = (self.get_field("transaction_id") or "").strip()
-
-        logging.info("Transaction status lookup — email: %s, transId: %s", email, trans_id)
-
-        try:
-            data = get_transaction_details(trans_id)
-            txn = data.get("transaction", {})
-        except Exception as e:
-            logging.error("Failed to fetch transaction %s: %s", trans_id, e)
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you weren't able to retrieve that transaction. "
-                    "Ask them to double-check the transaction ID and try again, or offer to "
-                    "connect them with a billing specialist. Be apologetic and helpful."
-                )
-            )
-            return
-
-        if not txn:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know no transaction was found for that ID. "
-                    "Ask them to verify the transaction ID from their receipt email or bank statement. "
-                    "Offer to connect them with a billing specialist if needed."
-                )
-            )
-            return
-
-        raw_status = txn.get("transactionStatus", "unknown")
-        status_str = friendly_status(raw_status)
-        amount = txn.get("settleAmount", txn.get("authAmount", ""))
-        submit_time = txn.get("submitTimeLocal", "")
-        invoice_number = txn.get("order", {}).get("invoiceNumber", "")
-        customer_email = txn.get("customer", {}).get("email", "")
-
-        amount_str = f"${float(amount):,.2f}" if amount else "an unknown amount"
-        date_str = format_date(submit_time) if submit_time else "an unknown date"
-        invoice_note = f" with invoice number {invoice_number}" if invoice_number else ""
-
-        logging.info(
-            "Transaction %s — status: %s, amount: %s, submitted: %s",
-            trans_id, raw_status, amount, submit_time,
-        )
-
-        self.set_task(
-            objective=(
-                "You've retrieved the transaction details. Share them with the customer, "
-                "then ask if they have any other questions."
+            guava.Field(
+                key="email",
+                field_type="text",
+                description="Ask for the customer's email address on file.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    f"I found your transaction{invoice_note}. "
-                    f"The payment of {amount_str} submitted on {date_str} is currently "
-                    f"{status_str}."
+            guava.Field(
+                key="transaction_id",
+                field_type="text",
+                description=(
+                    "Ask for their transaction ID — it's a string of numbers found in "
+                    "their receipt email or bank statement reference."
                 ),
-                guava.Field(
-                    key="has_other_questions",
-                    field_type="multiple_choice",
-                    description="Ask if there is anything else you can help them with today.",
-                    choices=["yes", "no"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.wrap_up,
-        )
+                required=True,
+            ),
+        ],
+    )
 
-    def wrap_up(self):
-        has_other_questions = self.get_field("has_other_questions") or "no"
-        if "yes" in has_other_questions:
-            self.hangup(
-                final_instructions=(
-                    "The customer has indicated they need additional assistance. "
-                    "Connect them with a billing specialist who can address any other payment or account questions. "
-                    "Be friendly and helpful."
-                )
+
+@agent.on_task_complete("collect_transaction_info")
+def on_collect_done(call: guava.Call) -> None:
+    email = call.get_field("email") or ""
+    trans_id = (call.get_field("transaction_id") or "").strip()
+
+    logging.info("Transaction status lookup — email: %s, transId: %s", email, trans_id)
+
+    try:
+        data = get_transaction_details(trans_id)
+        txn = data.get("transaction", {})
+    except Exception as e:
+        logging.error("Failed to fetch transaction %s: %s", trans_id, e)
+        call.hangup(
+            final_instructions=(
+                "Let the caller know you weren't able to retrieve that transaction. "
+                "Ask them to double-check the transaction ID and try again, or offer to "
+                "connect them with a billing specialist. Be apologetic and helpful."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Thank the customer for calling Pinnacle Payments and wish them a great day. "
-                    "Keep it warm and brief."
-                )
+        )
+        return
+
+    if not txn:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know no transaction was found for that ID. "
+                "Ask them to verify the transaction ID from their receipt email or bank statement. "
+                "Offer to connect them with a billing specialist if needed."
             )
+        )
+        return
+
+    raw_status = txn.get("transactionStatus", "unknown")
+    status_str = friendly_status(raw_status)
+    amount = txn.get("settleAmount", txn.get("authAmount", ""))
+    submit_time = txn.get("submitTimeLocal", "")
+    invoice_number = txn.get("order", {}).get("invoiceNumber", "")
+    customer_email = txn.get("customer", {}).get("email", "")
+
+    amount_str = f"${float(amount):,.2f}" if amount else "an unknown amount"
+    date_str = format_date(submit_time) if submit_time else "an unknown date"
+    invoice_note = f" with invoice number {invoice_number}" if invoice_number else ""
+
+    logging.info(
+        "Transaction %s — status: %s, amount: %s, submitted: %s",
+        trans_id, raw_status, amount, submit_time,
+    )
+
+    call.set_task(
+        "wrap_up_transaction",
+        objective=(
+            "You've retrieved the transaction details. Share them with the customer, "
+            "then ask if they have any other questions."
+        ),
+        checklist=[
+            guava.Say(
+                f"I found your transaction{invoice_note}. "
+                f"The payment of {amount_str} submitted on {date_str} is currently "
+                f"{status_str}."
+            ),
+            guava.Field(
+                key="has_other_questions",
+                field_type="multiple_choice",
+                description="Ask if there is anything else you can help them with today.",
+                choices=["yes", "no"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("wrap_up_transaction")
+def on_wrap_up_done(call: guava.Call) -> None:
+    has_other_questions = call.get_field("has_other_questions") or "no"
+    if "yes" in has_other_questions:
+        call.hangup(
+            final_instructions=(
+                "The customer has indicated they need additional assistance. "
+                "Connect them with a billing specialist who can address any other payment or account questions. "
+                "Be friendly and helpful."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Thank the customer for calling Pinnacle Payments and wish them a great day. "
+                "Keep it warm and brief."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=TransactionStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

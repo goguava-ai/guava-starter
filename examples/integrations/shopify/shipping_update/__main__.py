@@ -39,47 +39,81 @@ def get_fulfillment_tracking(order: dict) -> list[dict]:
     return tracking_info
 
 
-class ShippingUpdateController(guava.CallController):
-    def __init__(self, order_id: int, customer_name: str):
-        super().__init__()
+agent = guava.Agent(
+    name="Casey",
+    organization="Kestrel Goods",
+    purpose="to provide Kestrel Goods customers with shipping updates on their orders",
+)
 
-        self._order_id = order_id
-        self._order: dict | None = None
-        self._tracking: list[dict] = []
 
-        try:
-            self._order = get_order(order_id)
-            if self._order:
-                self._tracking = get_fulfillment_tracking(self._order)
-            logging.info("Loaded order %s for shipping update", order_id)
-        except Exception as e:
-            logging.error("Failed to load order: %s", e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_id = int(call.get_variable("order_id"))
 
-        order = self._order
-        tracking = self._tracking
+    call.order = None
+    call.tracking = []
+    try:
+        call.order = get_order(order_id)
+        if call.order:
+            call.tracking = get_fulfillment_tracking(call.order)
+        logging.info("Loaded order %s for shipping update", order_id)
+    except Exception as e:
+        logging.error("Failed to load order: %s", e)
 
-        if order and tracking:
-            t = tracking[0]
-            status = t["status"] or order.get("fulfillment_status", "unknown")
-            company = t["company"] or "carrier"
-            tracking_num = t["numbers"][0] if t["numbers"] else "N/A"
-            context = (
-                f"Order #{order.get('order_number', order_id)} is {status} via {company}. "
-                f"Tracking number: {tracking_num}."
-            )
-        elif order:
-            status = order.get("fulfillment_status", "unfulfilled")
-            context = f"Order #{order.get('order_number', order_id)} status is {status} with no tracking yet."
-        else:
-            context = f"Order {order_id} could not be loaded."
+    order = call.order
+    tracking = call.tracking
 
-        self.set_persona(
-            organization_name="Kestrel Goods",
-            agent_name="Casey",
-            agent_purpose="to provide Kestrel Goods customers with shipping updates on their orders",
+    if order and tracking:
+        t = tracking[0]
+        status = t["status"] or order.get("fulfillment_status", "unknown")
+        company = t["company"] or "carrier"
+        tracking_num = t["numbers"][0] if t["numbers"] else "N/A"
+        context = (
+            f"Order #{order.get('order_number', order_id)} is {status} via {company}. "
+            f"Tracking number: {tracking_num}."
         )
+    elif order:
+        status = order.get("fulfillment_status", "unfulfilled")
+        context = f"Order #{order.get('order_number', order_id)} status is {status} with no tracking yet."
+    else:
+        context = f"Order {order_id} could not be loaded."
 
-        self.set_task(
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_id = call.get_variable("order_id")
+    order = call.order
+    tracking = call.tracking
+
+    if order and tracking:
+        t = tracking[0]
+        status = t["status"] or order.get("fulfillment_status", "unknown")
+        company = t["company"] or "carrier"
+        tracking_num = t["numbers"][0] if t["numbers"] else "N/A"
+        context = (
+            f"Order #{order.get('order_number', order_id)} is {status} via {company}. "
+            f"Tracking number: {tracking_num}."
+        )
+    elif order:
+        status = order.get("fulfillment_status", "unfulfilled")
+        context = f"Order #{order.get('order_number', order_id)} status is {status} with no tracking yet."
+    else:
+        context = f"Order {order_id} could not be loaded."
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {customer_name} from Kestrel Goods with their shipping update. "
+                f"{context} Ask them to call back or email support@kestrelgoods.com if they have questions."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "handle_shipping_update",
             objective=(
                 f"You are calling {customer_name} with a shipping update for their Kestrel Goods order. "
                 f"{context} Share the update and answer any questions they have."
@@ -106,38 +140,40 @@ class ShippingUpdateController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_shipping_update,
         )
 
-        self.reach_person(customer_name)
 
-    def handle_shipping_update(self):
-        issue = self.get_field("issue") or "all good"
-        questions = self.get_field("questions") or ""
+@agent.on_task_complete("handle_shipping_update")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_id = call.get_variable("order_id")
+    order = call.order
+    tracking = call.tracking
 
-        order = self._order
-        order_num = order.get("order_number", self._order_id) if order else self._order_id
-        tracking = self._tracking
-        tracking_url = tracking[0]["urls"][0] if tracking and tracking[0]["urls"] else ""
+    issue = call.get_field("issue") or "all good"
+    questions = call.get_field("questions") or ""
 
-        if issue == "all good":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.get_field('questions') or 'the customer'} for their time. "
-                    + (f"They can track their package at: {tracking_url}. " if tracking_url else "")
-                    + "Wish them a great day and thank them for shopping with Kestrel Goods."
-                )
+    order_num = order.get("order_number", order_id) if order else order_id
+    tracking_url = tracking[0]["urls"][0] if tracking and tracking[0]["urls"] else ""
+
+    if issue == "all good":
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. "
+                + (f"They can track their package at: {tracking_url}. " if tracking_url else "")
+                + "Wish them a great day and thank them for shopping with Kestrel Goods."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize for the issue with order #{order_num}. "
-                    f"The customer reported: {issue}. "
-                    "Let them know a member of the support team will follow up within one business day "
-                    "to resolve the issue. Ask them to email support@kestrelgoods.com if they need faster help. "
-                    "Thank them for their patience."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Apologize for the issue with order #{order_num}. "
+                f"The customer reported: {issue}. "
+                "Let them know a member of the support team will follow up within one business day "
+                "to resolve the issue. Ask them to email support@kestrelgoods.com if they need faster help. "
+                "Thank them for their patience."
             )
+        )
 
 
 if __name__ == "__main__":
@@ -148,12 +184,11 @@ if __name__ == "__main__":
     parser.add_argument("--phone", required=True, help="Customer phone number to call")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        customer_number=args.phone,
-        controller_class=ShippingUpdateController,
-        controller_args={
-            "order_id": args.order_id,
+    agent.call_phone(
+        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        to_number=args.phone,
+        variables={
+            "order_id": str(args.order_id),
             "customer_name": args.customer_name,
         },
     )

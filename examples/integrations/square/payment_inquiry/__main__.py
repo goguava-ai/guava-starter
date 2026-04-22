@@ -54,87 +54,88 @@ def format_amount(amount_money: dict) -> str:
     return f"${amount / 100:,.2f} {currency}"
 
 
-class PaymentInquiryController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Drew",
+    organization="Harbor Market",
+    purpose="to help Harbor Market customers look up their recent Square payments",
+)
 
-        self.set_persona(
-            organization_name="Harbor Market",
-            agent_name="Drew",
-            agent_purpose="to help Harbor Market customers look up their recent Square payments",
-        )
 
-        self.set_task(
-            objective=(
-                "A customer has called about a recent payment. "
-                "Verify their email and look up their most recent transactions."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "lookup_payments",
+        objective=(
+            "A customer has called about a recent payment. "
+            "Verify their email and look up their most recent transactions."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Harbor Market. This is Drew. "
+                "I can help you look up a recent payment today."
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Harbor Market. This is Drew. "
-                    "I can help you look up a recent payment today."
-                ),
-                guava.Field(
-                    key="email",
-                    field_type="text",
-                    description="Ask for the email address associated with their purchase.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.lookup_payments,
-        )
+            guava.Field(
+                key="email",
+                field_type="text",
+                description="Ask for the email address associated with their purchase.",
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def lookup_payments(self):
-        email = (self.get_field("email") or "").strip().lower()
-        logging.info("Searching Square payments for %s", email)
+@agent.on_task_complete("lookup_payments")
+def lookup_payments(call: guava.Call) -> None:
+    email = (call.get_field("email") or "").strip().lower()
+    logging.info("Searching Square payments for %s", email)
 
-        try:
-            payments = search_payments(email)
-        except Exception as e:
-            logging.error("Payment search failed: %s", e)
-            payments = []
+    try:
+        payments = search_payments(email)
+    except Exception as e:
+        logging.error("Payment search failed: %s", e)
+        payments = []
 
-        if not payments:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know we couldn't find any recent payments linked to '{email}'. "
-                    "Ask them to double-check the email or visit the store for help. "
-                    "Be apologetic and helpful."
-                )
-            )
-            return
-
-        payment_summaries = []
-        for p in payments[:3]:
-            amount = p.get("amount_money", {})
-            amount_str = format_amount(amount) if amount else ""
-            status = p.get("status", "UNKNOWN")
-            created = p.get("created_at", "")
-            try:
-                dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                date_str = dt.strftime("%B %-d")
-            except (ValueError, AttributeError):
-                date_str = created[:10] if created else "unknown date"
-            payment_summaries.append(f"{amount_str} on {date_str} — {status.lower()}")
-
-        logging.info("Found %d payments for %s", len(payments), email)
-
-        self.hangup(
+    if not payments:
+        call.hangup(
             final_instructions=(
-                f"Let the caller know we found {len(payments)} recent payment(s) linked to their email. "
-                f"The most recent are: {'; '.join(payment_summaries)}. "
-                "Answer any questions they have about specific charges. "
-                "If they want to dispute a charge or request a refund, let them know they can call back "
-                "and we can process that for them. Be helpful and friendly."
+                f"Let the caller know we couldn't find any recent payments linked to '{email}'. "
+                "Ask them to double-check the email or visit the store for help. "
+                "Be apologetic and helpful."
             )
         )
+        return
+
+    payment_summaries = []
+    for p in payments[:3]:
+        amount = p.get("amount_money", {})
+        amount_str = format_amount(amount) if amount else ""
+        status = p.get("status", "UNKNOWN")
+        created = p.get("created_at", "")
+        try:
+            dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            date_str = dt.strftime("%B %-d")
+        except (ValueError, AttributeError):
+            date_str = created[:10] if created else "unknown date"
+        payment_summaries.append(f"{amount_str} on {date_str} — {status.lower()}")
+
+    logging.info("Found %d payments for %s", len(payments), email)
+
+    call.hangup(
+        final_instructions=(
+            f"Let the caller know we found {len(payments)} recent payment(s) linked to their email. "
+            f"The most recent are: {'; '.join(payment_summaries)}. "
+            "Answer any questions they have about specific charges. "
+            "If they want to dispute a charge or request a refund, let them know they can call back "
+            "and we can process that for them. Be helpful and friendly."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=PaymentInquiryController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -86,160 +86,161 @@ def summarize_eligibility(response: dict) -> dict:
     return plan
 
 
-class EligibilityCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Valley Medical Group",
+    purpose=(
+        "to help patients verify their insurance eligibility before their appointment "
+        "so they know what to expect at check-in"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Valley Medical Group",
-            agent_name="Alex",
-            agent_purpose=(
-                "to help patients verify their insurance eligibility before their appointment "
-                "so they know what to expect at check-in"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "run_eligibility_check",
+        objective=(
+            "A patient is calling to verify their insurance coverage before an upcoming "
+            "appointment. Greet them and collect their insurance and identity information "
+            "so we can perform a real-time eligibility check."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Valley Medical Group. I'm Alex, and I can help you "
+                "verify your insurance coverage before your appointment. "
+                "This will only take a moment."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A patient is calling to verify their insurance coverage before an upcoming "
-                "appointment. Greet them and collect their insurance and identity information "
-                "so we can perform a real-time eligibility check."
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask for the patient's first name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Valley Medical Group. I'm Alex, and I can help you "
-                    "verify your insurance coverage before your appointment. "
-                    "This will only take a moment."
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for the patient's last name.",
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description=(
+                    "Ask for the patient's date of birth. Capture in YYYY-MM-DD format."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask for the patient's first name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="member_id",
+                field_type="text",
+                description=(
+                    "Ask for their insurance member ID, which is printed on their insurance card."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for the patient's last name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description=(
-                        "Ask for the patient's date of birth. Capture in YYYY-MM-DD format."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="member_id",
-                    field_type="text",
-                    description=(
-                        "Ask for their insurance member ID, which is printed on their insurance card."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="insurance_name",
-                    field_type="text",
-                    description="Ask which insurance plan they have (e.g. Blue Cross, Aetna, United).",
-                    required=True,
-                ),
-            ],
-            on_complete=self.run_eligibility_check,
+                required=True,
+            ),
+            guava.Field(
+                key="insurance_name",
+                field_type="text",
+                description="Ask which insurance plan they have (e.g. Blue Cross, Aetna, United).",
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("run_eligibility_check")
+def on_run_eligibility_check(call: guava.Call) -> None:
+    first_name = call.get_field("first_name")
+    last_name = call.get_field("last_name")
+    dob = call.get_field("date_of_birth")
+    member_id = call.get_field("member_id")
+    insurance_name = call.get_field("insurance_name")
+
+    logging.info(
+        "Running eligibility check for %s %s (DOB: %s, member: %s)",
+        first_name, last_name, dob, member_id,
+    )
+
+    # The trading partner ID maps to the specific payer. In production this would be
+    # looked up from a payer directory based on the insurance name the caller provided.
+    trading_partner_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
+    provider_npi = os.environ["PROVIDER_NPI"]
+
+    try:
+        response = check_eligibility(
+            trading_partner_id=trading_partner_id,
+            member_id=member_id,
+            first_name=first_name,
+            last_name=last_name,
+            date_of_birth=dob,
+            provider_npi=provider_npi,
         )
+        coverage = summarize_eligibility(response)
+        logging.info("Eligibility result for %s: %s", member_id, coverage)
 
-        self.accept_call()
+        result = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Alex",
+            "use_case": "eligibility_check",
+            "patient": {"first_name": first_name, "last_name": last_name, "dob": dob},
+            "member_id": member_id,
+            "insurance": insurance_name,
+            "coverage": coverage,
+        }
+        print(json.dumps(result, indent=2))
 
-    def run_eligibility_check(self):
-        first_name = self.get_field("first_name")
-        last_name = self.get_field("last_name")
-        dob = self.get_field("date_of_birth")
-        member_id = self.get_field("member_id")
-        insurance_name = self.get_field("insurance_name")
+        status = coverage.get("status", "could not determine")
+        plan_name = coverage.get("plan_name", insurance_name)
+        copay = coverage.get("copay", "")
+        deductible = coverage.get("deductible", "")
+        deductible_remaining = coverage.get("deductible_remaining", "")
 
-        logging.info(
-            "Running eligibility check for %s %s (DOB: %s, member: %s)",
-            first_name, last_name, dob, member_id,
-        )
-
-        # The trading partner ID maps to the specific payer. In production this would be
-        # looked up from a payer directory based on the insurance name the caller provided.
-        trading_partner_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
-        provider_npi = os.environ["PROVIDER_NPI"]
-
-        try:
-            response = check_eligibility(
-                trading_partner_id=trading_partner_id,
-                member_id=member_id,
-                first_name=first_name,
-                last_name=last_name,
-                date_of_birth=dob,
-                provider_npi=provider_npi,
-            )
-            coverage = summarize_eligibility(response)
-            logging.info("Eligibility result for %s: %s", member_id, coverage)
-
-            result = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Alex",
-                "use_case": "eligibility_check",
-                "patient": {"first_name": first_name, "last_name": last_name, "dob": dob},
-                "member_id": member_id,
-                "insurance": insurance_name,
-                "coverage": coverage,
-            }
-            print(json.dumps(result, indent=2))
-
-            status = coverage.get("status", "could not determine")
-            plan_name = coverage.get("plan_name", insurance_name)
-            copay = coverage.get("copay", "")
-            deductible = coverage.get("deductible", "")
-            deductible_remaining = coverage.get("deductible_remaining", "")
-
-            if status == "active":
-                benefit_details = f"Your {plan_name} coverage is currently active."
-                if copay:
-                    benefit_details += f" Your expected copay for this visit is ${copay}."
-                if deductible and deductible_remaining:
-                    benefit_details += (
-                        f" Your deductible is ${deductible}, "
-                        f"with ${deductible_remaining} remaining for this year."
-                    )
-                self.hangup(
-                    final_instructions=(
-                        f"Let {first_name} know the following: {benefit_details} "
-                        "Remind them to bring their insurance card and a valid photo ID to their "
-                        "appointment, and to arrive 10 minutes early to complete any paperwork. "
-                        "Thank them for calling Valley Medical Group."
-                    )
+        if status == "active":
+            benefit_details = f"Your {plan_name} coverage is currently active."
+            if copay:
+                benefit_details += f" Your expected copay for this visit is ${copay}."
+            if deductible and deductible_remaining:
+                benefit_details += (
+                    f" Your deductible is ${deductible}, "
+                    f"with ${deductible_remaining} remaining for this year."
                 )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {first_name} know that we were unable to confirm active coverage "
-                        f"for their {insurance_name} plan with the member ID they provided. "
-                        "Ask them to double-check the information on their insurance card and "
-                        "call back, or suggest they contact their insurance company directly. "
-                        "Let them know our billing team is also available to help. "
-                        "Thank them for calling."
-                    )
-                )
-        except Exception as e:
-            logging.error("Eligibility check failed: %s", e)
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Apologize to {first_name} for a technical issue and let them know we were "
-                    "unable to complete the eligibility check at this time. Ask them to call back "
-                    "in a few minutes or contact their insurance company directly to verify "
-                    "coverage. Thank them for their patience."
+                    f"Let {first_name} know the following: {benefit_details} "
+                    "Remind them to bring their insurance card and a valid photo ID to their "
+                    "appointment, and to arrive 10 minutes early to complete any paperwork. "
+                    "Thank them for calling Valley Medical Group."
                 )
             )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Let {first_name} know that we were unable to confirm active coverage "
+                    f"for their {insurance_name} plan with the member ID they provided. "
+                    "Ask them to double-check the information on their insurance card and "
+                    "call back, or suggest they contact their insurance company directly. "
+                    "Let them know our billing team is also available to help. "
+                    "Thank them for calling."
+                )
+            )
+    except Exception as e:
+        logging.error("Eligibility check failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {first_name} for a technical issue and let them know we were "
+                "unable to complete the eligibility check at this time. Ask them to call back "
+                "in a few minutes or contact their insurance company directly to verify "
+                "coverage. Thank them for their patience."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=EligibilityCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -52,50 +52,66 @@ def update_conversation(conversation_id: str, tags: list[str]) -> dict:
     return resp.json()["data"]
 
 
-class CsatSurveyController(guava.CallController):
-    def __init__(self, conv_id: str, customer_name: str):
-        super().__init__()
-        self.conv_id = conv_id
-        self.customer_name = customer_name
-        self.issue_summary = "your recent support case"
+agent = guava.Agent(
+    name="Morgan",
+    organization="Brightpath Support",
+    purpose=(
+        "to collect customer satisfaction feedback on behalf of Brightpath Support "
+        "after a support case has been resolved"
+    ),
+)
 
-        # Pre-call: fetch the conversation to personalize the survey.
-        try:
-            conversation = get_conversation(conv_id)
-            if conversation:
-                attrs = conversation.get("attributes", {})
-                preview = attrs.get("preview") or attrs.get("subject") or ""
-                if preview:
-                    self.issue_summary = f"'{preview}'"
-        except Exception as e:
-            logging.error("Failed to fetch conversation %s pre-call: %s", conv_id, e)
 
-        self.set_persona(
-            organization_name="Brightpath Support",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to collect customer satisfaction feedback on behalf of Brightpath Support "
-                "after a support case has been resolved"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    conv_id = call.get_variable("conv_id")
+    customer_name = call.get_variable("customer_name")
+
+    issue_summary = "your recent support case"
+    # Pre-call: fetch the conversation to personalize the survey.
+    try:
+        conversation = get_conversation(conv_id)
+        if conversation:
+            attrs = conversation.get("attributes", {})
+            preview = attrs.get("preview") or attrs.get("subject") or ""
+            if preview:
+                issue_summary = f"'{preview}'"
+    except Exception as e:
+        logging.error("Failed to fetch conversation %s pre-call: %s", conv_id, e)
+
+    call.issue_summary = issue_summary
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for conversation %s CSAT survey",
+            customer_name, call.get_variable("conv_id"),
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                "Leave a brief, friendly voicemail on behalf of Brightpath Support letting the "
+                "customer know we were calling to follow up on their recently resolved support "
+                "case. Let them know no action is needed and we hope everything is working well."
+            )
         )
-
-    def begin_survey(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "save_results",
             objective=(
-                f"Collect CSAT feedback from {self.customer_name} regarding their recently "
-                f"resolved support case {self.issue_summary}."
+                f"Collect CSAT feedback from {customer_name} regarding their recently "
+                f"resolved support case {call.issue_summary}."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Morgan calling from Brightpath Support. "
+                    f"Hi {customer_name}, this is Morgan calling from Brightpath Support. "
                     f"I'm following up on your recently resolved support case regarding "
-                    f"{self.issue_summary}. I have just a couple of quick questions — "
+                    f"{call.issue_summary}. I have just a couple of quick questions — "
                     "this will only take about a minute."
                 ),
                 guava.Field(
@@ -130,71 +146,62 @@ class CsatSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        rating = self.get_field("satisfaction_rating") or "not provided"
-        resolution = self.get_field("resolution_quality") or "not provided"
-        feedback = self.get_field("open_feedback") or ""
 
-        logging.info(
-            "CSAT results for conversation %s — rating: %s, resolved: %s",
-            self.conv_id, rating, resolution,
-        )
+@agent.on_task_complete("save_results")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    conv_id = call.get_variable("conv_id")
 
-        # Build the internal note body
-        note_lines = [
-            f"CSAT survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Customer: {self.customer_name}",
-            f"Satisfaction rating: {rating}/5",
-            f"Resolution quality: {resolution}",
-        ]
-        if feedback and feedback.strip().lower() not in ("none", "n/a", ""):
-            note_lines.append(f"Open feedback: {feedback}")
+    rating = call.get_field("satisfaction_rating") or "not provided"
+    resolution = call.get_field("resolution_quality") or "not provided"
+    feedback = call.get_field("open_feedback") or ""
 
-        try:
-            add_note(self.conv_id, "\n".join(note_lines))
-            logging.info("CSAT note added to conversation %s", self.conv_id)
-        except Exception as e:
-            logging.error("Failed to add CSAT note to conversation %s: %s", self.conv_id, e)
+    logging.info(
+        "CSAT results for conversation %s — rating: %s, resolved: %s",
+        conv_id, rating, resolution,
+    )
 
-        # Tag the conversation to record that CSAT was collected
-        try:
-            update_conversation(self.conv_id, tags=["guava", "voice", "csat-collected"])
-            logging.info("Tagged conversation %s with csat-collected", self.conv_id)
-        except Exception as e:
-            logging.error("Failed to tag conversation %s: %s", self.conv_id, e)
+    # Build the internal note body
+    note_lines = [
+        f"CSAT survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Customer: {customer_name}",
+        f"Satisfaction rating: {rating}/5",
+        f"Resolution quality: {resolution}",
+    ]
+    if feedback and feedback.strip().lower() not in ("none", "n/a", ""):
+        note_lines.append(f"Open feedback: {feedback}")
 
-        rating_int = int(rating) if rating.isdigit() else 0
-        if rating_int <= 2:
-            self.hangup(
-                final_instructions=(
-                    f"Sincerely thank {self.customer_name} for their candid feedback. "
-                    "Acknowledge that we fell short of their expectations and let them know "
-                    "a member of our team will personally follow up to make things right. "
-                    "Apologize again and wish them a good day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} warmly for taking the time to share their feedback. "
-                    "Let them know their input helps us improve our support team. "
-                    "Wish them a great day and let them know we're here if they ever need anything."
-                )
-            )
+    try:
+        add_note(conv_id, "\n".join(note_lines))
+        logging.info("CSAT note added to conversation %s", conv_id)
+    except Exception as e:
+        logging.error("Failed to add CSAT note to conversation %s: %s", conv_id, e)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for conversation %s CSAT survey",
-            self.customer_name, self.conv_id,
-        )
-        self.hangup(
+    # Tag the conversation to record that CSAT was collected
+    try:
+        update_conversation(conv_id, tags=["guava", "voice", "csat-collected"])
+        logging.info("Tagged conversation %s with csat-collected", conv_id)
+    except Exception as e:
+        logging.error("Failed to tag conversation %s: %s", conv_id, e)
+
+    rating_int = int(rating) if rating.isdigit() else 0
+    if rating_int <= 2:
+        call.hangup(
             final_instructions=(
-                "Leave a brief, friendly voicemail on behalf of Brightpath Support letting the "
-                "customer know we were calling to follow up on their recently resolved support "
-                "case. Let them know no action is needed and we hope everything is working well."
+                f"Sincerely thank {customer_name} for their candid feedback. "
+                "Acknowledge that we fell short of their expectations and let them know "
+                "a member of our team will personally follow up to make things right. "
+                "Apologize again and wish them a good day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} warmly for taking the time to share their feedback. "
+                "Let them know their input helps us improve our support team. "
+                "Wish them a great day and let them know we're here if they ever need anything."
             )
         )
 
@@ -214,11 +221,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.conv_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CsatSurveyController(
-            conv_id=args.conv_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "conv_id": args.conv_id,
+            "customer_name": args.name,
+        },
     )

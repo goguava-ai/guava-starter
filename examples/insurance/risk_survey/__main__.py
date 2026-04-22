@@ -7,32 +7,49 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sam",
+    organization="Keystone Property & Casualty - Risk Assessment",
+    purpose=(
+        "to schedule a property inspection appointment and collect pre-inspection "
+        "risk information to help the inspector prepare for their visit"
+    ),
+)
 
-class RiskSurveyController(guava.CallController):
-    def __init__(self, contact_name: str, policy_number: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.policy_number = policy_number
 
-        self.set_persona(
-            organization_name="Keystone Property & Casualty - Risk Assessment",
-            agent_name="Sam",
-            agent_purpose=(
-                "to schedule a property inspection appointment and collect pre-inspection "
-                "risk information to help the inspector prepare for their visit"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for risk survey on policy %s.",
+            call.get_variable("contact_name"),
+            call.get_variable("policy_number"),
         )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.start_risk_survey_flow,
-            on_failure=self.recipient_unavailable,
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "use_case": "risk_survey_and_inspection_scheduling",
+            "contact_name": call.get_variable("contact_name"),
+            "policy_number": call.get_variable("policy_number"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the insured. "
+                "Please follow up to schedule the property inspection."
+            )
         )
-
-    def start_risk_survey_flow(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "risk_survey",
             objective=(
-                f"You are calling {self.contact_name} regarding policy number "
-                f"{self.policy_number} to coordinate a property inspection and gather "
+                f"You are calling {call.get_variable('contact_name')} regarding policy number "
+                f"{call.get_variable('policy_number')} to coordinate a property inspection and gather "
                 "pre-inspection risk data. Collect their preferred inspection date, any "
                 "access instructions for the inspector, and information about property "
                 "conditions that affect the inspection or risk profile such as dogs on "
@@ -43,9 +60,9 @@ class RiskSurveyController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Sam calling from the Risk Assessment "
+                    f"Hi {call.get_variable('contact_name')}, this is Sam calling from the Risk Assessment "
                     f"team at Keystone Property & Casualty regarding your policy number "
-                    f"{self.policy_number}. We'd like to schedule a routine property "
+                    f"{call.get_variable('policy_number')}. We'd like to schedule a routine property "
                     "inspection and I have a few quick questions to help our inspector "
                     "prepare for the visit."
                 ),
@@ -103,55 +120,35 @@ class RiskSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "risk_survey_and_inspection_scheduling",
-            "contact_name": self.contact_name,
-            "policy_number": self.policy_number,
-            "inspection_date_preference": self.get_field("inspection_date_preference"),
-            "access_instructions": self.get_field("access_instructions"),
-            "dogs_on_property": self.get_field("dogs_on_property"),
-            "renovation_in_progress": self.get_field("renovation_in_progress"),
-            "electrical_panel_age": self.get_field("electrical_panel_age"),
-            "hvac_age": self.get_field("hvac_age"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Risk survey results saved: %s", results)
-        self.hangup(
-            final_instructions=(
-                "Thank you so much for your time and for sharing that information. Our team "
-                "will confirm your inspection appointment date by email and you will receive "
-                "a reminder the day before the visit. The inspector will arrive during the "
-                "agreed window and the inspection typically takes about thirty to forty-five "
-                "minutes. If anything changes or you need to reschedule, please contact "
-                "Keystone Property & Casualty at your earliest convenience. Have a great day."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for risk survey on policy %s.",
-            self.contact_name,
-            self.policy_number,
+@agent.on_task_complete("risk_survey")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "risk_survey_and_inspection_scheduling",
+        "contact_name": call.get_variable("contact_name"),
+        "policy_number": call.get_variable("policy_number"),
+        "inspection_date_preference": call.get_field("inspection_date_preference"),
+        "access_instructions": call.get_field("access_instructions"),
+        "dogs_on_property": call.get_field("dogs_on_property"),
+        "renovation_in_progress": call.get_field("renovation_in_progress"),
+        "electrical_panel_age": call.get_field("electrical_panel_age"),
+        "hvac_age": call.get_field("hvac_age"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Risk survey results saved: %s", results)
+    call.hangup(
+        final_instructions=(
+            "Thank you so much for your time and for sharing that information. Our team "
+            "will confirm your inspection appointment date by email and you will receive "
+            "a reminder the day before the visit. The inspector will arrive during the "
+            "agreed window and the inspection typically takes about thirty to forty-five "
+            "minutes. If anything changes or you need to reschedule, please contact "
+            "Keystone Property & Casualty at your earliest convenience. Have a great day."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "risk_survey_and_inspection_scheduling",
-            "contact_name": self.contact_name,
-            "policy_number": self.policy_number,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "We were unable to reach the insured. "
-                "Please follow up to schedule the property inspection."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -167,11 +164,11 @@ if __name__ == "__main__":
     parser.add_argument("--policy-number", required=True, help="Policy number")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=RiskSurveyController(
-            contact_name=args.name,
-            policy_number=args.policy_number,
-        ),
+        variables={
+            "contact_name": args.name,
+            "policy_number": args.policy_number,
+        },
     )

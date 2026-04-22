@@ -31,29 +31,43 @@ def post_communication_request(patient_id: str, care_gap: str, intent: str, head
     return resp.ok
 
 
-class CareGapOutreachController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, care_gap: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.care_gap = care_gap
-        self.headers = {}
+agent = guava.Agent(
+    name="Sam",
+    organization="Sunrise Family Practice",
+    purpose="to reach out to patients who are overdue for preventive care and help them schedule",
+)
 
-        try:
-            token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        except Exception as e:
-            logging.error("Token error: %s", e)
 
-        self.set_persona(
-            organization_name="Sunrise Family Practice",
-            agent_name="Sam",
-            agent_purpose=(
-                "to reach out to patients who are overdue for preventive care and help them schedule"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    headers = {}
+    try:
+        token = get_access_token()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    except Exception as e:
+        logging.error("Token error: %s", e)
+    call.headers = headers
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    care_gap = call.get_variable("care_gap")
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for care gap outreach.", patient_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {patient_name} from Sunrise Family Practice. "
+                f"Let them know you're calling because they may be due for a {care_gap} "
+                "and invite them to call back to schedule. Keep it friendly and non-alarming."
+            )
         )
-
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "care_gap_outreach",
             objective=(
                 f"Call {patient_name} who is due for a {care_gap}. "
                 "Educate them on the importance, address any concerns, and gauge their intent to schedule."
@@ -87,60 +101,48 @@ class CareGapOutreachController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_intent,
         )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=lambda: None,
-            on_failure=self.leave_voicemail,
-        )
 
-    def handle_intent(self):
-        intent = self.get_field("scheduling_intent") or ""
-        barriers = self.get_field("barriers") or ""
+@agent.on_task_complete("care_gap_outreach")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    care_gap = call.get_variable("care_gap")
+    intent = call.get_field("scheduling_intent") or ""
+    barriers = call.get_field("barriers") or ""
 
-        logging.info(
-            "Care gap outreach for patient %s — gap: %s, intent: %s, barriers: %s",
-            self.patient_id, self.care_gap, intent, barriers,
-        )
+    logging.info(
+        "Care gap outreach for patient %s — gap: %s, intent: %s, barriers: %s",
+        patient_id, care_gap, intent, barriers,
+    )
 
-        try:
-            post_communication_request(self.patient_id, self.care_gap, intent, self.headers)
-        except Exception as e:
-            logging.error("Failed to post CommunicationRequest: %s", e)
+    try:
+        post_communication_request(patient_id, care_gap, intent, call.headers)
+    except Exception as e:
+        logging.error("Failed to post CommunicationRequest: %s", e)
 
-        if "schedule now" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know that a scheduling coordinator will call them "
-                    "back within one business day to find a time that works. "
-                    "Thank them for their commitment to their health and wish them a great day."
-                )
-            )
-        elif "follow up" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for their time. Let them know we'll reach out "
-                    "again in the near future to help schedule. They can also call the office anytime. "
-                    "Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Respect {self.patient_name}'s decision. Let them know we're always here "
-                    "if they change their mind. Thank them for taking the call and wish them well."
-                )
-            )
-
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for care gap outreach.", self.patient_name)
-        self.hangup(
+    if "schedule now" in intent:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.patient_name} from Sunrise Family Practice. "
-                f"Let them know you're calling because they may be due for a {self.care_gap} "
-                "and invite them to call back to schedule. Keep it friendly and non-alarming."
+                f"Let {patient_name} know that a scheduling coordinator will call them "
+                "back within one business day to find a time that works. "
+                "Thank them for their commitment to their health and wish them a great day."
+            )
+        )
+    elif "follow up" in intent:
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for their time. Let them know we'll reach out "
+                "again in the near future to help schedule. They can also call the office anytime. "
+                "Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Respect {patient_name}'s decision. Let them know we're always here "
+                "if they change their mind. Thank them for taking the call and wish them well."
             )
         )
 
@@ -154,12 +156,12 @@ if __name__ == "__main__":
     parser.add_argument("--care-gap", required=True, help="Care gap description (e.g. 'annual wellness visit')")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CareGapOutreachController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            care_gap=args.care_gap,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "care_gap": args.care_gap,
+        },
     )

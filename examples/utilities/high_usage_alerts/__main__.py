@@ -7,49 +7,66 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="Metro Power & Light",
+    purpose=(
+        "alert customers whose energy usage is significantly above their normal patterns, "
+        "understand whether the increase is expected, and offer energy efficiency resources "
+        "and billing programs that may help manage their costs"
+    ),
+)
 
-class HighUsageAlertController(guava.CallController):
-    def __init__(self, contact_name, account_number, usage_percent_above, estimated_bill):
-        super().__init__()
-        self.contact_name = contact_name
-        self.account_number = account_number
-        self.usage_percent_above = usage_percent_above
-        self.estimated_bill = estimated_bill
 
-        self.set_persona(
-            organization_name="Metro Power & Light",
-            agent_name="Riley",
-            agent_purpose=(
-                "alert customers whose energy usage is significantly above their normal patterns, "
-                "understand whether the increase is expected, and offer energy efficiency resources "
-                "and billing programs that may help manage their costs"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "contact_name": call.get_variable("contact_name"),
+            "account_number": call.get_variable("account_number"),
+            "usage_percent_above": call.get_variable("usage_percent_above"),
+            "estimated_bill": call.get_variable("estimated_bill"),
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "Leave a brief voicemail letting the customer know that Metro Power & Light called "
+                "because their energy usage is higher than normal this month and their estimated bill "
+                "may be higher than expected. Encourage them to log in to their account at "
+                "metropowerandlight.com to view usage details or call back to learn about programs "
+                "that can help manage energy costs. Keep the message concise."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_alert,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_alert(self):
-        self.set_task(
+    elif outcome == "available":
+        contact_name = call.get_variable("contact_name")
+        account_number = call.get_variable("account_number")
+        usage_percent_above = call.get_variable("usage_percent_above")
+        estimated_bill = call.get_variable("estimated_bill")
+        call.set_task(
+            "high_usage_alert",
             objective=(
-                f"Speak with {self.contact_name} (account {self.account_number}) about an unusually "
+                f"Speak with {contact_name} (account {account_number}) about an unusually "
                 f"high energy usage pattern detected on their account. Their usage is currently "
-                f"{self.usage_percent_above}% above their normal level for this time of year, and "
-                f"their estimated bill this month is {self.estimated_bill}. Determine whether the "
+                f"{usage_percent_above}% above their normal level for this time of year, and "
+                f"their estimated bill this month is {estimated_bill}. Determine whether the "
                 "customer is aware of a reason for the increase, and offer relevant programs: "
                 "a free home energy audit, paperless billing, and budget billing (which averages "
                 "usage costs across 12 months to avoid high seasonal bills)."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name.split()[0]}, this is Riley calling from Metro Power & Light "
+                    f"Hi {contact_name.split()[0]}, this is Riley calling from Metro Power & Light "
                     f"with an important update about your account. We've noticed that your energy usage "
-                    f"this billing period is about {self.usage_percent_above}% higher than your typical "
+                    f"this billing period is about {usage_percent_above}% higher than your typical "
                     f"usage for this time of year. Based on current usage, your estimated bill this month "
-                    f"is approximately {self.estimated_bill}. We wanted to reach out so this doesn't come "
+                    f"is approximately {estimated_bill}. We wanted to reach out so this doesn't come "
                     f"as a surprise and to see if there's anything we can help with."
                 ),
                 guava.Field(
@@ -83,53 +100,34 @@ class HighUsageAlertController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def recipient_unavailable(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "usage_percent_above": self.usage_percent_above,
-            "estimated_bill": self.estimated_bill,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Leave a brief voicemail letting the customer know that Metro Power & Light called "
-                "because their energy usage is higher than normal this month and their estimated bill "
-                "may be higher than expected. Encourage them to log in to their account at "
-                "metropowerandlight.com to view usage details or call back to learn about programs "
-                "that can help manage energy costs. Keep the message concise."
-            )
-        )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "usage_percent_above": self.usage_percent_above,
-            "estimated_bill": self.estimated_bill,
-            "fields": {
-                "usage_increase_acknowledged": self.get_field("usage_increase_acknowledged"),
-                "known_reason_for_increase": self.get_field("known_reason_for_increase"),
-                "interested_in_energy_audit": self.get_field("interested_in_energy_audit"),
-                "paperless_billing_interest": self.get_field("paperless_billing_interest"),
-                "budget_billing_interest": self.get_field("budget_billing_interest"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Summarize any programs the customer expressed interest in and let them know a "
-                "follow-up confirmation will be sent. Remind them they can monitor usage anytime "
-                "through their online account or the Metro Power & Light app. Thank them for being "
-                "a customer and for taking the time to speak with you today."
-            )
+@agent.on_task_complete("high_usage_alert")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "usage_percent_above": call.get_variable("usage_percent_above"),
+        "estimated_bill": call.get_variable("estimated_bill"),
+        "fields": {
+            "usage_increase_acknowledged": call.get_field("usage_increase_acknowledged"),
+            "known_reason_for_increase": call.get_field("known_reason_for_increase"),
+            "interested_in_energy_audit": call.get_field("interested_in_energy_audit"),
+            "paperless_billing_interest": call.get_field("paperless_billing_interest"),
+            "budget_billing_interest": call.get_field("budget_billing_interest"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            "Summarize any programs the customer expressed interest in and let them know a "
+            "follow-up confirmation will be sent. Remind them they can monitor usage anytime "
+            "through their online account or the Metro Power & Light app. Thank them for being "
+            "a customer and for taking the time to speak with you today."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -152,15 +150,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    controller = HighUsageAlertController(
-        contact_name=args.name,
-        account_number=args.account_number,
-        usage_percent_above=args.usage_percent_above,
-        estimated_bill=args.estimated_bill,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "account_number": args.account_number,
+            "usage_percent_above": args.usage_percent_above,
+            "estimated_bill": args.estimated_bill,
+        },
     )

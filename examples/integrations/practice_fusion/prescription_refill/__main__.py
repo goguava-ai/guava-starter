@@ -77,148 +77,149 @@ def create_refill_request(patient_id: str, medication: dict, pharmacy_preference
     return response.json()
 
 
-class PrescriptionRefillController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Riverside Family Medicine",
+    purpose="to help patients request prescription refills",
+)
 
-        self.set_persona(
-            organization_name="Riverside Family Medicine",
-            agent_name="Alex",
-            agent_purpose="to help patients request prescription refills",
-        )
 
-        self.set_task(
-            objective=(
-                "Collect the patient's information and the medication they need refilled, "
-                "verify the prescription against their active medications, submit the refill "
-                "request, and let them know the expected timeline."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "process_refill",
+        objective=(
+            "Collect the patient's information and the medication they need refilled, "
+            "verify the prescription against their active medications, submit the refill "
+            "request, and let them know the expected timeline."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Riverside Family Medicine. My name is Alex "
+                "and I can help you with a prescription refill request today."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Riverside Family Medicine. My name is Alex "
-                    "and I can help you with a prescription refill request today."
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask the patient for their first name.",
+                required=True,
+            ),
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask the patient for their last name.",
+                required=True,
+            ),
+            guava.Field(
+                key="dob",
+                field_type="text",
+                description=(
+                    "Ask the patient for their date of birth for verification purposes. "
+                    "Capture it in YYYY-MM-DD format."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask the patient for their first name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="medication_name",
+                field_type="text",
+                description=(
+                    "Ask which medication they need refilled. Have them spell it out if "
+                    "the name is unclear."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask the patient for their last name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="pharmacy_preference",
+                field_type="multiple_choice",
+                description=(
+                    "Ask where they would like to pick up their refill: their pharmacy "
+                    "on file, a different pharmacy, or mail order."
                 ),
-                guava.Field(
-                    key="dob",
-                    field_type="text",
-                    description=(
-                        "Ask the patient for their date of birth for verification purposes. "
-                        "Capture it in YYYY-MM-DD format."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="medication_name",
-                    field_type="text",
-                    description=(
-                        "Ask which medication they need refilled. Have them spell it out if "
-                        "the name is unclear."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="pharmacy_preference",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask where they would like to pick up their refill: their pharmacy "
-                        "on file, a different pharmacy, or mail order."
-                    ),
-                    choices=["same pharmacy on file", "different pharmacy", "mail order"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.process_refill,
+                choices=["same pharmacy on file", "different pharmacy", "mail order"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("process_refill")
+def on_done(call: guava.Call) -> None:
+    first_name = call.get_field("first_name")
+    last_name = call.get_field("last_name")
+    dob = call.get_field("dob")
+    medication_name = call.get_field("medication_name")
+    pharmacy_preference = call.get_field("pharmacy_preference")
+
+    logging.info("Looking up patient: %s %s, DOB %s", first_name, last_name, dob)
+    patient = search_patient(last_name, dob)
+
+    if patient is None:
+        call.hangup(
+            final_instructions=(
+                f"Apologize and let the patient know you were unable to locate a record "
+                f"for {first_name} {last_name} with that date of birth. Ask them to call "
+                "back during office hours so a staff member can assist them directly."
+            )
         )
+        return
 
-        self.accept_call()
+    patient_id = patient["id"]
+    logging.info("Found patient ID: %s", patient_id)
 
-    def process_refill(self):
-        first_name = self.get_field("first_name")
-        last_name = self.get_field("last_name")
-        dob = self.get_field("dob")
-        medication_name = self.get_field("medication_name")
-        pharmacy_preference = self.get_field("pharmacy_preference")
+    logging.info("Fetching active medications for patient %s", patient_id)
+    active_medications = get_active_medications(patient_id)
 
-        logging.info("Looking up patient: %s %s, DOB %s", first_name, last_name, dob)
-        patient = search_patient(last_name, dob)
+    matched_medication = find_matching_medication(active_medications, medication_name)
 
-        if patient is None:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize and let the patient know you were unable to locate a record "
-                    f"for {first_name} {last_name} with that date of birth. Ask them to call "
-                    "back during office hours so a staff member can assist them directly."
-                )
+    if matched_medication is None:
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know that {medication_name} was not found among their "
+                "active prescriptions on file. Ask them to call back during office hours "
+                "so a nurse or provider can review their medication history and assist with "
+                "the refill."
             )
-            return
+        )
+        return
 
-        patient_id = patient["id"]
-        logging.info("Found patient ID: %s", patient_id)
+    logging.info("Matched medication: %s", matched_medication.get("medicationCodeableConcept", {}))
 
-        logging.info("Fetching active medications for patient %s", patient_id)
-        active_medications = get_active_medications(patient_id)
+    try:
+        refill = create_refill_request(patient_id, matched_medication, pharmacy_preference)
+        refill_id = refill.get("id", "unknown")
+        logging.info("Refill request created with ID: %s", refill_id)
 
-        matched_medication = find_matching_medication(active_medications, medication_name)
+        pharmacy_message = {
+            "same pharmacy on file": "your pharmacy on file",
+            "different pharmacy": "the new pharmacy you specified",
+            "mail order": "mail order",
+        }.get(pharmacy_preference, pharmacy_preference)
 
-        if matched_medication is None:
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know that {medication_name} was not found among their "
-                    "active prescriptions on file. Ask them to call back during office hours "
-                    "so a nurse or provider can review their medication history and assist with "
-                    "the refill."
-                )
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know their refill request for {medication_name} has been "
+                f"submitted successfully. The request number is {refill_id}. The prescription "
+                f"will be sent to {pharmacy_message} once a provider reviews and approves it, "
+                "which typically takes one to two business days. Thank them for calling "
+                "Riverside Family Medicine and wish them well."
             )
-            return
-
-        logging.info("Matched medication: %s", matched_medication.get("medicationCodeableConcept", {}))
-
-        try:
-            refill = create_refill_request(patient_id, matched_medication, pharmacy_preference)
-            refill_id = refill.get("id", "unknown")
-            logging.info("Refill request created with ID: %s", refill_id)
-
-            pharmacy_message = {
-                "same pharmacy on file": "your pharmacy on file",
-                "different pharmacy": "the new pharmacy you specified",
-                "mail order": "mail order",
-            }.get(pharmacy_preference, pharmacy_preference)
-
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know their refill request for {medication_name} has been "
-                    f"submitted successfully. The request number is {refill_id}. The prescription "
-                    f"will be sent to {pharmacy_message} once a provider reviews and approves it, "
-                    "which typically takes one to two business days. Thank them for calling "
-                    "Riverside Family Medicine and wish them well."
-                )
+        )
+    except requests.HTTPError as exc:
+        logging.error("Failed to create refill request: %s", exc)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {first_name} and let them know there was a technical issue "
+                "submitting the refill request. Ask them to call back during office hours "
+                "or contact their pharmacy directly to initiate the refill."
             )
-        except requests.HTTPError as exc:
-            logging.error("Failed to create refill request: %s", exc)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {first_name} and let them know there was a technical issue "
-                    "submitting the refill request. Ask them to call back during office hours "
-                    "or contact their pharmacy directly to initiate the refill."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=PrescriptionRefillController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

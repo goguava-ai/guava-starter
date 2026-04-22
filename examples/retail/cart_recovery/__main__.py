@@ -7,33 +7,38 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="ShopNow",
+    purpose=(
+        "to reach out to customers who left items in their cart, "
+        "answer any product questions, offer assistance or an incentive, "
+        "and help them complete their purchase"
+    ),
+)
 
-class CartRecoveryController(guava.CallController):
-    def __init__(self, contact_name, cart_items, cart_value):
-        super().__init__()
-        self.contact_name = contact_name
-        self.cart_items = cart_items
-        self.cart_value = cart_value
-        self.set_persona(
-            organization_name="ShopNow",
-            agent_name="Riley",
-            agent_purpose=(
-                "to reach out to customers who left items in their cart, "
-                "answer any product questions, offer assistance or an incentive, "
-                "and help them complete their purchase"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_cart_recovery,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_cart_recovery(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    cart_items = call.get_variable("cart_items")
+    cart_value = call.get_variable("cart_value")
+
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for cart recovery outreach.", contact_name
+        )
+    elif outcome == "available":
+        call.set_task(
+            "cart_recovery",
             objective=(
-                f"Re-engage {self.contact_name}, who left a ShopNow cart worth {self.cart_value} "
-                f"containing: {self.cart_items}. "
+                f"Re-engage {contact_name}, who left a ShopNow cart worth {cart_value} "
+                f"containing: {cart_items}. "
                 "Understand why they did not complete the purchase, address any product questions, "
                 "offer a discount or incentive if appropriate, ask about their preferred payment method, "
                 "and determine whether they are ready to complete the order now. "
@@ -41,9 +46,9 @@ class CartRecoveryController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Riley calling from ShopNow. "
+                    f"Hi {contact_name}, this is Riley calling from ShopNow. "
                     f"I noticed you had some great items saved in your cart — "
-                    f"including {self.cart_items} — totaling {self.cart_value}. "
+                    f"including {cart_items} — totaling {cart_value}. "
                     "I just wanted to check in and see if you had any questions or if there was "
                     "anything I could help with to make your shopping experience easier."
                 ),
@@ -101,37 +106,33 @@ class CartRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "cart_items": self.cart_items,
-            "cart_value": self.cart_value,
-            "abandonment_reason": self.get_field("abandonment_reason"),
-            "product_questions": self.get_field("product_questions"),
-            "discount_accepted": self.get_field("discount_accepted"),
-            "preferred_payment_method": self.get_field("preferred_payment_method"),
-            "ready_to_complete_order": self.get_field("ready_to_complete_order"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Cart recovery call completed for %s", self.contact_name)
-        self.hangup(
-            final_instructions=(
-                "Thank the customer warmly for their time. "
-                "If they are ready to complete the order, let them know they can finish checkout "
-                "on the ShopNow website or app and that any discount code discussed has been applied. "
-                "If they are not ready, let them know their cart will be saved and the ShopNow team "
-                "is available to help anytime. Wish them a great day and close the call politely."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for cart recovery outreach.", self.contact_name
+@agent.on_task_complete("cart_recovery")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "cart_items": call.get_variable("cart_items"),
+        "cart_value": call.get_variable("cart_value"),
+        "abandonment_reason": call.get_field("abandonment_reason"),
+        "product_questions": call.get_field("product_questions"),
+        "discount_accepted": call.get_field("discount_accepted"),
+        "preferred_payment_method": call.get_field("preferred_payment_method"),
+        "ready_to_complete_order": call.get_field("ready_to_complete_order"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Cart recovery call completed for %s", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Thank the customer warmly for their time. "
+            "If they are ready to complete the order, let them know they can finish checkout "
+            "on the ShopNow website or app and that any discount code discussed has been applied. "
+            "If they are not ready, let them know their cart will be saved and the ShopNow team "
+            "is available to help anytime. Wish them a great day and close the call politely."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -145,12 +146,12 @@ if __name__ == "__main__":
     parser.add_argument("--cart-value", required=True, help="Total estimated value of the cart")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CartRecoveryController(
-            contact_name=args.name,
-            cart_items=args.cart_items,
-            cart_value=args.cart_value,
-        ),
+        variables={
+            "contact_name": args.name,
+            "cart_items": args.cart_items,
+            "cart_value": args.cart_value,
+        },
     )

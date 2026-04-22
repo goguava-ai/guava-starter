@@ -7,44 +7,55 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Morgan",
+    organization="Lakeside Auto Group - Safety Team",
+    purpose=(
+        "notify vehicle owners about open safety recalls and collect their "
+        "scheduling preferences so the required repair can be completed"
+    ),
+)
 
-class RecallNotificationController(guava.CallController):
-    def __init__(self, customer_name, vehicle, recall_number, recall_description):
-        super().__init__()
-        self.customer_name = customer_name
-        self.vehicle = vehicle
-        self.recall_number = recall_number
-        self.recall_description = recall_description
 
-        self.set_persona(
-            organization_name="Lakeside Auto Group - Safety Team",
-            agent_name="Morgan",
-            agent_purpose=(
-                "notify vehicle owners about open safety recalls and collect their "
-                "scheduling preferences so the required repair can be completed"
-            ),
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.start_recall_notification,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def start_recall_notification(self):
-        self.set_task(
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    vehicle = call.get_variable("vehicle")
+    recall_number = call.get_variable("recall_number")
+    recall_description = call.get_variable("recall_description")
+
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for recall notification call.", customer_name)
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "customer_name": customer_name,
+            "vehicle": vehicle,
+            "recall_number": recall_number,
+            "recall_description": recall_description,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup()
+    elif outcome == "available":
+        call.set_task(
+            "recall_notification",
             objective=(
-                f"Inform {self.customer_name} that their {self.vehicle} is affected by "
-                f"safety recall {self.recall_number} ({self.recall_description}). "
+                f"Inform {customer_name} that their {vehicle} is affected by "
+                f"safety recall {recall_number} ({recall_description}). "
                 f"Confirm they are aware, verify they still have the vehicle, and collect "
                 f"scheduling preferences so Lakeside Auto Group can complete the repair at "
                 f"no charge."
             ),
             checklist=[
                 guava.Say(
-                    f"Notify {self.customer_name} that their {self.vehicle} has an open "
-                    f"safety recall (Recall #{self.recall_number}) related to: "
-                    f"{self.recall_description}. Emphasize the repair is free of charge."
+                    f"Notify {customer_name} that their {vehicle} has an open "
+                    f"safety recall (Recall #{recall_number}) related to: "
+                    f"{recall_description}. Emphasize the repair is free of charge."
                 ),
                 guava.Field(
                     key="recall_acknowledged",
@@ -77,46 +88,36 @@ class RecallNotificationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "recall_number": self.recall_number,
-            "recall_description": self.recall_description,
-            "recall_acknowledged": self.get_field("recall_acknowledged"),
-            "vehicle_in_possession": self.get_field("vehicle_in_possession"),
-            "appointment_date_preference": self.get_field("appointment_date_preference"),
-            "transportation_needed": self.get_field("transportation_needed"),
-            "questions_about_recall": self.get_field("questions_about_recall"),
-        }
 
-        print(json.dumps(results, indent=2))
-        logging.info("Recall notification results collected for %s", self.customer_name)
+@agent.on_task_complete("recall_notification")
+def on_recall_notification_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "customer_name": customer_name,
+        "vehicle": call.get_variable("vehicle"),
+        "recall_number": call.get_variable("recall_number"),
+        "recall_description": call.get_variable("recall_description"),
+        "recall_acknowledged": call.get_field("recall_acknowledged"),
+        "vehicle_in_possession": call.get_field("vehicle_in_possession"),
+        "appointment_date_preference": call.get_field("appointment_date_preference"),
+        "transportation_needed": call.get_field("transportation_needed"),
+        "questions_about_recall": call.get_field("questions_about_recall"),
+    }
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.customer_name} for their time. Reassure them that the recall "
-                f"repair is straightforward and completely free. Confirm their appointment "
-                f"preference has been noted and that someone from the service team will be "
-                f"in touch with a confirmed time. Wish them a safe and pleasant day."
-            )
+    print(json.dumps(results, indent=2))
+    logging.info("Recall notification results collected for %s", customer_name)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} for their time. Reassure them that the recall "
+            f"repair is straightforward and completely free. Confirm their appointment "
+            f"preference has been noted and that someone from the service team will be "
+            f"in touch with a confirmed time. Wish them a safe and pleasant day."
         )
-
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for recall notification call.", self.customer_name)
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "recall_number": self.recall_number,
-            "recall_description": self.recall_description,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
+    )
 
 
 if __name__ == "__main__":
@@ -139,13 +140,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=RecallNotificationController(
-            customer_name=args.name,
-            vehicle=args.vehicle,
-            recall_number=args.recall_number,
-            recall_description=args.recall_description,
-        ),
+        variables={
+            "customer_name": args.name,
+            "vehicle": args.vehicle,
+            "recall_number": args.recall_number,
+            "recall_description": args.recall_description,
+        },
     )

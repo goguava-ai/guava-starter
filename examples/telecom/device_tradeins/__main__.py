@@ -7,39 +7,56 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sam",
+    organization="Nexus Mobile",
+    purpose=(
+        "to reach out to Nexus Mobile customers who are eligible for a device upgrade, "
+        "share the trade-in value of their current device, gauge their interest in "
+        "upgrading, and help them choose between visiting a store or using the "
+        "mail-in trade-in option"
+    ),
+)
 
-class DeviceTradeInController(guava.CallController):
-    def __init__(self, contact_name, account_number, current_device, trade_in_value):
-        super().__init__()
-        self.contact_name = contact_name
-        self.account_number = account_number
-        self.current_device = current_device
-        self.trade_in_value = trade_in_value
 
-        self.set_persona(
-            organization_name="Nexus Mobile",
-            agent_name="Sam",
-            agent_purpose=(
-                "to reach out to Nexus Mobile customers who are eligible for a device upgrade, "
-                "share the trade-in value of their current device, gauge their interest in "
-                "upgrading, and help them choose between visiting a store or using the "
-                "mail-in trade-in option"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Sam",
+            "organization": "Nexus Mobile",
+            "use_case": "device_tradeins",
+            "contact_name": call.get_variable("contact_name"),
+            "account_number": call.get_variable("account_number"),
+            "current_device": call.get_variable("current_device"),
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        logging.info("Recipient unavailable for device trade-in call.")
+        call.hangup(
+            final_instructions=(
+                "The contact was not available. End the call politely without leaving "
+                "account details in a voicemail."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_tradein_flow,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_tradein_flow(self):
-        self.set_task(
+    elif outcome == "available":
+        contact_name = call.get_variable("contact_name")
+        account_number = call.get_variable("account_number")
+        current_device = call.get_variable("current_device")
+        trade_in_value = call.get_variable("trade_in_value")
+        call.set_task(
+            "tradein_flow",
             objective=(
-                f"You are speaking with {self.contact_name}, a Nexus Mobile customer "
-                f"(account #{self.account_number}) who is eligible for a device upgrade. "
-                f"Their current device is a {self.current_device}, which has an estimated "
-                f"trade-in value of {self.trade_in_value}. "
+                f"You are speaking with {contact_name}, a Nexus Mobile customer "
+                f"(account #{account_number}) who is eligible for a device upgrade. "
+                f"Their current device is a {current_device}, which has an estimated "
+                f"trade-in value of {trade_in_value}. "
                 "Your goal is to let them know about this offer, understand their interest "
                 "in trading in and upgrading, and if interested, collect their preferred "
                 "method (store visit or mail-in) and schedule accordingly. "
@@ -47,18 +64,18 @@ class DeviceTradeInController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name.split()[0]}, this is Sam calling from Nexus Mobile. "
-                    f"I have some great news for you — your {self.current_device} qualifies "
+                    f"Hi {contact_name.split()[0]}, this is Sam calling from Nexus Mobile. "
+                    f"I have some great news for you — your {current_device} qualifies "
                     f"for our device upgrade program and we're able to offer you an estimated "
-                    f"trade-in value of {self.trade_in_value} toward a brand new device. "
+                    f"trade-in value of {trade_in_value} toward a brand new device. "
                     f"I just wanted to take a moment to tell you about your options."
                 ),
                 guava.Field(
                     key="trade_in_interested",
                     description=(
                         f"Ask the customer if they are interested in trading in their "
-                        f"{self.current_device} for a new device given the estimated trade-in "
-                        f"value of {self.trade_in_value}. Capture their level of interest clearly."
+                        f"{current_device} for a new device given the estimated trade-in "
+                        f"value of {trade_in_value}. Capture their level of interest clearly."
                     ),
                     field_type="text",
                     required=True,
@@ -105,59 +122,40 @@ class DeviceTradeInController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Sam",
-            "organization": "Nexus Mobile",
-            "use_case": "device_tradeins",
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "current_device": self.current_device,
-            "trade_in_value": self.trade_in_value,
-            "fields": {
-                "trade_in_interested": self.get_field("trade_in_interested"),
-                "current_device_condition": self.get_field("current_device_condition"),
-                "new_device_interest": self.get_field("new_device_interest"),
-                "trade_in_method_preference": self.get_field("trade_in_method_preference"),
-                "preferred_store_visit_date": self.get_field("preferred_store_visit_date"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Device trade-in call results saved.")
-        self.hangup(
-            final_instructions=(
-                "Thank the customer enthusiastically for their time. If they are interested "
-                "in a store visit, confirm the date and let them know a Nexus Mobile specialist "
-                "will be ready to assist them. If they chose mail-in, let them know a prepaid "
-                "shipping kit will be sent within 2 to 3 business days. If they are not "
-                "interested right now, let them know the offer stands and they can call "
-                "Nexus Mobile whenever they are ready."
-            )
-        )
 
-    def recipient_unavailable(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Sam",
-            "organization": "Nexus Mobile",
-            "use_case": "device_tradeins",
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "current_device": self.current_device,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Recipient unavailable for device trade-in call.")
-        self.hangup(
-            final_instructions=(
-                "The contact was not available. End the call politely without leaving "
-                "account details in a voicemail."
-            )
+@agent.on_task_complete("tradein_flow")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Sam",
+        "organization": "Nexus Mobile",
+        "use_case": "device_tradeins",
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "current_device": call.get_variable("current_device"),
+        "trade_in_value": call.get_variable("trade_in_value"),
+        "fields": {
+            "trade_in_interested": call.get_field("trade_in_interested"),
+            "current_device_condition": call.get_field("current_device_condition"),
+            "new_device_interest": call.get_field("new_device_interest"),
+            "trade_in_method_preference": call.get_field("trade_in_method_preference"),
+            "preferred_store_visit_date": call.get_field("preferred_store_visit_date"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Device trade-in call results saved.")
+    call.hangup(
+        final_instructions=(
+            "Thank the customer enthusiastically for their time. If they are interested "
+            "in a store visit, confirm the date and let them know a Nexus Mobile specialist "
+            "will be ready to assist them. If they chose mail-in, let them know a prepaid "
+            "shipping kit will be sent within 2 to 3 business days. If they are not "
+            "interested right now, let them know the offer stands and they can call "
+            "Nexus Mobile whenever they are ready."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -178,13 +176,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DeviceTradeInController(
-            contact_name=args.name,
-            account_number=args.account_number,
-            current_device=args.current_device,
-            trade_in_value=args.trade_in_value,
-        ),
+        variables={
+            "contact_name": args.name,
+            "account_number": args.account_number,
+            "current_device": args.current_device,
+            "trade_in_value": args.trade_in_value,
+        },
     )

@@ -58,96 +58,97 @@ def lookup_customer(email: str) -> dict | None:
     return rows[0] if rows else None
 
 
-class CustomerDataLookupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Meridian Analytics",
+    purpose=(
+        "to help customers look up their account information stored with Meridian Analytics"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Meridian Analytics",
-            agent_name="Alex",
-            agent_purpose=(
-                "to help customers look up their account information stored with Meridian Analytics"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "fetch_and_deliver",
+        objective=(
+            "A customer has called Meridian Analytics to review their account details. "
+            "Collect their email address, look up their account, and read back their "
+            "current plan, usage, and account status."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Meridian Analytics. My name is Alex. "
+                "I can pull up your account details right now — "
+                "I just need to verify a couple of things first."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called Meridian Analytics to review their account details. "
-                "Collect their email address, look up their account, and read back their "
-                "current plan, usage, and account status."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description=(
+                    "Ask the caller for the email address associated with their Meridian Analytics account."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Meridian Analytics. My name is Alex. "
-                    "I can pull up your account details right now — "
-                    "I just need to verify a couple of things first."
-                ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description=(
-                        "Ask the caller for the email address associated with their Meridian Analytics account."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.fetch_and_deliver,
-        )
+        ],
+    )
 
-        self.accept_call()
 
-    def fetch_and_deliver(self):
-        email = self.get_field("caller_email") or ""
+@agent.on_task_complete("fetch_and_deliver")
+def fetch_and_deliver(call: guava.Call) -> None:
+    email = call.get_field("caller_email") or ""
 
-        logging.info("Looking up customer account for email: %s", email)
-        try:
-            customer = lookup_customer(email.strip().lower())
-        except Exception as e:
-            logging.error("Snowflake query failed for email %s: %s", email, e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize to the caller and let them know there was a technical issue "
-                    "retrieving their account. Ask them to try again in a few minutes or "
-                    "contact support by email. Thank them for their patience."
-                )
-            )
-            return
-
-        if not customer:
-            logging.info("No customer found for email: %s", email)
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know that no account was found for the email address "
-                    f"'{email}'. Ask them to double-check the address or contact support "
-                    "if they believe this is an error. Thank them for calling Meridian Analytics."
-                )
-            )
-            return
-
-        name = customer.get("CUSTOMER_NAME", "there")
-        plan = customer.get("PLAN", "unknown")
-        usage_gb = customer.get("MONTHLY_USAGE_GB", "unknown")
-        join_date = customer.get("JOIN_DATE", "unknown")
-        status = customer.get("ACCOUNT_STATUS", "unknown")
-
-        logging.info(
-            "Account found for %s — plan: %s, usage: %s GB, status: %s",
-            name, plan, usage_gb, status,
-        )
-
-        self.hangup(
+    logging.info("Looking up customer account for email: %s", email)
+    try:
+        customer = lookup_customer(email.strip().lower())
+    except Exception as e:
+        logging.error("Snowflake query failed for email %s: %s", email, e)
+        call.hangup(
             final_instructions=(
-                f"Greet {name} by name and read back the following account details clearly: "
-                f"their current plan is '{plan}', they have used {usage_gb} GB this month, "
-                f"they joined on {join_date}, and their account status is '{status}'. "
-                "Thank them for calling Meridian Analytics and wish them a great day."
+                "Apologize to the caller and let them know there was a technical issue "
+                "retrieving their account. Ask them to try again in a few minutes or "
+                "contact support by email. Thank them for their patience."
             )
         )
+        return
+
+    if not customer:
+        logging.info("No customer found for email: %s", email)
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know that no account was found for the email address "
+                f"'{email}'. Ask them to double-check the address or contact support "
+                "if they believe this is an error. Thank them for calling Meridian Analytics."
+            )
+        )
+        return
+
+    name = customer.get("CUSTOMER_NAME", "there")
+    plan = customer.get("PLAN", "unknown")
+    usage_gb = customer.get("MONTHLY_USAGE_GB", "unknown")
+    join_date = customer.get("JOIN_DATE", "unknown")
+    status = customer.get("ACCOUNT_STATUS", "unknown")
+
+    logging.info(
+        "Account found for %s — plan: %s, usage: %s GB, status: %s",
+        name, plan, usage_gb, status,
+    )
+
+    call.hangup(
+        final_instructions=(
+            f"Greet {name} by name and read back the following account details clearly: "
+            f"their current plan is '{plan}', they have used {usage_gb} GB this month, "
+            f"they joined on {join_date}, and their account status is '{status}'. "
+            "Thank them for calling Meridian Analytics and wish them a great day."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=CustomerDataLookupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

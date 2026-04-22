@@ -74,138 +74,137 @@ def format_order_summary(order: dict) -> str:
     )
 
 
-class SalesOrderStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Jamie",
+    organization="Apex Industrial Supply",
+    purpose="to help customers check the status of their sales orders in our SAP system",
+)
 
-        self.set_persona(
-            organization_name="Apex Industrial Supply",
-            agent_name="Jamie",
-            agent_purpose=(
-                "to help customers check the status of their sales orders in our SAP system"
-            ),
-        )
 
-        self.set_task(
-            objective=(
-                "A customer is calling to check on their order status. Collect their "
-                "account number or order number and look it up in SAP."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_orders",
+        objective=(
+            "A customer is calling to check on their order status. Collect their "
+            "account number or order number and look it up in SAP."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Apex Industrial Supply. I'm Jamie, and I can "
+                "look up your order status right now."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Apex Industrial Supply. I'm Jamie, and I can "
-                    "look up your order status right now."
+            guava.Field(
+                key="lookup_type",
+                field_type="multiple_choice",
+                description=(
+                    "Ask whether they have a specific sales order number, or if they'd "
+                    "like to look up all recent orders by their customer account number."
                 ),
-                guava.Field(
-                    key="lookup_type",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask whether they have a specific sales order number, or if they'd "
-                        "like to look up all recent orders by their customer account number."
-                    ),
-                    choices=["specific order number", "customer account number"],
-                    required=True,
+                choices=["specific order number", "customer account number"],
+                required=True,
+            ),
+            guava.Field(
+                key="order_or_account",
+                field_type="text",
+                description=(
+                    "Ask them to provide the order number or customer account number "
+                    "depending on what they selected. Capture the number exactly as stated."
                 ),
-                guava.Field(
-                    key="order_or_account",
-                    field_type="text",
-                    description=(
-                        "Ask them to provide the order number or customer account number "
-                        "depending on what they selected. Capture the number exactly as stated."
-                    ),
-                    required=True,
-                ),
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("look_up_orders")
+def on_done(call: guava.Call) -> None:
+    lookup_type = call.get_field("lookup_type")
+    identifier = call.get_field("order_or_account") or ""
+
+    logging.info("SAP order lookup — type: %s, id: %s", lookup_type, identifier)
+
+    by_order_id = lookup_type == "specific order number"
+
+    try:
+        if by_order_id:
+            orders = find_sales_orders(order_id=identifier.strip())
+        else:
+            orders = find_sales_orders(sold_to_party=identifier.strip())
+
+        result = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Jamie",
+            "use_case": "sales_order_status",
+            "lookup_type": lookup_type,
+            "identifier": identifier,
+            "orders_found": len(orders),
+            "orders": [
+                {
+                    "SalesOrder": o.get("SalesOrder"),
+                    "OverallSDProcessStatus": o.get("OverallSDProcessStatus"),
+                    "TotalNetAmount": o.get("TotalNetAmount"),
+                    "TransactionCurrency": o.get("TransactionCurrency"),
+                    "CreationDate": o.get("CreationDate"),
+                }
+                for o in orders
             ],
-            on_complete=self.look_up_orders,
-        )
+        }
+        print(json.dumps(result, indent=2))
 
-        self.accept_call()
-
-    def look_up_orders(self):
-        lookup_type = self.get_field("lookup_type")
-        identifier = self.get_field("order_or_account") or ""
-
-        logging.info("SAP order lookup — type: %s, id: %s", lookup_type, identifier)
-
-        by_order_id = lookup_type == "specific order number"
-
-        try:
-            if by_order_id:
-                orders = find_sales_orders(order_id=identifier.strip())
-            else:
-                orders = find_sales_orders(sold_to_party=identifier.strip())
-
-            result = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Jamie",
-                "use_case": "sales_order_status",
-                "lookup_type": lookup_type,
-                "identifier": identifier,
-                "orders_found": len(orders),
-                "orders": [
-                    {
-                        "SalesOrder": o.get("SalesOrder"),
-                        "OverallSDProcessStatus": o.get("OverallSDProcessStatus"),
-                        "TotalNetAmount": o.get("TotalNetAmount"),
-                        "TransactionCurrency": o.get("TransactionCurrency"),
-                        "CreationDate": o.get("CreationDate"),
-                    }
-                    for o in orders
-                ],
-            }
-            print(json.dumps(result, indent=2))
-
-            if not orders:
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know that no orders were found for "
-                        f"{'order number' if by_order_id else 'account number'} {identifier}. "
-                        "Ask them to double-check the number, or offer to transfer them to a "
-                        "customer service representative. Thank them for calling."
-                    )
-                )
-                return
-
-            if by_order_id:
-                summary = format_order_summary(orders[0])
-                items = orders[0].get("to_Item", {}).get("results", [])
-                item_count = len(items)
-                item_note = f" It contains {item_count} line item(s)." if item_count else ""
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know the status of their order: {summary}.{item_note} "
-                        "If they have questions about a specific line item or need to make a "
-                        "change, offer to connect them with a customer service representative. "
-                        "Thank them for calling Apex Industrial Supply."
-                    )
-                )
-            else:
-                summaries = [format_order_summary(o) for o in orders[:3]]
-                summary_text = "; ".join(summaries)
-                total = len(orders)
-                count_note = f"Your {total} most recent order(s): " if total > 1 else "Your most recent order: "
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know we found {total} recent order(s) on their account. "
-                        f"{count_note}{summary_text}. "
-                        "If they need details on a specific order, ask them for the order number "
-                        "and offer to look it up. Thank them for calling Apex Industrial Supply."
-                    )
-                )
-        except Exception as e:
-            logging.error("SAP order lookup failed: %s", e)
-            self.hangup(
+        if not orders:
+            call.hangup(
                 final_instructions=(
-                    "Apologize for a technical issue and let the caller know we were unable to "
-                    "retrieve the order information at this time. A customer service representative "
-                    "will follow up with them shortly. Thank them for their patience."
+                    f"Let the caller know that no orders were found for "
+                    f"{'order number' if by_order_id else 'account number'} {identifier}. "
+                    "Ask them to double-check the number, or offer to transfer them to a "
+                    "customer service representative. Thank them for calling."
                 )
             )
+            return
+
+        if by_order_id:
+            summary = format_order_summary(orders[0])
+            items = orders[0].get("to_Item", {}).get("results", [])
+            item_count = len(items)
+            item_note = f" It contains {item_count} line item(s)." if item_count else ""
+            call.hangup(
+                final_instructions=(
+                    f"Let the caller know the status of their order: {summary}.{item_note} "
+                    "If they have questions about a specific line item or need to make a "
+                    "change, offer to connect them with a customer service representative. "
+                    "Thank them for calling Apex Industrial Supply."
+                )
+            )
+        else:
+            summaries = [format_order_summary(o) for o in orders[:3]]
+            summary_text = "; ".join(summaries)
+            total = len(orders)
+            count_note = f"Your {total} most recent order(s): " if total > 1 else "Your most recent order: "
+            call.hangup(
+                final_instructions=(
+                    f"Let the caller know we found {total} recent order(s) on their account. "
+                    f"{count_note}{summary_text}. "
+                    "If they need details on a specific order, ask them for the order number "
+                    "and offer to look it up. Thank them for calling Apex Industrial Supply."
+                )
+            )
+    except Exception as e:
+        logging.error("SAP order lookup failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know we were unable to "
+                "retrieve the order information at this time. A customer service representative "
+                "will follow up with them shortly. Thank them for their patience."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=SalesOrderStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -38,20 +38,55 @@ def send_recovery_email(checkout_token: str) -> bool:
     return resp.status_code in (200, 201, 202)
 
 
-class AbandonedCartRecoveryController(guava.CallController):
-    def __init__(self, checkout_token: str, customer_name: str):
-        super().__init__()
+agent = guava.Agent(
+    name="Casey",
+    organization="Kestrel Goods",
+    purpose="to help Kestrel Goods customers complete their purchases",
+)
 
-        self._checkout_token = checkout_token
-        self._checkout: dict | None = None
 
-        try:
-            self._checkout = get_checkout(checkout_token)
-            logging.info("Loaded checkout %s", checkout_token)
-        except Exception as e:
-            logging.error("Failed to load checkout: %s", e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    checkout_token = call.get_variable("checkout_token")
 
-        checkout = self._checkout
+    checkout = None
+    try:
+        checkout = get_checkout(checkout_token)
+        logging.info("Loaded checkout %s", checkout_token)
+    except Exception as e:
+        logging.error("Failed to load checkout: %s", e)
+
+    call.checkout = checkout
+
+    if checkout:
+        line_items = checkout.get("line_items", [])
+        item_count = sum(i.get("quantity", 1) for i in line_items)
+        total = checkout.get("total_price", "0.00")
+        first_item = line_items[0].get("title", "your items") if line_items else "your items"
+        context = (
+            f"The customer left {item_count} item(s) in their cart totaling ${total}, "
+            f"including '{first_item}'."
+        )
+    else:
+        context = "The customer left items in their cart."
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    checkout = call.checkout
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "Thank them for their time. Let them know we're always here if they want to shop again. "
+                "Wish them a great day."
+            )
+        )
+    elif outcome == "available":
         if checkout:
             line_items = checkout.get("line_items", [])
             item_count = sum(i.get("quantity", 1) for i in line_items)
@@ -64,13 +99,8 @@ class AbandonedCartRecoveryController(guava.CallController):
         else:
             context = "The customer left items in their cart."
 
-        self.set_persona(
-            organization_name="Kestrel Goods",
-            agent_name="Casey",
-            agent_purpose="to help Kestrel Goods customers complete their purchases",
-        )
-
-        self.set_task(
+        call.set_task(
+            "handle_recovery",
             objective=(
                 f"You are calling {customer_name} about items they left in their Kestrel Goods cart. "
                 f"{context} "
@@ -108,59 +138,60 @@ class AbandonedCartRecoveryController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_recovery,
         )
 
-        self.reach_person(customer_name)
 
-    def handle_recovery(self):
-        still_interested = self.get_field("still_interested") or "no"
-        question = self.get_field("question") or ""
-        send_email = self.get_field("send_reminder_email") or "no"
+@agent.on_task_complete("handle_recovery")
+def on_done(call: guava.Call) -> None:
+    checkout_token = call.get_variable("checkout_token")
+    checkout = call.checkout
 
-        if still_interested == "no":
-            self.hangup(
-                final_instructions=(
-                    "Thank them for their time. Let them know we're always here if they want to shop again. "
-                    "Wish them a great day."
-                )
-            )
-            return
+    still_interested = call.get_field("still_interested") or "no"
+    question = call.get_field("question") or ""
+    send_email = call.get_field("send_reminder_email") or "no"
 
-        email_sent = False
-        if send_email == "yes" and self._checkout_token:
-            try:
-                email_sent = send_recovery_email(self._checkout_token)
-                logging.info("Recovery email sent for checkout %s: %s", self._checkout_token, email_sent)
-            except Exception as e:
-                logging.error("Failed to send recovery email: %s", e)
+    if still_interested == "no":
+        call.hangup(
+            final_instructions=(
+                "Thank them for their time. Let them know we're always here if they want to shop again. "
+                "Wish them a great day."
+            )
+        )
+        return
 
-        if question:
-            self.hangup(
-                final_instructions=(
-                    f"Address the customer's question about '{question}' based on knowledge about Kestrel Goods. "
-                    + ("A recovery link has been sent to their email. " if email_sent else "")
-                    + "Thank them and encourage them to complete their order."
-                )
+    email_sent = False
+    if send_email == "yes" and checkout_token:
+        try:
+            email_sent = send_recovery_email(checkout_token)
+            logging.info("Recovery email sent for checkout %s: %s", checkout_token, email_sent)
+        except Exception as e:
+            logging.error("Failed to send recovery email: %s", e)
+
+    if question:
+        call.hangup(
+            final_instructions=(
+                f"Address the customer's question about '{question}' based on knowledge about Kestrel Goods. "
+                + ("A recovery link has been sent to their email. " if email_sent else "")
+                + "Thank them and encourage them to complete their order."
             )
-        elif email_sent:
-            self.hangup(
-                final_instructions=(
-                    "Let them know a link to their cart has been sent to their email address. "
-                    "They can click it to complete their purchase anytime. "
-                    "Thank them and wish them a great day."
-                )
+        )
+    elif email_sent:
+        call.hangup(
+            final_instructions=(
+                "Let them know a link to their cart has been sent to their email address. "
+                "They can click it to complete their purchase anytime. "
+                "Thank them and wish them a great day."
             )
-        else:
-            checkout = self._checkout
-            recovery_url = checkout.get("abandoned_checkout_url", "") if checkout else ""
-            self.hangup(
-                final_instructions=(
-                    "Let them know they can complete their purchase by visiting kestrelgoods.com and logging in. "
-                    + (f"Their cart link is: {recovery_url}. " if recovery_url else "")
-                    + "Thank them and wish them a great day."
-                )
+        )
+    else:
+        recovery_url = checkout.get("abandoned_checkout_url", "") if checkout else ""
+        call.hangup(
+            final_instructions=(
+                "Let them know they can complete their purchase by visiting kestrelgoods.com and logging in. "
+                + (f"Their cart link is: {recovery_url}. " if recovery_url else "")
+                + "Thank them and wish them a great day."
             )
+        )
 
 
 if __name__ == "__main__":
@@ -171,11 +202,10 @@ if __name__ == "__main__":
     parser.add_argument("--phone", required=True, help="Customer phone number to call")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        customer_number=args.phone,
-        controller_class=AbandonedCartRecoveryController,
-        controller_args={
+    agent.call_phone(
+        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        to_number=args.phone,
+        variables={
             "checkout_token": args.checkout_token,
             "customer_name": args.customer_name,
         },

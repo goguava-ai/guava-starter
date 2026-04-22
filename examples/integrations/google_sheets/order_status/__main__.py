@@ -62,107 +62,108 @@ def find_order(service, order_id: str, last_name: str) -> dict | None:
     return None
 
 
-class OrderStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Riley",
+    organization="Apex Solutions",
+    purpose=(
+        "to help customers quickly check the status of their orders "
+        "without needing to navigate the website"
+    ),
+)
 
-        self.service = build_sheets_service()
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help customers quickly check the status of their orders "
-                "without needing to navigate the website"
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.sheets_service = build_sheets_service()
+
+    call.set_task(
+        "deliver_status",
+        objective=(
+            "A customer has called to check on an order. "
+            "Verify their identity with their order number and last name, "
+            "then read back the order status and delivery estimate."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Apex Solutions support. I'm Riley. "
+                "I can pull up your order right now — I just need to verify a couple of things."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called to check on an order. "
-                "Verify their identity with their order number and last name, "
-                "then read back the order status and delivery estimate."
+            guava.Field(
+                key="order_id",
+                field_type="text",
+                description=(
+                    "Ask for their order number. Let them know it's on their "
+                    "confirmation email and starts with a letter or number."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Apex Solutions support. I'm Riley. "
-                    "I can pull up your order right now — I just need to verify a couple of things."
-                ),
-                guava.Field(
-                    key="order_id",
-                    field_type="text",
-                    description=(
-                        "Ask for their order number. Let them know it's on their "
-                        "confirmation email and starts with a letter or number."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for the last name on the order for verification.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.deliver_status,
-        )
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for the last name on the order for verification.",
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def deliver_status(self):
-        order_id = (self.get_field("order_id") or "").strip()
-        last_name = (self.get_field("last_name") or "").strip()
+@agent.on_task_complete("deliver_status")
+def on_done(call: guava.Call) -> None:
+    order_id = (call.get_field("order_id") or "").strip()
+    last_name = (call.get_field("last_name") or "").strip()
 
-        logging.info("Order lookup — order_id: '%s', last_name: '%s'", order_id, last_name)
+    logging.info("Order lookup — order_id: '%s', last_name: '%s'", order_id, last_name)
 
-        try:
-            order = find_order(self.service, order_id, last_name)
-        except Exception as e:
-            logging.error("Sheets lookup failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize — there was a technical issue looking up the order. "
-                    "Ask the caller to visit the website or try again shortly. Thank them."
-                )
-            )
-            return
-
-        if not order:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know we couldn't find order '{order_id}' under that last name. "
-                    "Ask them to double-check the order number and last name from their "
-                    "confirmation email. Offer to transfer to a support agent if needed. "
-                    "Be polite and empathetic."
-                )
-            )
-            return
-
-        status = order["status"]
-        delivery = order["delivery"]
-        items = order["items"]
-        tracking = order["tracking"]
-
-        delivery_phrase = f" with an estimated delivery of {delivery}" if delivery else ""
-        items_phrase = f" containing {items}" if items else ""
-        tracking_phrase = f" Their tracking number is {tracking}." if tracking else ""
-
-        logging.info("Order %s status: %s, delivery: %s", order_id, status, delivery)
-
-        self.hangup(
+    try:
+        order = find_order(call.sheets_service, order_id, last_name)
+    except Exception as e:
+        logging.error("Sheets lookup failed: %s", e)
+        call.hangup(
             final_instructions=(
-                f"Let the caller know order {order_id}{items_phrase} is currently '{status}'"
-                f"{delivery_phrase}.{tracking_phrase} "
-                "If the status is 'shipped', remind them they can use the tracking number "
-                "on the carrier's website for real-time updates. "
-                "Thank them for calling Apex Solutions."
+                "Apologize — there was a technical issue looking up the order. "
+                "Ask the caller to visit the website or try again shortly. Thank them."
             )
         )
+        return
+
+    if not order:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know we couldn't find order '{order_id}' under that last name. "
+                "Ask them to double-check the order number and last name from their "
+                "confirmation email. Offer to transfer to a support agent if needed. "
+                "Be polite and empathetic."
+            )
+        )
+        return
+
+    status = order["status"]
+    delivery = order["delivery"]
+    items = order["items"]
+    tracking = order["tracking"]
+
+    delivery_phrase = f" with an estimated delivery of {delivery}" if delivery else ""
+    items_phrase = f" containing {items}" if items else ""
+    tracking_phrase = f" Their tracking number is {tracking}." if tracking else ""
+
+    logging.info("Order %s status: %s, delivery: %s", order_id, status, delivery)
+
+    call.hangup(
+        final_instructions=(
+            f"Let the caller know order {order_id}{items_phrase} is currently '{status}'"
+            f"{delivery_phrase}.{tracking_phrase} "
+            "If the status is 'shipped', remind them they can use the tracking number "
+            "on the carrier's website for real-time updates. "
+            "Thank them for calling Apex Solutions."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=OrderStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

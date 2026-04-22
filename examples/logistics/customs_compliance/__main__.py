@@ -7,44 +7,63 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="SwiftShip Logistics - Customs & Compliance",
+    purpose=(
+        "contact the shipper or broker to gather missing documentation details "
+        "required for customs clearance"
+    ),
+)
 
-class CustomsComplianceController(guava.CallController):
-    def __init__(self, contact_name, shipment_number, missing_docs):
-        super().__init__()
-        self.contact_name = contact_name
-        self.shipment_number = shipment_number
-        self.missing_docs = missing_docs
 
-        self.set_persona(
-            organization_name="SwiftShip Logistics - Customs & Compliance",
-            agent_name="Riley",
-            agent_purpose=(
-                f"contact the shipper or broker regarding shipment number {self.shipment_number} "
-                f"to gather missing documentation details required for customs clearance. "
-                f"The following documentation is outstanding: {self.missing_docs}"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    shipment_number = call.get_variable("shipment_number")
+    missing_docs = call.get_variable("missing_docs")
+
+    if outcome == "unavailable":
+        logging.warning(
+            f"Could not reach {contact_name} for customs compliance check on shipment {shipment_number}."
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.start_compliance_check,
-            on_failure=self.recipient_unavailable,
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "shipment_number": shipment_number,
+            "contact_name": contact_name,
+            "missing_docs": missing_docs,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                f"Leave a voicemail for {contact_name} explaining that SwiftShip Logistics "
+                f"Customs and Compliance is calling about shipment number {shipment_number}, "
+                f"which is currently on hold pending the following: {missing_docs}. "
+                "Ask them to call back or email the compliance team as soon as possible to avoid "
+                "further delays in clearance."
+            )
         )
-
-    def start_compliance_check(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "customs_compliance_check",
             objective=(
-                f"Connect with {self.contact_name} regarding shipment number {self.shipment_number}. "
-                f"The following documentation is currently missing or incomplete: {self.missing_docs}. "
+                f"Connect with {contact_name} regarding shipment number {shipment_number}. "
+                f"The following documentation is currently missing or incomplete: {missing_docs}. "
                 "Confirm commercial invoice status, collect country of origin, HS tariff code if available, "
                 "total declared value, whether dangerous goods are present, and whether any additional "
                 "supporting documents can be provided to complete customs clearance."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, I'm calling from SwiftShip Logistics Customs and Compliance. "
-                    f"We're contacting you regarding shipment number {self.shipment_number}. "
-                    f"We have a hold on this shipment pending the following documentation: {self.missing_docs}. "
+                    f"Hi {contact_name}, I'm calling from SwiftShip Logistics Customs and Compliance. "
+                    f"We're contacting you regarding shipment number {shipment_number}. "
+                    f"We have a hold on this shipment pending the following documentation: {missing_docs}. "
                     "I'd like to go through a few quick questions to help get this cleared."
                 ),
                 guava.Field(
@@ -84,54 +103,33 @@ class CustomsComplianceController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "shipment_number": self.shipment_number,
-            "contact_name": self.contact_name,
-            "missing_docs": self.missing_docs,
-            "commercial_invoice_confirmed": self.get_field("commercial_invoice_confirmed"),
-            "country_of_origin": self.get_field("country_of_origin"),
-            "hs_tariff_code": self.get_field("hs_tariff_code"),
-            "total_declared_value": self.get_field("total_declared_value"),
-            "dangerous_goods_present": self.get_field("dangerous_goods_present"),
-            "additional_documents_available": self.get_field("additional_documents_available"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Customs compliance results saved.")
-        self.hangup(
-            final_instructions=(
-                "Thank the contact for their time and for providing the documentation details. "
-                "Let them know that the SwiftShip Customs and Compliance team will review the "
-                "information and follow up if anything further is needed to complete clearance. "
-                "Provide an estimated clearance timeline if possible and wish them a good day."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            f"Could not reach {self.contact_name} for customs compliance check on shipment {self.shipment_number}."
+@agent.on_task_complete("customs_compliance_check")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "shipment_number": call.get_variable("shipment_number"),
+        "contact_name": call.get_variable("contact_name"),
+        "missing_docs": call.get_variable("missing_docs"),
+        "commercial_invoice_confirmed": call.get_field("commercial_invoice_confirmed"),
+        "country_of_origin": call.get_field("country_of_origin"),
+        "hs_tariff_code": call.get_field("hs_tariff_code"),
+        "total_declared_value": call.get_field("total_declared_value"),
+        "dangerous_goods_present": call.get_field("dangerous_goods_present"),
+        "additional_documents_available": call.get_field("additional_documents_available"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Customs compliance results saved.")
+    call.hangup(
+        final_instructions=(
+            "Thank the contact for their time and for providing the documentation details. "
+            "Let them know that the SwiftShip Customs and Compliance team will review the "
+            "information and follow up if anything further is needed to complete clearance. "
+            "Provide an estimated clearance timeline if possible and wish them a good day."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "shipment_number": self.shipment_number,
-            "contact_name": self.contact_name,
-            "missing_docs": self.missing_docs,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Leave a voicemail for {self.contact_name} explaining that SwiftShip Logistics "
-                f"Customs and Compliance is calling about shipment number {self.shipment_number}, "
-                f"which is currently on hold pending the following: {self.missing_docs}. "
-                "Ask them to call back or email the compliance team as soon as possible to avoid "
-                "further delays in clearance."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -147,12 +145,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CustomsComplianceController(
-            contact_name=args.name,
-            shipment_number=args.shipment_number,
-            missing_docs=args.missing_docs,
-        ),
+        variables={
+            "contact_name": args.name,
+            "shipment_number": args.shipment_number,
+            "missing_docs": args.missing_docs,
+        },
     )

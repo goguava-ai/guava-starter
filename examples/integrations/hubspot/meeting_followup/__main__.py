@@ -61,49 +61,75 @@ def update_contact_lifecycle(contact_id: str, stage: str) -> None:
     resp.raise_for_status()
 
 
-class MeetingFollowupController(guava.CallController):
-    def __init__(self, contact_id: str, customer_name: str, meeting_topic: str):
-        super().__init__()
-        self.contact_id = contact_id
-        self.customer_name = customer_name
-        self.meeting_topic = meeting_topic
-        self.company = ""
+agent = guava.Agent(
+    name="Alex",
+    organization="Apex Solutions",
+    purpose=(
+        "to follow up with prospects after a meeting or demo and understand "
+        "their reaction and next steps"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_id = call.get_variable("contact_id")
+    customer_name = call.get_variable("customer_name")
+    meeting_topic = call.get_variable("meeting_topic")
+
+    company = ""
+    try:
+        contact = get_contact(contact_id)
+        if contact:
+            company = contact.get("properties", {}).get("company") or ""
+    except Exception as e:
+        logging.error("Failed to fetch contact %s pre-call: %s", contact_id, e)
+
+    call.company = company
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    meeting_topic = call.get_variable("meeting_topic")
+    contact_id = call.get_variable("contact_id")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for meeting follow-up", customer_name)
         try:
-            contact = get_contact(contact_id)
-            if contact:
-                self.company = contact.get("properties", {}).get("company") or ""
+            log_followup_note(
+                contact_id,
+                f"Post-meeting follow-up call attempted — {customer_name} not available, voicemail left. "
+                f"Meeting topic: {meeting_topic}.",
+            )
         except Exception as e:
-            logging.error("Failed to fetch contact %s pre-call: %s", contact_id, e)
+            logging.error("Failed to log note for contact %s: %s", contact_id, e)
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Alex",
-            agent_purpose=(
-                "to follow up with prospects after a meeting or demo and understand "
-                "their reaction and next steps"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {customer_name} on behalf of Apex Solutions. "
+                f"Let them know you're following up on your recent meeting about {meeting_topic} "
+                "and that you'll send a quick email as well. "
+                "Let them know they can reach you at the number you're calling from. "
+                "Keep it friendly and brief."
+            )
         )
+    elif outcome == "available":
+        company_note = f" at {call.company}" if call.company else ""
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_followup,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_followup(self):
-        company_note = f" at {self.company}" if self.company else ""
-
-        self.set_task(
+        call.set_task(
+            "record_followup",
             objective=(
-                f"Follow up with {self.customer_name}{company_note} after their recent meeting "
-                f"about '{self.meeting_topic}'. Gauge their reaction, address any questions, "
+                f"Follow up with {customer_name}{company_note} after their recent meeting "
+                f"about '{meeting_topic}'. Gauge their reaction, address any questions, "
                 "and agree on a clear next step."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Alex from Apex Solutions. "
-                    f"I'm following up on our recent meeting about {self.meeting_topic}. "
+                    f"Hi {customer_name}, this is Alex from Apex Solutions. "
+                    f"I'm following up on our recent meeting about {meeting_topic}. "
                     "I just wanted to check in and see how you're feeling about everything we discussed."
                 ),
                 guava.Field(
@@ -158,77 +184,61 @@ class MeetingFollowupController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_followup,
         )
 
-    def record_followup(self):
-        impression = self.get_field("overall_impression") or "unknown"
-        questions = self.get_field("questions_or_concerns") or ""
-        alignment = self.get_field("internal_alignment") or "unknown"
-        next_step = self.get_field("next_step") or "unknown"
-        timing = self.get_field("next_step_timing") or ""
 
-        note_lines = [
-            f"Post-meeting follow-up — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Meeting topic: {self.meeting_topic}",
-            f"Overall impression: {impression}",
-            f"Internal alignment: {alignment}",
-            f"Agreed next step: {next_step}",
-        ]
-        if timing:
-            note_lines.append(f"Next step timing: {timing}")
-        if questions:
-            note_lines.append(f"Questions/concerns: {questions}")
+@agent.on_task_complete("record_followup")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    meeting_topic = call.get_variable("meeting_topic")
+    contact_id = call.get_variable("contact_id")
 
-        logging.info(
-            "Meeting follow-up complete for contact %s — next step: %s",
-            self.contact_id, next_step,
-        )
+    impression = call.get_field("overall_impression") or "unknown"
+    questions = call.get_field("questions_or_concerns") or ""
+    alignment = call.get_field("internal_alignment") or "unknown"
+    next_step = call.get_field("next_step") or "unknown"
+    timing = call.get_field("next_step_timing") or ""
 
-        try:
-            log_followup_note(self.contact_id, "\n".join(note_lines))
-            if next_step in ("send a proposal", "start a trial", "schedule another call"):
-                update_contact_lifecycle(self.contact_id, "opportunity")
-            logging.info("Follow-up note saved for contact %s", self.contact_id)
-        except Exception as e:
-            logging.error("Failed to save follow-up note for contact %s: %s", self.contact_id, e)
+    note_lines = [
+        f"Post-meeting follow-up — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Meeting topic: {meeting_topic}",
+        f"Overall impression: {impression}",
+        f"Internal alignment: {alignment}",
+        f"Agreed next step: {next_step}",
+    ]
+    if timing:
+        note_lines.append(f"Next step timing: {timing}")
+    if questions:
+        note_lines.append(f"Questions/concerns: {questions}")
 
-        if next_step == "not moving forward":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} warmly for their time and for meeting with us. "
-                    "Respect their decision and let them know the door is always open if anything changes. "
-                    "Wish them all the best."
-                )
-            )
-        else:
-            timing_phrase = f" — ideally {timing}" if timing else ""
-            self.hangup(
-                final_instructions=(
-                    f"Confirm the agreed next step with {self.customer_name}: {next_step}{timing_phrase}. "
-                    "Let them know you'll send a follow-up email summarizing what was discussed. "
-                    "Thank them for their time and express genuine excitement. Wish them a great day."
-                )
-            )
+    logging.info(
+        "Meeting follow-up complete for contact %s — next step: %s",
+        contact_id, next_step,
+    )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for meeting follow-up", self.customer_name)
-        try:
-            log_followup_note(
-                self.contact_id,
-                f"Post-meeting follow-up call attempted — {self.customer_name} not available, voicemail left. "
-                f"Meeting topic: {self.meeting_topic}.",
-            )
-        except Exception as e:
-            logging.error("Failed to log note for contact %s: %s", self.contact_id, e)
+    try:
+        log_followup_note(contact_id, "\n".join(note_lines))
+        if next_step in ("send a proposal", "start a trial", "schedule another call"):
+            update_contact_lifecycle(contact_id, "opportunity")
+        logging.info("Follow-up note saved for contact %s", contact_id)
+    except Exception as e:
+        logging.error("Failed to save follow-up note for contact %s: %s", contact_id, e)
 
-        self.hangup(
+    if next_step == "not moving forward":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.customer_name} on behalf of Apex Solutions. "
-                f"Let them know you're following up on your recent meeting about {self.meeting_topic} "
-                "and that you'll send a quick email as well. "
-                "Let them know they can reach you at the number you're calling from. "
-                "Keep it friendly and brief."
+                f"Thank {customer_name} warmly for their time and for meeting with us. "
+                "Respect their decision and let them know the door is always open if anything changes. "
+                "Wish them all the best."
+            )
+        )
+    else:
+        timing_phrase = f" — ideally {timing}" if timing else ""
+        call.hangup(
+            final_instructions=(
+                f"Confirm the agreed next step with {customer_name}: {next_step}{timing_phrase}. "
+                "Let them know you'll send a follow-up email summarizing what was discussed. "
+                "Thank them for their time and express genuine excitement. Wish them a great day."
             )
         )
 
@@ -248,12 +258,12 @@ if __name__ == "__main__":
 
     logging.info("Initiating meeting follow-up call to %s (%s)", args.name, args.phone)
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=MeetingFollowupController(
-            contact_id=args.contact_id,
-            customer_name=args.name,
-            meeting_topic=args.meeting_topic,
-        ),
+        variables={
+            "contact_id": args.contact_id,
+            "customer_name": args.name,
+            "meeting_topic": args.meeting_topic,
+        },
     )

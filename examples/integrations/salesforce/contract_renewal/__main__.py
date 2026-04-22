@@ -66,55 +66,84 @@ def log_task(what_id: str, subject: str, description: str) -> None:
     resp.raise_for_status()
 
 
-class ContractRenewalController(guava.CallController):
-    def __init__(self, opp_id: str, contact_name: str):
-        super().__init__()
-        self.opp_id = opp_id
-        self.contact_name = contact_name
-        self.opp_name = "your renewal"
-        self.opp_amount = ""
-        self.close_date = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Veritas Software",
+    purpose=(
+        "to connect with customers ahead of their contract renewal, understand their "
+        "intentions, and make sure the renewal process goes smoothly"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
+
+    call.opp_name = "your renewal"
+    call.opp_amount = ""
+    call.close_date = ""
+
+    try:
+        opp = get_opportunity(opp_id)
+        if opp:
+            call.opp_name = opp.get("Name") or "your renewal"
+            amount = opp.get("Amount")
+            call.opp_amount = f"${amount:,.0f}" if amount else ""
+            close_date_raw = opp.get("CloseDate")
+            if close_date_raw:
+                dt = datetime.strptime(close_date_raw, "%Y-%m-%d")
+                call.close_date = dt.strftime("%B %d, %Y")
+    except Exception as e:
+        logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for contract renewal call on opp %s.",
+            contact_name, opp_id,
+        )
         try:
-            opp = get_opportunity(opp_id)
-            if opp:
-                self.opp_name = opp.get("Name") or "your renewal"
-                amount = opp.get("Amount")
-                self.opp_amount = f"${amount:,.0f}" if amount else ""
-                close_date_raw = opp.get("CloseDate")
-                if close_date_raw:
-                    dt = datetime.strptime(close_date_raw, "%Y-%m-%d")
-                    self.close_date = dt.strftime("%B %d, %Y")
+            log_task(
+                opp_id,
+                subject="Contract renewal call — contact unavailable",
+                description=(
+                    f"Renewal outreach attempted — {contact_name} unavailable, voicemail left.\n"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+                ),
+            )
         except Exception as e:
-            logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
+            logging.error("Failed to log missed-call Task for opp %s: %s", opp_id, e)
 
-        self.set_persona(
-            organization_name="Veritas Software",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to connect with customers ahead of their contract renewal, understand their "
-                "intentions, and make sure the renewal process goes smoothly"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a professional voicemail for {contact_name} from Veritas Software. "
+                f"Mention you're calling about their upcoming contract renewal for {call.opp_name} "
+                "and that you'd love to connect. Ask them to call back or watch for an email. "
+                "Keep it brief and warm."
+            )
         )
+    elif outcome == "available":
+        amount_note = f" valued at {call.opp_amount}" if call.opp_amount else ""
+        date_note = f" expiring on {call.close_date}" if call.close_date else " coming up for renewal"
 
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_renewal_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_renewal_call(self):
-        amount_note = f" valued at {self.opp_amount}" if self.opp_amount else ""
-        date_note = f" expiring on {self.close_date}" if self.close_date else " coming up for renewal"
-
-        self.set_task(
+        call.set_task(
+            "record_outcome",
             objective=(
-                f"Speak with {self.contact_name} about renewing '{self.opp_name}'"
+                f"Speak with {contact_name} about renewing '{call.opp_name}'"
                 f"{amount_note}{date_note}. Understand their renewal intent and any requested changes."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan from Veritas Software. "
+                    f"Hi {contact_name}, this is Morgan from Veritas Software. "
                     f"I'm calling because your contract{date_note} and I wanted to "
                     "connect personally to make the renewal as smooth as possible for you."
                 ),
@@ -154,97 +183,75 @@ class ContractRenewalController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.record_outcome,
         )
 
-    def record_outcome(self):
-        intent = self.get_field("renewal_intent") or "need more time"
-        changes = self.get_field("requested_changes") or ""
-        reason = self.get_field("cancellation_reason") or ""
-        followup = self.get_field("preferred_followup") or "email"
 
-        new_stage = INTENT_TO_STAGE.get(intent, "Perception Analysis")
+@agent.on_task_complete("record_outcome")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
 
-        description_lines = [
-            f"Contract renewal call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Contact: {self.contact_name}",
-            f"Intent: {intent}",
-            f"Preferred follow-up: {followup}",
-        ]
-        if changes:
-            description_lines.append(f"Requested changes: {changes}")
-        if reason:
-            description_lines.append(f"Cancellation reason: {reason}")
+    intent = call.get_field("renewal_intent") or "need more time"
+    changes = call.get_field("requested_changes") or ""
+    reason = call.get_field("cancellation_reason") or ""
+    followup = call.get_field("preferred_followup") or "email"
 
-        logging.info(
-            "Renewal call complete for opp %s — intent: %s, new stage: %s",
-            self.opp_id, intent, new_stage,
+    new_stage = INTENT_TO_STAGE.get(intent, "Perception Analysis")
+
+    description_lines = [
+        f"Contract renewal call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Contact: {contact_name}",
+        f"Intent: {intent}",
+        f"Preferred follow-up: {followup}",
+    ]
+    if changes:
+        description_lines.append(f"Requested changes: {changes}")
+    if reason:
+        description_lines.append(f"Cancellation reason: {reason}")
+
+    logging.info(
+        "Renewal call complete for opp %s — intent: %s, new stage: %s",
+        opp_id, intent, new_stage,
+    )
+
+    try:
+        update_opportunity(opp_id, {"StageName": new_stage})
+        logging.info("Opportunity %s updated to stage: %s", opp_id, new_stage)
+        log_task(
+            opp_id,
+            subject=f"Contract renewal call — {intent}",
+            description="\n".join(description_lines),
         )
+        logging.info("Task logged for opportunity %s.", opp_id)
+    except Exception as e:
+        logging.error("Failed to update Salesforce for opp %s: %s", opp_id, e)
 
-        try:
-            update_opportunity(self.opp_id, {"StageName": new_stage})
-            logging.info("Opportunity %s updated to stage: %s", self.opp_id, new_stage)
-            log_task(
-                self.opp_id,
-                subject=f"Contract renewal call — {intent}",
-                description="\n".join(description_lines),
-            )
-            logging.info("Task logged for opportunity %s.", self.opp_id)
-        except Exception as e:
-            logging.error("Failed to update Salesforce for opp %s: %s", self.opp_id, e)
-
-        if intent == "not renewing":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} sincerely for their past partnership. "
-                    "Express that we're sorry to see them go and that their feedback has been "
-                    "shared with the team. If they're open to it, let them know they're always "
-                    "welcome back. Wish them well."
-                )
-            )
-        elif intent == "renew with changes":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their continued partnership. "
-                    "Let them know the requested changes have been noted and an account executive "
-                    "will send an updated proposal within two business days. "
-                    "Confirm they'll receive it via their preferred method. Wish them a great day."
-                )
-            )
-        else:
-            email_note = "We'll send renewal paperwork via email. " if followup in ("email", "both") else ""
-            call_note = "Someone will call to walk through it. " if followup in ("phone call", "both") else ""
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} and confirm the next steps. "
-                    + email_note + call_note
-                    + "Let them know they're in good hands and wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for contract renewal call on opp %s.",
-            self.contact_name, self.opp_id,
-        )
-        try:
-            log_task(
-                self.opp_id,
-                subject="Contract renewal call — contact unavailable",
-                description=(
-                    f"Renewal outreach attempted — {self.contact_name} unavailable, voicemail left.\n"
-                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-                ),
-            )
-        except Exception as e:
-            logging.error("Failed to log missed-call Task for opp %s: %s", self.opp_id, e)
-
-        self.hangup(
+    if intent == "not renewing":
+        call.hangup(
             final_instructions=(
-                f"Leave a professional voicemail for {self.contact_name} from Veritas Software. "
-                f"Mention you're calling about their upcoming contract renewal for {self.opp_name} "
-                "and that you'd love to connect. Ask them to call back or watch for an email. "
-                "Keep it brief and warm."
+                f"Thank {contact_name} sincerely for their past partnership. "
+                "Express that we're sorry to see them go and that their feedback has been "
+                "shared with the team. If they're open to it, let them know they're always "
+                "welcome back. Wish them well."
+            )
+        )
+    elif intent == "renew with changes":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their continued partnership. "
+                "Let them know the requested changes have been noted and an account executive "
+                "will send an updated proposal within two business days. "
+                "Confirm they'll receive it via their preferred method. Wish them a great day."
+            )
+        )
+    else:
+        email_note = "We'll send renewal paperwork via email. " if followup in ("email", "both") else ""
+        call_note = "Someone will call to walk through it. " if followup in ("phone call", "both") else ""
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} and confirm the next steps. "
+                + email_note + call_note
+                + "Let them know they're in good hands and wish them a great day."
             )
         )
 
@@ -264,11 +271,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.opportunity_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ContractRenewalController(
-            opp_id=args.opportunity_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "opp_id": args.opportunity_id,
+            "contact_name": args.name,
+        },
     )

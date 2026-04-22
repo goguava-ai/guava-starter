@@ -7,45 +7,64 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Jordan",
+    organization="SwiftShip Logistics",
+    purpose=(
+        "confirm an upcoming delivery, "
+        "collect any access instructions, and record verbal confirmation"
+    ),
+)
 
-class DeliveryConfirmationController(guava.CallController):
-    def __init__(self, recipient_name, tracking_number, delivery_date, delivery_window):
-        super().__init__()
-        self.recipient_name = recipient_name
-        self.tracking_number = tracking_number
-        self.delivery_date = delivery_date
-        self.delivery_window = delivery_window
 
-        self.set_persona(
-            organization_name="SwiftShip Logistics",
-            agent_name="Jordan",
-            agent_purpose=(
-                f"confirm an upcoming delivery for tracking number {self.tracking_number} "
-                f"scheduled for {self.delivery_date} {self.delivery_window}, "
-                "collect any access instructions, and record verbal confirmation"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("recipient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    recipient_name = call.get_variable("recipient_name")
+    tracking_number = call.get_variable("tracking_number")
+    delivery_date = call.get_variable("delivery_date")
+    delivery_window = call.get_variable("delivery_window")
+
+    if outcome == "unavailable":
+        logging.warning(
+            f"Could not reach {recipient_name} for delivery confirmation on tracking number {tracking_number}."
         )
-
-        self.reach_person(
-            contact_full_name=self.recipient_name,
-            on_success=self.start_confirmation,
-            on_failure=self.recipient_unavailable,
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tracking_number": tracking_number,
+            "recipient_name": recipient_name,
+            "delivery_date": delivery_date,
+            "delivery_window": delivery_window,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "Leave a polite voicemail letting the recipient know that SwiftShip Logistics "
+                f"called regarding tracking number {tracking_number} scheduled for "
+                f"{delivery_date} {delivery_window}, and ask them to call back or "
+                "visit the SwiftShip website to update their delivery preferences."
+            )
         )
-
-    def start_confirmation(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "delivery_confirmation",
             objective=(
-                f"Confirm the upcoming delivery for tracking number {self.tracking_number} "
-                f"scheduled for {self.delivery_date} {self.delivery_window}. "
+                f"Confirm the upcoming delivery for tracking number {tracking_number} "
+                f"scheduled for {delivery_date} {delivery_window}. "
                 "Collect any special access instructions, a safe drop location if the recipient "
                 "won't be available, an alternative contact if needed, and acknowledge whether "
                 "a signature will be required."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.recipient_name}, I'm calling from SwiftShip Logistics regarding "
-                    f"your upcoming delivery. Your tracking number is {self.tracking_number} and "
-                    f"it is scheduled for {self.delivery_date} {self.delivery_window}."
+                    f"Hi {recipient_name}, I'm calling from SwiftShip Logistics regarding "
+                    f"your upcoming delivery. Your tracking number is {tracking_number} and "
+                    f"it is scheduled for {delivery_date} {delivery_window}."
                 ),
                 guava.Field(
                     key="delivery_confirmed",
@@ -78,53 +97,32 @@ class DeliveryConfirmationController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tracking_number": self.tracking_number,
-            "recipient_name": self.recipient_name,
-            "delivery_date": self.delivery_date,
-            "delivery_window": self.delivery_window,
-            "delivery_confirmed": self.get_field("delivery_confirmed"),
-            "access_instructions": self.get_field("access_instructions"),
-            "safe_drop_location": self.get_field("safe_drop_location"),
-            "alternative_contact": self.get_field("alternative_contact"),
-            "signature_required_acknowledged": self.get_field("signature_required_acknowledged"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Delivery confirmation results saved.")
-        self.hangup(
-            final_instructions=(
-                "Thank the recipient for confirming their delivery. Let them know that SwiftShip "
-                "Logistics will be in touch if there are any changes to the delivery window, and "
-                "wish them a great day."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            f"Could not reach {self.recipient_name} for delivery confirmation on tracking number {self.tracking_number}."
+@agent.on_task_complete("delivery_confirmation")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tracking_number": call.get_variable("tracking_number"),
+        "recipient_name": call.get_variable("recipient_name"),
+        "delivery_date": call.get_variable("delivery_date"),
+        "delivery_window": call.get_variable("delivery_window"),
+        "delivery_confirmed": call.get_field("delivery_confirmed"),
+        "access_instructions": call.get_field("access_instructions"),
+        "safe_drop_location": call.get_field("safe_drop_location"),
+        "alternative_contact": call.get_field("alternative_contact"),
+        "signature_required_acknowledged": call.get_field("signature_required_acknowledged"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Delivery confirmation results saved.")
+    call.hangup(
+        final_instructions=(
+            "Thank the recipient for confirming their delivery. Let them know that SwiftShip "
+            "Logistics will be in touch if there are any changes to the delivery window, and "
+            "wish them a great day."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tracking_number": self.tracking_number,
-            "recipient_name": self.recipient_name,
-            "delivery_date": self.delivery_date,
-            "delivery_window": self.delivery_window,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Leave a polite voicemail letting the recipient know that SwiftShip Logistics "
-                f"called regarding tracking number {self.tracking_number} scheduled for "
-                f"{self.delivery_date} {self.delivery_window}, and ask them to call back or "
-                "visit the SwiftShip website to update their delivery preferences."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -141,13 +139,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DeliveryConfirmationController(
-            recipient_name=args.name,
-            tracking_number=args.tracking_number,
-            delivery_date=args.delivery_date,
-            delivery_window=args.delivery_window,
-        ),
+        variables={
+            "recipient_name": args.name,
+            "tracking_number": args.tracking_number,
+            "delivery_date": args.delivery_date,
+            "delivery_window": args.delivery_window,
+        },
     )

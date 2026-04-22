@@ -8,48 +8,66 @@ from datetime import datetime
 
 
 
-class AttendanceCheckinController(guava.CallController):
-    def __init__(self, parent_name, student_name, absence_date, periods_missed):
-        super().__init__()
-        self.parent_name = parent_name
-        self.student_name = student_name
-        self.absence_date = absence_date
-        self.periods_missed = periods_missed
-        self.set_persona(
-            organization_name="Westfield Elementary School - Attendance Office",
-            agent_name="Casey",
-            agent_purpose=(
-                "contact parents and guardians when a student has an unexcused absence "
-                "to collect a reason and ensure the family is aware"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.parent_name,
-            on_success=self.begin_attendance_checkin,
-            on_failure=self.recipient_unavailable,
-        )
+agent = guava.Agent(
+    name="Casey",
+    organization="Westfield Elementary School - Attendance Office",
+    purpose=(
+        "contact parents and guardians when a student has an unexcused absence "
+        "to collect a reason and ensure the family is aware"
+    ),
+)
 
-    def begin_attendance_checkin(self):
-        self.set_task(
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("parent_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Could not reach parent/guardian %s for attendance check-in (student: %s, date: %s).",
+            call.get_variable("parent_name"),
+            call.get_variable("student_name"),
+            call.get_variable("absence_date"),
+        )
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "parent_name": call.get_variable("parent_name"),
+            "student_name": call.get_variable("student_name"),
+            "absence_date": call.get_variable("absence_date"),
+            "periods_missed": call.get_variable("periods_missed"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "The parent or guardian could not be reached. End the call politely."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "intake",
             objective=(
-                f"You are calling {self.parent_name}, the parent or guardian of {self.student_name}, "
-                f"because {self.student_name} has an unexcused absence on {self.absence_date} "
-                f"for {self.periods_missed}. "
+                f"You are calling {call.get_variable('parent_name')}, the parent or guardian of {call.get_variable('student_name')}, "
+                f"because {call.get_variable('student_name')} has an unexcused absence on {call.get_variable('absence_date')} "
+                f"for {call.get_variable('periods_missed')}. "
                 "Your goal is to collect the reason for the absence, find out if the student is expected "
                 "to return, determine whether a doctor's note will be provided, confirm the parent is aware "
                 "of the absence, and capture any message they would like passed along to the teacher."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.parent_name}, this is Casey calling from Westfield Elementary School's "
-                    f"Attendance Office. I'm reaching out today because {self.student_name} was marked "
-                    f"absent on {self.absence_date} for {self.periods_missed}, and we don't currently "
+                    f"Hello {call.get_variable('parent_name')}, this is Casey calling from Westfield Elementary School's "
+                    f"Attendance Office. I'm reaching out today because {call.get_variable('student_name')} was marked "
+                    f"absent on {call.get_variable('absence_date')} for {call.get_variable('periods_missed')}, and we don't currently "
                     "have an excuse on file. I just wanted to check in and make sure everything is okay."
                 ),
                 guava.Field(
                     key="absence_reason",
                     description=(
-                        f"The reason for {self.student_name}'s absence. "
+                        f"The reason for {call.get_variable('student_name')}'s absence. "
                         "Options are: illness, family_emergency, appointment, other, or unknown"
                     ),
                     field_type="text",
@@ -57,7 +75,7 @@ class AttendanceCheckinController(guava.CallController):
                 ),
                 guava.Field(
                     key="expected_return_date",
-                    description=f"The date on which {self.student_name} is expected to return to school",
+                    description=f"The date on which {call.get_variable('student_name')} is expected to return to school",
                     field_type="date",
                     required=False,
                 ),
@@ -69,7 +87,7 @@ class AttendanceCheckinController(guava.CallController):
                 ),
                 guava.Field(
                     key="parent_aware_of_absence",
-                    description=f"Confirmation that {self.parent_name} is aware of and can account for {self.student_name}'s absence",
+                    description=f"Confirmation that {call.get_variable('parent_name')} is aware of and can account for {call.get_variable('student_name')}'s absence",
                     field_type="text",
                     required=True,
                 ),
@@ -80,54 +98,33 @@ class AttendanceCheckinController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "parent_name": self.parent_name,
-            "student_name": self.student_name,
-            "absence_date": self.absence_date,
-            "periods_missed": self.periods_missed,
-            "fields": {
-                "absence_reason": self.get_field("absence_reason"),
-                "expected_return_date": self.get_field("expected_return_date"),
-                "doctor_note_available": self.get_field("doctor_note_available"),
-                "parent_aware_of_absence": self.get_field("parent_aware_of_absence"),
-                "additional_message_for_teacher": self.get_field("additional_message_for_teacher"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.parent_name} for taking the time to speak with the school. "
-                f"Let them know the absence will be updated in the system and wish {self.student_name} "
-                "a speedy recovery or a good rest of the day. End the call warmly."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Could not reach parent/guardian %s for attendance check-in (student: %s, date: %s).",
-            self.parent_name,
-            self.student_name,
-            self.absence_date,
+@agent.on_task_complete("intake")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "parent_name": call.get_variable("parent_name"),
+        "student_name": call.get_variable("student_name"),
+        "absence_date": call.get_variable("absence_date"),
+        "periods_missed": call.get_variable("periods_missed"),
+        "fields": {
+            "absence_reason": call.get_field("absence_reason"),
+            "expected_return_date": call.get_field("expected_return_date"),
+            "doctor_note_available": call.get_field("doctor_note_available"),
+            "parent_aware_of_absence": call.get_field("parent_aware_of_absence"),
+            "additional_message_for_teacher": call.get_field("additional_message_for_teacher"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('parent_name')} for taking the time to speak with the school. "
+            f"Let them know the absence will be updated in the system and wish {call.get_variable('student_name')} "
+            "a speedy recovery or a good rest of the day. End the call warmly."
         )
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "parent_name": self.parent_name,
-            "student_name": self.student_name,
-            "absence_date": self.absence_date,
-            "periods_missed": self.periods_missed,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "The parent or guardian could not be reached. End the call politely."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -151,13 +148,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AttendanceCheckinController(
-            parent_name=args.parent_name,
-            student_name=args.student_name,
-            absence_date=args.absence_date,
-            periods_missed=args.periods_missed,
-        ),
+        variables={
+            "parent_name": args.parent_name,
+            "student_name": args.student_name,
+            "absence_date": args.absence_date,
+            "periods_missed": args.periods_missed,
+        },
     )

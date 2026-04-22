@@ -36,56 +36,65 @@ def fetch_stored_payment_methods(shopper_reference: str) -> list:
     return data.get("details", [])
 
 
-class FailedPaymentRecoveryController(guava.CallController):
-    def __init__(self, customer_name: str, shopper_reference: str, failed_amount: str, currency: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.shopper_reference = shopper_reference
-        self.failed_amount = failed_amount
-        self.currency = currency
+agent = guava.Agent(
+    name="Clara",
+    organization="Northgate Commerce",
+    purpose="to reach customers whose recent payment was declined and help them recover it",
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    shopper_reference = call.get_variable("shopper_reference")
+    failed_amount = call.get_variable("failed_amount")
+    currency = call.get_variable("currency")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {customer_name}. "
+                "Mention that this is Clara from Northgate Commerce calling about an important "
+                "update regarding their account, and ask them to call back at 1-800-555-0192 "
+                "or visit northgatecommerce.com/billing. Keep the message under 30 seconds."
+            )
+        )
+    elif outcome == "available":
+        has_stored_methods = False
+        stored_method_count = 0
         try:
             stored_methods = fetch_stored_payment_methods(shopper_reference)
-            self.has_stored_methods = len(stored_methods) > 0
-            self.stored_method_count = len(stored_methods)
+            has_stored_methods = len(stored_methods) > 0
+            stored_method_count = len(stored_methods)
             logging.info(
                 "Found %d stored payment method(s) for shopper %s",
-                self.stored_method_count,
+                stored_method_count,
                 shopper_reference,
             )
         except Exception as e:
             logging.error("Failed to fetch stored payment methods: %s", e)
-            self.has_stored_methods = False
-            self.stored_method_count = 0
 
-        self.set_persona(
-            organization_name="Northgate Commerce",
-            agent_name="Clara",
-            agent_purpose="to reach customers whose recent payment was declined and help them recover it",
-        )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
         stored_methods_context = (
-            f"We show {self.stored_method_count} saved payment method(s) on file for their account."
-            if self.has_stored_methods
+            f"We show {stored_method_count} saved payment method(s) on file for their account."
+            if has_stored_methods
             else "We do not currently show any saved payment methods on file for their account."
         )
 
-        self.set_task(
+        call.set_task(
+            "payment_recovery",
             objective=(
-                f"Inform {self.customer_name} that a recent payment of {self.failed_amount} {self.currency} "
+                f"Inform {customer_name} that a recent payment of {failed_amount} {currency} "
                 "was declined, understand if they can provide or update a payment method, and guide them "
                 "to resolve the outstanding balance via northgatecommerce.com/billing."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Clara calling from Northgate Commerce. "
+                    f"Hi {customer_name}, this is Clara calling from Northgate Commerce. "
                     "I'm reaching out because a recent payment on your account was unfortunately declined, "
                     "and I'd like to help you resolve it quickly."
                 ),
@@ -93,8 +102,8 @@ class FailedPaymentRecoveryController(guava.CallController):
                     key="aware_of_decline",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask {self.customer_name} whether they were aware that their recent payment "
-                        f"of {self.failed_amount} {self.currency} was declined."
+                        f"Ask {customer_name} whether they were aware that their recent payment "
+                        f"of {failed_amount} {currency} was declined."
                     ),
                     choices=["yes", "no"],
                     required=True,
@@ -104,7 +113,7 @@ class FailedPaymentRecoveryController(guava.CallController):
                     field_type="multiple_choice",
                     description=(
                         f"Explain that {stored_methods_context} "
-                        f"Ask {self.customer_name} if they have an alternative payment method they would "
+                        f"Ask {customer_name} if they have an alternative payment method they would "
                         "like to use, or if they would like to update their saved payment details online."
                     ),
                     choices=[
@@ -116,72 +125,65 @@ class FailedPaymentRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        aware = self.get_field("aware_of_decline")
-        resolution = self.get_field("has_alternative_method")
 
-        logging.info(
-            "Failed payment recovery outcome for %s (shopper: %s): aware=%s, resolution=%s",
-            self.customer_name,
-            self.shopper_reference,
-            aware,
-            resolution,
-        )
+@agent.on_task_complete("payment_recovery")
+def handle_outcome(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    shopper_reference = call.get_variable("shopper_reference")
+    aware = call.get_field("aware_of_decline")
+    resolution = call.get_field("has_alternative_method")
 
-        if resolution == "yes, I will update my payment method online":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} and let them know they can update their payment method "
-                    "at northgatecommerce.com/billing by signing in with their account email. "
-                    "Once updated, the outstanding payment will be retried automatically within 24 hours. "
-                    "Wish them a great day."
-                )
-            )
-        elif resolution == "yes, I would like to use a different card":
-            self.hangup(
-                final_instructions=(
-                    f"Tell {self.customer_name} that to update their card details securely, they will need "
-                    "to log in to northgatecommerce.com/billing or contact our support team via live chat. "
-                    "We are not able to collect card numbers over the phone for their security. "
-                    "Assure them the process takes less than two minutes online. Thank them."
-                )
-            )
-        elif resolution == "no, I need more time":
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge that {self.customer_name} needs more time. Let them know their account "
-                    "will remain active for the next 7 days while the payment is outstanding, and our team "
-                    "will follow up by email. Encourage them to update their payment at "
-                    "northgatecommerce.com/billing when they are ready. Thank them for their time."
-                )
-            )
-        elif resolution == "I want to cancel my account":
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge {self.customer_name}'s request to cancel. Let them know that account "
-                    "cancellations must be handled by our customer success team, who can also explore "
-                    "options like pausing their account. Provide the contact: 1-800-555-0192 or "
-                    "support@northgatecommerce.com. Thank them for being a customer."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time. Let them know our team will follow up "
-                    "by email with instructions to resolve the outstanding payment. Wish them a good day."
-                )
-            )
+    logging.info(
+        "Failed payment recovery outcome for %s (shopper: %s): aware=%s, resolution=%s",
+        customer_name,
+        shopper_reference,
+        aware,
+        resolution,
+    )
 
-    def recipient_unavailable(self):
-        self.hangup(
+    if resolution == "yes, I will update my payment method online":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name}. "
-                "Mention that this is Clara from Northgate Commerce calling about an important "
-                "update regarding their account, and ask them to call back at 1-800-555-0192 "
-                "or visit northgatecommerce.com/billing. Keep the message under 30 seconds."
+                f"Thank {customer_name} and let them know they can update their payment method "
+                "at northgatecommerce.com/billing by signing in with their account email. "
+                "Once updated, the outstanding payment will be retried automatically within 24 hours. "
+                "Wish them a great day."
+            )
+        )
+    elif resolution == "yes, I would like to use a different card":
+        call.hangup(
+            final_instructions=(
+                f"Tell {customer_name} that to update their card details securely, they will need "
+                "to log in to northgatecommerce.com/billing or contact our support team via live chat. "
+                "We are not able to collect card numbers over the phone for their security. "
+                "Assure them the process takes less than two minutes online. Thank them."
+            )
+        )
+    elif resolution == "no, I need more time":
+        call.hangup(
+            final_instructions=(
+                f"Acknowledge that {customer_name} needs more time. Let them know their account "
+                "will remain active for the next 7 days while the payment is outstanding, and our team "
+                "will follow up by email. Encourage them to update their payment at "
+                "northgatecommerce.com/billing when they are ready. Thank them for their time."
+            )
+        )
+    elif resolution == "I want to cancel my account":
+        call.hangup(
+            final_instructions=(
+                f"Acknowledge {customer_name}'s request to cancel. Let them know that account "
+                "cancellations must be handled by our customer success team, who can also explore "
+                "options like pausing their account. Provide the contact: 1-800-555-0192 or "
+                "support@northgatecommerce.com. Thank them for being a customer."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. Let them know our team will follow up "
+                "by email with instructions to resolve the outstanding payment. Wish them a good day."
             )
         )
 
@@ -196,13 +198,13 @@ if __name__ == "__main__":
     parser.add_argument("--currency", default="USD", help="Currency code (default: USD)")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=FailedPaymentRecoveryController(
-            customer_name=args.name,
-            shopper_reference=args.shopper_reference,
-            failed_amount=args.amount,
-            currency=args.currency,
-        ),
+        variables={
+            "customer_name": args.name,
+            "shopper_reference": args.shopper_reference,
+            "failed_amount": args.amount,
+            "currency": args.currency,
+        },
     )

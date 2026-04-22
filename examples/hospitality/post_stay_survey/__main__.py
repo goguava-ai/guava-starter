@@ -7,34 +7,39 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sophie",
+    organization="The Grand Meridian Hotel",
+    purpose=(
+        "follow up with a recent guest to gather honest feedback about their stay, "
+        "celebrate what went well, and understand where the hotel can do even better"
+    ),
+)
 
-class PostStaySurveyController(guava.CallController):
-    def __init__(self, name, reservation_number, checkout_date):
-        super().__init__()
-        self.name = name
-        self.reservation_number = reservation_number
-        self.checkout_date = checkout_date
 
-        self.set_persona(
-            organization_name="The Grand Meridian Hotel",
-            agent_name="Sophie",
-            agent_purpose=(
-                "follow up with a recent guest to gather honest feedback about their stay, "
-                "celebrate what went well, and understand where the hotel can do even better"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for post-stay survey.", call.get_variable("name"))
+        call.hangup(
+            final_instructions=(
+                "Leave a warm voicemail as Sophie from The Grand Meridian Hotel, thanking the guest "
+                "for their recent stay and letting them know you were hoping to gather a few minutes "
+                "of feedback. Invite them to call back or reach out via the hotel's website if they "
+                "would like to share their experience."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_survey(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "survey",
             objective=(
-                f"You are following up with {self.name} following their checkout on {self.checkout_date} "
-                f"(reservation {self.reservation_number}). Conduct a warm, conversational post-stay survey. "
+                f"You are following up with {call.get_variable('name')} following their checkout on {call.get_variable('checkout_date')} "
+                f"(reservation {call.get_variable('reservation_number')}). Conduct a warm, conversational post-stay survey. "
                 "Collect numerical ratings on a scale of 1 to 5 for overall stay, room cleanliness, "
                 "staff service, and amenities. Also ask whether they would return, invite them to share "
                 "highlights, and ask about any areas for improvement. Be gracious and genuinely appreciative "
@@ -42,8 +47,8 @@ class PostStaySurveyController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Thank {self.name} warmly for choosing The Grand Meridian Hotel and for taking "
-                    f"a moment to share feedback about their stay, which ended on {self.checkout_date}. "
+                    f"Thank {call.get_variable('name')} warmly for choosing The Grand Meridian Hotel and for taking "
+                    f"a moment to share feedback about their stay, which ended on {call.get_variable('checkout_date')}. "
                     "Explain that the survey takes only a couple of minutes and that their insights are "
                     "deeply valued by the entire hotel team."
                 ),
@@ -108,48 +113,38 @@ class PostStaySurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "post_stay_survey",
-            "guest_name": self.name,
-            "reservation_number": self.reservation_number,
-            "checkout_date": self.checkout_date,
-            "fields": {
-                "overall_stay_rating": self.get_field("overall_stay_rating"),
-                "room_cleanliness_rating": self.get_field("room_cleanliness_rating"),
-                "staff_service_rating": self.get_field("staff_service_rating"),
-                "amenities_rating": self.get_field("amenities_rating"),
-                "would_return": self.get_field("would_return"),
-                "highlights": self.get_field("highlights"),
-                "areas_for_improvement": self.get_field("areas_for_improvement"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Post-stay survey results saved for %s", self.name)
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} sincerely for their candid feedback and for being a valued guest "
-                "of The Grand Meridian Hotel. Let them know their responses will be shared with the "
-                "hotel leadership team. If they expressed any dissatisfaction, acknowledge it with "
-                "genuine empathy and assure them the team will act on it. Close by wishing them well "
-                "and expressing hope to welcome them back in the future."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for post-stay survey.", self.name)
-        self.hangup(
-            final_instructions=(
-                "Leave a warm voicemail as Sophie from The Grand Meridian Hotel, thanking the guest "
-                "for their recent stay and letting them know you were hoping to gather a few minutes "
-                "of feedback. Invite them to call back or reach out via the hotel's website if they "
-                "would like to share their experience."
-            )
+@agent.on_task_complete("survey")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "post_stay_survey",
+        "guest_name": call.get_variable("name"),
+        "reservation_number": call.get_variable("reservation_number"),
+        "checkout_date": call.get_variable("checkout_date"),
+        "fields": {
+            "overall_stay_rating": call.get_field("overall_stay_rating"),
+            "room_cleanliness_rating": call.get_field("room_cleanliness_rating"),
+            "staff_service_rating": call.get_field("staff_service_rating"),
+            "amenities_rating": call.get_field("amenities_rating"),
+            "would_return": call.get_field("would_return"),
+            "highlights": call.get_field("highlights"),
+            "areas_for_improvement": call.get_field("areas_for_improvement"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Post-stay survey results saved for %s", call.get_variable("name"))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} sincerely for their candid feedback and for being a valued guest "
+            "of The Grand Meridian Hotel. Let them know their responses will be shared with the "
+            "hotel leadership team. If they expressed any dissatisfaction, acknowledge it with "
+            "genuine empathy and assure them the team will act on it. Close by wishing them well "
+            "and expressing hope to welcome them back in the future."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -163,12 +158,12 @@ if __name__ == "__main__":
     parser.add_argument("--checkout-date", required=True, help="Date the guest checked out")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PostStaySurveyController(
-            name=args.name,
-            reservation_number=args.reservation_number,
-            checkout_date=args.checkout_date,
-        ),
+        variables={
+            "name": args.name,
+            "reservation_number": args.reservation_number,
+            "checkout_date": args.checkout_date,
+        },
     )

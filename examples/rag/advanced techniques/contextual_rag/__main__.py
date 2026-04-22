@@ -99,29 +99,31 @@ if store.count() == 0:
 else:
     logger.info("Loaded existing contextual index (%d chunks).", store.count())
 
+agent = guava.Agent()
 
-class ContextualPolicyQAController(guava.CallController):
-    """Answers policy questions using contextually enriched chunks."""
 
-    def __init__(self):
-        super().__init__()
-        self.read_script("Hello, how can I help you today?")
-        self.accept_call()
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-    def on_question(self, question: str) -> str:
-        chunks = store.search(question, k=10)
-        context = "\n\n---\n\n".join(chunks)
-        response = genai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"Context:\n{context}\n\nQuestion: {question}",
-            config={"system_instruction": _DEFAULT_INSTRUCTIONS},
-        )
-        return response.text
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.read_script("Hello, how can I help you today?")
+
+
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    chunks = store.search(question, k=10)
+    context = "\n\n---\n\n".join(chunks)
+    response = genai_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=f"Context:\n{context}\n\nQuestion: {question}",
+        config={"system_instruction": _DEFAULT_INSTRUCTIONS},
+    )
+    return response.text
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ContextualPolicyQAController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

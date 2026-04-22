@@ -66,182 +66,183 @@ def create_deal(contact_id: str, dealname: str, stage: str, description: str) ->
     return resp.json()["id"]
 
 
-class DealQualificationController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Jordan",
+    organization="Apex Solutions",
+    purpose=(
+        "to have a friendly discovery conversation with inbound prospects and qualify "
+        "them for the Apex Solutions sales team"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to have a friendly discovery conversation with inbound prospects and qualify "
-                "them for the Apex Solutions sales team"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "qualify_and_record",
+        objective=(
+            "A prospect has called Apex Solutions for a discovery call. "
+            "Conduct a natural BANT qualification: understand their Budget, Authority, "
+            "Need, and Timeline. Collect contact details and create a deal in HubSpot."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Apex Solutions. I'm Jordan. "
+                "I'd love to learn more about your situation and see how we might be able to help. "
+                "Do you have a few minutes to chat?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A prospect has called Apex Solutions for a discovery call. "
-                "Conduct a natural BANT qualification: understand their Budget, Authority, "
-                "Need, and Timeline. Collect contact details and create a deal in HubSpot."
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask for their full name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Apex Solutions. I'm Jordan. "
-                    "I'd love to learn more about your situation and see how we might be able to help. "
-                    "Do you have a few minutes to chat?"
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for their business email address.",
+                required=True,
+            ),
+            guava.Field(
+                key="company_name",
+                field_type="text",
+                description="Ask what company they represent.",
+                required=True,
+            ),
+            guava.Field(
+                key="pain_point",
+                field_type="text",
+                description=(
+                    "Ask what challenge or problem they're trying to solve. "
+                    "Probe naturally: 'What's the main challenge you're hoping we could help with?'"
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask for their full name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="decision_role",
+                field_type="multiple_choice",
+                description=(
+                    "Ask about their role in the buying decision. "
+                    "Frame it naturally: 'Are you the one who would typically sign off on "
+                    "a solution like this, or would others be involved in that decision?'"
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for their business email address.",
-                    required=True,
+                choices=[
+                    "sole decision maker",
+                    "part of a committee",
+                    "influencer/evaluator",
+                    "not the decision maker",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="budget",
+                field_type="multiple_choice",
+                description=(
+                    "Ask if they have budget allocated. "
+                    "Be tactful: 'Have you set aside a budget for this initiative yet?'"
                 ),
-                guava.Field(
-                    key="company_name",
-                    field_type="text",
-                    description="Ask what company they represent.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="pain_point",
-                    field_type="text",
-                    description=(
-                        "Ask what challenge or problem they're trying to solve. "
-                        "Probe naturally: 'What's the main challenge you're hoping we could help with?'"
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="decision_role",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask about their role in the buying decision. "
-                        "Frame it naturally: 'Are you the one who would typically sign off on "
-                        "a solution like this, or would others be involved in that decision?'"
-                    ),
-                    choices=[
-                        "sole decision maker",
-                        "part of a committee",
-                        "influencer/evaluator",
-                        "not the decision maker",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="budget",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask if they have budget allocated. "
-                        "Be tactful: 'Have you set aside a budget for this initiative yet?'"
-                    ),
-                    choices=[
-                        "yes/allocated",
-                        "yes/not yet approved",
-                        "exploring what's available",
-                        "no budget yet",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="timeline",
-                    field_type="multiple_choice",
-                    description="Ask when they would ideally like a solution in place.",
-                    choices=[
-                        "within 30 days",
-                        "1–3 months",
-                        "3–6 months",
-                        "6+ months",
-                        "no set timeline",
-                    ],
-                    required=True,
-                ),
-            ],
-            on_complete=self.qualify_and_record,
-        )
+                choices=[
+                    "yes/allocated",
+                    "yes/not yet approved",
+                    "exploring what's available",
+                    "no budget yet",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="timeline",
+                field_type="multiple_choice",
+                description="Ask when they would ideally like a solution in place.",
+                choices=[
+                    "within 30 days",
+                    "1–3 months",
+                    "3–6 months",
+                    "6+ months",
+                    "no set timeline",
+                ],
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def qualify_and_record(self):
-        name = self.get_field("caller_name") or "Unknown"
-        email = self.get_field("caller_email") or ""
-        company = self.get_field("company_name") or ""
-        pain_point = self.get_field("pain_point") or ""
-        decision_role = self.get_field("decision_role") or ""
-        budget = self.get_field("budget") or ""
-        timeline = self.get_field("timeline") or ""
+@agent.on_task_complete("qualify_and_record")
+def on_done(call: guava.Call) -> None:
+    name = call.get_field("caller_name") or "Unknown"
+    email = call.get_field("caller_email") or ""
+    company = call.get_field("company_name") or ""
+    pain_point = call.get_field("pain_point") or ""
+    decision_role = call.get_field("decision_role") or ""
+    budget = call.get_field("budget") or ""
+    timeline = call.get_field("timeline") or ""
 
-        parts = name.strip().split(" ", 1)
-        firstname = parts[0]
-        lastname = parts[1] if len(parts) > 1 else ""
-        dealname = (
-            f"{company} — Inbound Qualification"
-            if company
-            else f"{name} — Inbound Qualification"
-        )
+    parts = name.strip().split(" ", 1)
+    firstname = parts[0]
+    lastname = parts[1] if len(parts) > 1 else ""
+    dealname = (
+        f"{company} — Inbound Qualification"
+        if company
+        else f"{name} — Inbound Qualification"
+    )
 
-        qual_notes = (
-            f"BANT Qualification\n"
-            f"Need: {pain_point}\n"
-            f"Authority: {decision_role}\n"
-            f"Budget: {budget}\n"
-            f"Timeline: {timeline}"
-        )
+    qual_notes = (
+        f"BANT Qualification\n"
+        f"Need: {pain_point}\n"
+        f"Authority: {decision_role}\n"
+        f"Budget: {budget}\n"
+        f"Timeline: {timeline}"
+    )
 
-        # Fully qualified: budget exists and timeline is within 6 months
-        is_qualified = (
-            budget in ("yes/allocated", "yes/not yet approved")
-            and timeline not in ("6+ months", "no set timeline")
-        )
+    # Fully qualified: budget exists and timeline is within 6 months
+    is_qualified = (
+        budget in ("yes/allocated", "yes/not yet approved")
+        and timeline not in ("6+ months", "no set timeline")
+    )
 
-        stage = "qualifiedtobuy" if is_qualified else "appointmentscheduled"
-        logging.info(
-            "Qualification for %s (%s): is_qualified=%s, stage=%s",
-            name, email, is_qualified, stage,
-        )
+    stage = "qualifiedtobuy" if is_qualified else "appointmentscheduled"
+    logging.info(
+        "Qualification for %s (%s): is_qualified=%s, stage=%s",
+        name, email, is_qualified, stage,
+    )
 
-        try:
-            contact_id = upsert_contact(email, firstname, lastname, company)
-            deal_id = create_deal(contact_id, dealname, stage, qual_notes)
-            logging.info("Created deal %s for contact %s", deal_id, contact_id)
+    try:
+        contact_id = upsert_contact(email, firstname, lastname, company)
+        deal_id = create_deal(contact_id, dealname, stage, qual_notes)
+        logging.info("Created deal %s for contact %s", deal_id, contact_id)
 
-            if is_qualified:
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {name} for their time and the great conversation. "
-                        "Let them know they sound like an excellent fit for Apex Solutions "
-                        "and that a senior sales executive will be in touch within 24 hours "
-                        "to schedule a tailored demo. Express genuine enthusiasm."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {name} warmly for their time. "
-                        "Let them know their information has been passed to our team "
-                        "and someone will follow up when the timing is right. "
-                        "Offer to send resources by email in the meantime. Wish them well."
-                    )
-                )
-        except Exception as e:
-            logging.error("Failed to record qualification in HubSpot: %s", e)
-            self.hangup(
+        if is_qualified:
+            call.hangup(
                 final_instructions=(
-                    f"Thank {name} for their time and apologize for a brief technical issue. "
-                    "Let them know a team member will follow up by end of day. Wish them a great day."
+                    f"Thank {name} for their time and the great conversation. "
+                    "Let them know they sound like an excellent fit for Apex Solutions "
+                    "and that a senior sales executive will be in touch within 24 hours "
+                    "to schedule a tailored demo. Express genuine enthusiasm."
                 )
             )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Thank {name} warmly for their time. "
+                    "Let them know their information has been passed to our team "
+                    "and someone will follow up when the timing is right. "
+                    "Offer to send resources by email in the meantime. Wish them well."
+                )
+            )
+    except Exception as e:
+        logging.error("Failed to record qualification in HubSpot: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Thank {name} for their time and apologize for a brief technical issue. "
+                "Let them know a team member will follow up by end of day. Wish them a great day."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=DealQualificationController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

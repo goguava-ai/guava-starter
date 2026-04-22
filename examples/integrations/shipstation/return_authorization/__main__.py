@@ -111,156 +111,156 @@ def add_return_note(order_id: int, existing_notes: str, return_reason: str, trac
     resp.raise_for_status()
 
 
-class ReturnAuthorizationController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Ridgeline Sports",
+    purpose="to help customers initiate returns and receive return shipping labels",
+)
 
-        self.order = None
-        self.return_label = None
 
-        self.set_persona(
-            organization_name="Ridgeline Sports",
-            agent_name="Alex",
-            agent_purpose="to help customers initiate returns and receive return shipping labels",
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "handle_complete",
+        objective="Help the caller start a return for their order and issue a prepaid return label if eligible.",
+        checklist=[
+            guava.Say(
+                "Thank you for calling Ridgeline Sports. This is Alex. "
+                "I can help you with a return today. I just need a couple of quick details."
+            ),
+            guava.Field(
+                key="order_number",
+                field_type="text",
+                description="Ask the caller for their order number.",
+                required=True,
+            ),
+            guava.Field(
+                key="return_reason",
+                field_type="multiple_choice",
+                description="Ask the caller why they are returning the item.",
+                choices=[
+                    "wrong size",
+                    "wrong item received",
+                    "item defective or damaged",
+                    "changed my mind",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="return_detail",
+                field_type="text",
+                description=(
+                    "If the reason is 'defective or damaged' or 'other', ask the caller to briefly "
+                    "describe the issue. Otherwise this field can be skipped."
+                ),
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("handle_complete")
+def on_done(call: guava.Call) -> None:
+    order_number = call.get_field("order_number")
+    return_reason = call.get_field("return_reason")
+    return_detail = call.get_field("return_detail") or ""
+
+    full_reason = f"{return_reason}: {return_detail}".strip(": ") if return_detail else return_reason
+
+    # Fetch the order
+    order = None
+    return_label = None
+    try:
+        order = fetch_order(order_number)
+    except Exception as e:
+        logging.error("ShipStation orders API error: %s", e)
+        order = None
+
+    if order is None:
+        call.hangup(
+            final_instructions=(
+                f"Tell the caller you could not locate an order with number {order_number}. "
+                "Apologize and ask them to double-check the number from their confirmation email. "
+                "Suggest they try again or visit ridgelinesports.com/returns for help."
+            )
         )
+        return
 
-        self.set_task(
-            objective="Help the caller start a return for their order and issue a prepaid return label if eligible.",
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Ridgeline Sports. This is Alex. "
-                    "I can help you with a return today. I just need a couple of quick details."
-                ),
-                guava.Field(
-                    key="order_number",
-                    field_type="text",
-                    description="Ask the caller for their order number.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="return_reason",
-                    field_type="multiple_choice",
-                    description="Ask the caller why they are returning the item.",
-                    choices=[
-                        "wrong size",
-                        "wrong item received",
-                        "item defective or damaged",
-                        "changed my mind",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="return_detail",
-                    field_type="text",
-                    description=(
-                        "If the reason is 'defective or damaged' or 'other', ask the caller to briefly "
-                        "describe the issue. Otherwise this field can be skipped."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.handle_complete,
+    order_status = order.get("orderStatus", "")
+    if order_status in ("awaiting_payment", "cancelled"):
+        call.hangup(
+            final_instructions=(
+                f"Tell the caller that order #{order_number} has a status of '{order_status}' "
+                "and is not eligible for a return at this time. "
+                "If the order is cancelled, explain that nothing was charged. "
+                "Offer to connect them with a human agent if they need further assistance."
+            )
         )
+        return
 
-        self.accept_call()
+    if not is_within_return_window(order):
+        call.hangup(
+            final_instructions=(
+                f"Tell the caller that order #{order_number} is outside the {RETURN_WINDOW_DAYS}-day "
+                "return window and is not eligible for a standard return. "
+                "Apologize and let them know they can reach out to ridgelinesports.com/contact "
+                "if they believe there are extenuating circumstances."
+            )
+        )
+        return
 
-    def handle_complete(self):
-        order_number = self.get_field("order_number")
-        return_reason = self.get_field("return_reason")
-        return_detail = self.get_field("return_detail") or ""
+    # Create the return label
+    try:
+        return_label = create_return_label(order, full_reason)
+    except Exception as e:
+        logging.error("Failed to create return label: %s", e)
+        return_label = None
 
-        full_reason = f"{return_reason}: {return_detail}".strip(": ") if return_detail else return_reason
-
-        # Fetch the order
+    # Note the return on the order regardless of label creation success
+    if return_label:
+        tracking_number = return_label.get("trackingNumber", "N/A")
+        label_url = return_label.get("labelUrl", "")
         try:
-            self.order = fetch_order(order_number)
+            add_return_note(
+                order["orderId"],
+                order.get("internalNotes", "") or "",
+                full_reason,
+                tracking_number,
+            )
         except Exception as e:
-            logging.error("ShipStation orders API error: %s", e)
-            self.order = None
+            logging.error("Failed to add return note: %s", e)
 
-        if self.order is None:
-            self.hangup(
-                final_instructions=(
-                    f"Tell the caller you could not locate an order with number {order_number}. "
-                    "Apologize and ask them to double-check the number from their confirmation email. "
-                    "Suggest they try again or visit ridgelinesports.com/returns for help."
-                )
+        call.hangup(
+            final_instructions=(
+                f"Tell the caller their return for order #{order_number} has been approved. "
+                f"Their return reason was: {full_reason}. "
+                f"A prepaid return shipping label has been created. "
+                f"The return tracking number is {tracking_number}. "
+                f"Tell them the label will be emailed to the address on their order. "
+                f"{'The label can also be downloaded at: ' + label_url if label_url else ''} "
+                "Ask them to pack the item securely and drop it off at any carrier location. "
+                "Confirm that once received, refunds are processed within 5-7 business days. "
+                "Thank them for shopping with Ridgeline Sports."
             )
-            return
-
-        order_status = self.order.get("orderStatus", "")
-        if order_status in ("awaiting_payment", "cancelled"):
-            self.hangup(
-                final_instructions=(
-                    f"Tell the caller that order #{order_number} has a status of '{order_status}' "
-                    "and is not eligible for a return at this time. "
-                    "If the order is cancelled, explain that nothing was charged. "
-                    "Offer to connect them with a human agent if they need further assistance."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Tell the caller their return for order #{order_number} has been approved "
+                "but there was a technical issue generating their prepaid label at this moment. "
+                "Apologize for the inconvenience and ask them to visit ridgelinesports.com/returns "
+                "or call back so a team member can send the label manually. "
+                "Be apologetic and helpful."
             )
-            return
-
-        if not is_within_return_window(self.order):
-            self.hangup(
-                final_instructions=(
-                    f"Tell the caller that order #{order_number} is outside the {RETURN_WINDOW_DAYS}-day "
-                    "return window and is not eligible for a standard return. "
-                    "Apologize and let them know they can reach out to ridgelinesports.com/contact "
-                    "if they believe there are extenuating circumstances."
-                )
-            )
-            return
-
-        # Create the return label
-        try:
-            self.return_label = create_return_label(self.order, full_reason)
-        except Exception as e:
-            logging.error("Failed to create return label: %s", e)
-            self.return_label = None
-
-        # Note the return on the order regardless of label creation success
-        if self.return_label:
-            tracking_number = self.return_label.get("trackingNumber", "N/A")
-            label_url = self.return_label.get("labelUrl", "")
-            try:
-                add_return_note(
-                    self.order["orderId"],
-                    self.order.get("internalNotes", "") or "",
-                    full_reason,
-                    tracking_number,
-                )
-            except Exception as e:
-                logging.error("Failed to add return note: %s", e)
-
-            self.hangup(
-                final_instructions=(
-                    f"Tell the caller their return for order #{order_number} has been approved. "
-                    f"Their return reason was: {full_reason}. "
-                    f"A prepaid return shipping label has been created. "
-                    f"The return tracking number is {tracking_number}. "
-                    f"Tell them the label will be emailed to the address on their order. "
-                    f"{'The label can also be downloaded at: ' + label_url if label_url else ''} "
-                    "Ask them to pack the item securely and drop it off at any carrier location. "
-                    "Confirm that once received, refunds are processed within 5-7 business days. "
-                    "Thank them for shopping with Ridgeline Sports."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Tell the caller their return for order #{order_number} has been approved "
-                    "but there was a technical issue generating their prepaid label at this moment. "
-                    "Apologize for the inconvenience and ask them to visit ridgelinesports.com/returns "
-                    "or call back so a team member can send the label manually. "
-                    "Be apologetic and helpful."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ReturnAuthorizationController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

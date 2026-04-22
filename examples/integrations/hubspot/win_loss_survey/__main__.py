@@ -55,48 +55,64 @@ def log_survey_note(deal_id: str, contact_id: str, note_body: str) -> None:
     resp.raise_for_status()
 
 
-class WinLossSurveyController(guava.CallController):
-    def __init__(self, deal_id: str, contact_id: str, customer_name: str, outcome: str):
-        super().__init__()
-        self.deal_id = deal_id
-        self.contact_id = contact_id
-        self.customer_name = customer_name
-        self.outcome = outcome  # "won" or "lost"
-        self.deal_name = "our recent proposal"
+agent = guava.Agent(
+    name="Casey",
+    organization="Apex Solutions",
+    purpose=(
+        "to conduct a brief win/loss interview with prospects and customers "
+        "to help Apex Solutions learn and improve"
+    ),
+)
 
-        try:
-            deal = get_deal(deal_id)
-            if deal and deal.get("properties", {}).get("dealname"):
-                self.deal_name = deal["properties"]["dealname"]
-        except Exception as e:
-            logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Casey",
-            agent_purpose=(
-                "to conduct a brief win/loss interview with prospects and customers "
-                "to help Apex Solutions learn and improve"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    deal_id = call.get_variable("deal_id")
+    customer_name = call.get_variable("customer_name")
+    outcome = call.get_variable("outcome")
+
+    deal_name = "our recent proposal"
+    try:
+        deal = get_deal(deal_id)
+        if deal and deal.get("properties", {}).get("dealname"):
+            deal_name = deal["properties"]["dealname"]
+    except Exception as e:
+        logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
+
+    call.deal_name = deal_name
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    deal_outcome = call.get_variable("outcome")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for win/loss survey on deal %s",
+            customer_name, call.get_variable("deal_id"),
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {customer_name} on behalf of Apex Solutions. "
+                "Let them know you were hoping to gather a couple minutes of feedback on their "
+                "recent decision and that no action is required — you'll follow up by email. "
+                "Thank them for their time."
+            )
         )
-
-    def begin_survey(self):
-        if self.outcome == "won":
+    elif outcome == "available":
+        if deal_outcome == "won":
             opener = (
-                f"Hi {self.customer_name}, this is Casey from Apex Solutions. "
+                f"Hi {customer_name}, this is Casey from Apex Solutions. "
                 "I'm reaching out to personally thank you for choosing us and ask a couple of "
                 "quick questions about your decision — your feedback helps us keep doing our best work. "
                 "Do you have just two or three minutes?"
             )
             objective = (
-                f"Conduct a brief win interview with {self.customer_name} "
-                f"about '{self.deal_name}'. Understand why they chose Apex Solutions."
+                f"Conduct a brief win interview with {customer_name} "
+                f"about '{call.deal_name}'. Understand why they chose Apex Solutions."
             )
             checklist = [
                 guava.Say(opener),
@@ -129,14 +145,14 @@ class WinLossSurveyController(guava.CallController):
             ]
         else:
             opener = (
-                f"Hi {self.customer_name}, this is Casey from Apex Solutions. "
+                f"Hi {customer_name}, this is Casey from Apex Solutions. "
                 "I know you went in a different direction recently, and that's completely understandable. "
                 "I'm calling simply to learn from your experience — your feedback genuinely helps us improve. "
                 "Would you be open to sharing a few thoughts? It'll only take two or three minutes."
             )
             objective = (
-                f"Conduct a brief loss interview with {self.customer_name} "
-                f"about '{self.deal_name}'. Understand why they chose a competitor."
+                f"Conduct a brief loss interview with {customer_name} "
+                f"about '{call.deal_name}'. Understand why they chose a competitor."
             )
             checklist = [
                 guava.Say(opener),
@@ -170,73 +186,66 @@ class WinLossSurveyController(guava.CallController):
                 ),
             ]
 
-        self.set_task(
+        call.set_task(
+            "save_survey",
             objective=objective,
             checklist=checklist,
-            on_complete=self.save_survey,
         )
 
-    def save_survey(self):
-        primary_reason = self.get_field("primary_reason") or ""
-        improvement = self.get_field("improvement_suggestion") or ""
-        standout = self.get_field("standout_factor") or ""
-        competitor = self.get_field("competitor_chosen") or ""
-        likely_to_return = self.get_field("likely_to_return") or ""
 
-        note_lines = [
-            f"Win/Loss Survey — {self.outcome.upper()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Contact: {self.customer_name}",
-            f"Deal: {self.deal_name}",
-            f"Primary reason: {primary_reason}",
-        ]
-        if standout:
-            note_lines.append(f"Standout factor: {standout}")
-        if competitor:
-            note_lines.append(f"Competitor chosen: {competitor}")
-        if improvement:
-            note_lines.append(f"Suggestions for improvement: {improvement}")
-        if likely_to_return:
-            note_lines.append(f"Likely to return: {likely_to_return}")
+@agent.on_task_complete("save_survey")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    deal_id = call.get_variable("deal_id")
+    contact_id = call.get_variable("contact_id")
+    deal_outcome = call.get_variable("outcome")
 
-        logging.info("Win/loss survey complete for deal %s (%s)", self.deal_id, self.outcome)
+    primary_reason = call.get_field("primary_reason") or ""
+    improvement = call.get_field("improvement_suggestion") or ""
+    standout = call.get_field("standout_factor") or ""
+    competitor = call.get_field("competitor_chosen") or ""
+    likely_to_return = call.get_field("likely_to_return") or ""
 
-        try:
-            log_survey_note(self.deal_id, self.contact_id, "\n".join(note_lines))
-            logging.info(
-                "Survey note saved to deal %s and contact %s", self.deal_id, self.contact_id
-            )
-        except Exception as e:
-            logging.error("Failed to save survey note: %s", e)
+    note_lines = [
+        f"Win/Loss Survey — {deal_outcome.upper()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Contact: {customer_name}",
+        f"Deal: {call.deal_name}",
+        f"Primary reason: {primary_reason}",
+    ]
+    if standout:
+        note_lines.append(f"Standout factor: {standout}")
+    if competitor:
+        note_lines.append(f"Competitor chosen: {competitor}")
+    if improvement:
+        note_lines.append(f"Suggestions for improvement: {improvement}")
+    if likely_to_return:
+        note_lines.append(f"Likely to return: {likely_to_return}")
 
-        if self.outcome == "won":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} sincerely for their time and for choosing "
-                    "Apex Solutions. Let them know their feedback is valuable. "
-                    "Express genuine excitement about working together and wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} genuinely for their candid feedback. "
-                    "Let them know their insights will directly help the team improve. "
-                    "Wish them success with their new provider and let them know the door "
-                    "is always open if they'd like to revisit Apex Solutions in the future."
-                )
-            )
+    logging.info("Win/loss survey complete for deal %s (%s)", deal_id, deal_outcome)
 
-    def recipient_unavailable(self):
+    try:
+        log_survey_note(deal_id, contact_id, "\n".join(note_lines))
         logging.info(
-            "Unable to reach %s for win/loss survey on deal %s",
-            self.customer_name, self.deal_id,
+            "Survey note saved to deal %s and contact %s", deal_id, contact_id
         )
-        self.hangup(
+    except Exception as e:
+        logging.error("Failed to save survey note: %s", e)
+
+    if deal_outcome == "won":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.customer_name} on behalf of Apex Solutions. "
-                "Let them know you were hoping to gather a couple minutes of feedback on their "
-                "recent decision and that no action is required — you'll follow up by email. "
-                "Thank them for their time."
+                f"Thank {customer_name} sincerely for their time and for choosing "
+                "Apex Solutions. Let them know their feedback is valuable. "
+                "Express genuine excitement about working together and wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} genuinely for their candid feedback. "
+                "Let them know their insights will directly help the team improve. "
+                "Wish them success with their new provider and let them know the door "
+                "is always open if they'd like to revisit Apex Solutions in the future."
             )
         )
 
@@ -260,13 +269,13 @@ if __name__ == "__main__":
         args.name, args.phone, args.deal_id, args.outcome,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=WinLossSurveyController(
-            deal_id=args.deal_id,
-            contact_id=args.contact_id,
-            customer_name=args.name,
-            outcome=args.outcome,
-        ),
+        variables={
+            "deal_id": args.deal_id,
+            "contact_id": args.contact_id,
+            "customer_name": args.name,
+            "outcome": args.outcome,
+        },
     )

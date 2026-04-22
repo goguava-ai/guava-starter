@@ -59,41 +59,52 @@ def send_renewal_followup_email(client_id: str):
     return resp.json()
 
 
-class MembershipRenewalController(guava.CallController):
-    def __init__(self, client_name: str, client_id: str, expiry_date: str,
-                 membership_name: str):
-        super().__init__()
-        self.client_name = client_name
-        self.client_id = client_id
-        self.expiry_date = expiry_date
-        self.membership_name = membership_name
+agent = guava.Agent(
+    name="Morgan",
+    organization="Harmony Wellness Center",
+    purpose="to help members manage and renew their memberships",
+)
 
-        # Pre-fetch account status to personalize the conversation.
-        try:
-            self.account = fetch_client_account(client_id)
-            self.client_details = fetch_client_details(client_id)
-        except Exception as e:
-            logging.error("Failed to pre-fetch client account for %s: %s", client_id, e)
-            self.account = None
-            self.client_details = {}
 
-        self.set_persona(
-            organization_name="Harmony Wellness Center",
-            agent_name="Morgan",
-            agent_purpose="to help members manage and renew their memberships",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+
+    # Pre-fetch account status to personalize the conversation.
+    account = None
+    try:
+        account = fetch_client_account(client_id)
+    except Exception as e:
+        logging.error("Failed to pre-fetch client account for %s: %s", client_id, e)
+
+    call.account = account
+    call.reach_person(contact_full_name=client_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    expiry_date = call.get_variable("expiry_date")
+    membership_name = call.get_variable("membership_name")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {client_name} letting them know "
+                f"their {membership_name} membership at Harmony Wellness Center is expiring "
+                f"on {expiry_date}. Ask them to call us back or visit our website to renew. "
+                "Keep it under 30 seconds, be warm, and leave the studio phone number as a callback."
+            )
         )
+    elif outcome == "available":
+        account = call.account
 
-        self.reach_person(
-            contact_full_name=self.client_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
         # Determine remaining credits to personalize the message.
         remaining_credits = 0
-        if self.account:
-            product_services = self.account.get("ProductServices", [])
+        if account:
+            product_services = account.get("ProductServices", [])
             if product_services:
                 remaining_credits = sum(
                     ps.get("Remaining", 0) for ps in product_services
@@ -105,23 +116,24 @@ class MembershipRenewalController(guava.CallController):
             else ""
         )
 
-        self.set_task(
+        call.set_task(
+            "collect_renewal_decision",
             objective=(
-                f"Reach {self.client_name} to discuss renewing their {self.membership_name} "
-                f"membership expiring on {self.expiry_date} and capture their renewal interest."
+                f"Reach {client_name} to discuss renewing their {membership_name} "
+                f"membership expiring on {expiry_date} and capture their renewal interest."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.client_name}, this is Morgan calling from Harmony Wellness Center. "
-                    f"I'm reaching out because your {self.membership_name} membership is coming up "
-                    f"for renewal on {self.expiry_date}.{credits_note} "
+                    f"Hi {client_name}, this is Morgan calling from Harmony Wellness Center. "
+                    f"I'm reaching out because your {membership_name} membership is coming up "
+                    f"for renewal on {expiry_date}.{credits_note} "
                     "I wanted to connect with you personally to make sure you're taken care of."
                 ),
                 guava.Field(
                     key="still_interested",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask {self.client_name} if they are interested in continuing their membership "
+                        f"Ask {client_name} if they are interested in continuing their membership "
                         "with Harmony Wellness Center."
                     ),
                     choices=["yes", "no", "not sure yet"],
@@ -157,75 +169,69 @@ class MembershipRenewalController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        interest = self.get_field("still_interested")
-        renewal_plan = self.get_field("renewal_plan")
-        hesitation = self.get_field("hesitation_reason")
-        callback_time = self.get_field("best_callback_time")
 
-        logging.info(
-            "Renewal outcome — client=%s interest=%s plan=%s hesitation=%s callback=%s",
-            self.client_id, interest, renewal_plan, hesitation, callback_time,
-        )
+@agent.on_task_complete("collect_renewal_decision")
+def handle_outcome(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    expiry_date = call.get_variable("expiry_date")
+    interest = call.get_field("still_interested")
+    renewal_plan = call.get_field("renewal_plan")
+    hesitation = call.get_field("hesitation_reason")
+    callback_time = call.get_field("best_callback_time")
 
-        if interest == "yes" and renewal_plan:
-            # Send follow-up email with renewal details.
-            try:
-                send_renewal_followup_email(self.client_id)
-                logging.info("Sent renewal follow-up email to client %s", self.client_id)
-            except Exception as e:
-                logging.error("Failed to send renewal email to %s: %s", self.client_id, e)
+    logging.info(
+        "Renewal outcome — client=%s interest=%s plan=%s hesitation=%s callback=%s",
+        client_id, interest, renewal_plan, hesitation, callback_time,
+    )
 
-            plan_savings = {
-                "monthly": "no additional discount",
-                "quarterly": "10% savings",
-                "annual": "20% savings",
-            }
-            savings_msg = plan_savings.get(renewal_plan, "")
+    if interest == "yes" and renewal_plan:
+        # Send follow-up email with renewal details.
+        try:
+            send_renewal_followup_email(client_id)
+            logging.info("Sent renewal follow-up email to client %s", client_id)
+        except Exception as e:
+            logging.error("Failed to send renewal email to %s: %s", client_id, e)
 
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.client_name} enthusiastically for choosing to renew their membership. "
-                    f"Confirm they selected the {renewal_plan} plan ({savings_msg}). "
-                    "Let them know a team member will process the renewal and send a confirmation email shortly. "
-                    "Tell them we're excited to keep supporting their wellness journey. Be warm and celebratory."
-                )
-            )
+        plan_savings = {
+            "monthly": "no additional discount",
+            "quarterly": "10% savings",
+            "annual": "20% savings",
+        }
+        savings_msg = plan_savings.get(renewal_plan, "")
 
-        elif interest == "not sure yet" or (interest == "no" and callback_time):
-            try:
-                send_renewal_followup_email(self.client_id)
-            except Exception as e:
-                logging.error("Failed to send follow-up email: %s", e)
-
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.client_name} for their time and let them know there is absolutely "
-                    "no pressure. Tell them a team member will follow up at the time they requested "
-                    "and that a renewal information email is on its way. "
-                    "Remind them their membership is active until the expiry date. Be understanding and warm."
-                )
-            )
-
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.client_name} genuinely for being a member of Harmony Wellness Center. "
-                    "Let them know the door is always open if they change their mind and invite them "
-                    "to call or visit anytime. Wish them well on their wellness journey. Be sincere and kind."
-                )
-            )
-
-    def recipient_unavailable(self):
-        self.hangup(
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.client_name} letting them know "
-                f"their {self.membership_name} membership at Harmony Wellness Center is expiring "
-                f"on {self.expiry_date}. Ask them to call us back or visit our website to renew. "
-                "Keep it under 30 seconds, be warm, and leave the studio phone number as a callback."
+                f"Thank {client_name} enthusiastically for choosing to renew their membership. "
+                f"Confirm they selected the {renewal_plan} plan ({savings_msg}). "
+                "Let them know a team member will process the renewal and send a confirmation email shortly. "
+                "Tell them we're excited to keep supporting their wellness journey. Be warm and celebratory."
+            )
+        )
+
+    elif interest == "not sure yet" or (interest == "no" and callback_time):
+        try:
+            send_renewal_followup_email(client_id)
+        except Exception as e:
+            logging.error("Failed to send follow-up email: %s", e)
+
+        call.hangup(
+            final_instructions=(
+                f"Thank {client_name} for their time and let them know there is absolutely "
+                "no pressure. Tell them a team member will follow up at the time they requested "
+                "and that a renewal information email is on its way. "
+                "Remind them their membership is active until the expiry date. Be understanding and warm."
+            )
+        )
+
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {client_name} genuinely for being a member of Harmony Wellness Center. "
+                "Let them know the door is always open if they change their mind and invite them "
+                "to call or visit anytime. Wish them well on their wellness journey. Be sincere and kind."
             )
         )
 
@@ -250,13 +256,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=MembershipRenewalController(
-            client_name=args.name,
-            client_id=args.client_id,
-            expiry_date=args.expiry_date,
-            membership_name=args.membership_name,
-        ),
+        variables={
+            "client_name": args.name,
+            "client_id": args.client_id,
+            "expiry_date": args.expiry_date,
+            "membership_name": args.membership_name,
+        },
     )

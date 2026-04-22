@@ -86,155 +86,156 @@ def create_case(contact_id: str, account_id: str, subject: str, description: str
     return resp.json().get("id", "")
 
 
-class ServiceSchedulingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Riley",
+    organization="Apex Field Services",
+    purpose=(
+        "to help Apex Field Services customers schedule on-site service appointments "
+        "and ensure the right technician is dispatched"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Apex Field Services",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help Apex Field Services customers schedule on-site service appointments "
-                "and ensure the right technician is dispatched"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "book_appointment",
+        objective=(
+            "A customer has called to schedule a service appointment. Verify their identity, "
+            "understand the service need, capture a preferred time slot, and book the appointment "
+            "in Salesforce."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Apex Field Services. My name is Riley. "
+                "I can help you schedule a service appointment. Let me pull up your account."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called to schedule a service appointment. Verify their identity, "
-                "understand the service need, capture a preferred time slot, and book the appointment "
-                "in Salesforce."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for the email address on their account.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Apex Field Services. My name is Riley. "
-                    "I can help you schedule a service appointment. Let me pull up your account."
+            guava.Field(
+                key="service_type",
+                field_type="multiple_choice",
+                description="Ask what type of service they need.",
+                choices=[
+                    "installation",
+                    "repair",
+                    "maintenance inspection",
+                    "equipment replacement",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="issue_description",
+                field_type="text",
+                description=(
+                    "Ask them to briefly describe the issue or what they'd like done. "
+                    "Capture enough detail for a technician to prepare."
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for the email address on their account.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_slot",
+                field_type="multiple_choice",
+                description=(
+                    "Ask which time slot works best for them. "
+                    "Present the options naturally."
                 ),
-                guava.Field(
-                    key="service_type",
-                    field_type="multiple_choice",
-                    description="Ask what type of service they need.",
-                    choices=[
-                        "installation",
-                        "repair",
-                        "maintenance inspection",
-                        "equipment replacement",
-                        "other",
-                    ],
-                    required=True,
+                choices=[
+                    "tomorrow morning",
+                    "tomorrow afternoon",
+                    "day after tomorrow morning",
+                    "day after tomorrow afternoon",
+                    "next monday morning",
+                    "next monday afternoon",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="site_address",
+                field_type="text",
+                description=(
+                    "Ask for the service site address if it may differ from their account address. "
+                    "Confirm it back to them."
                 ),
-                guava.Field(
-                    key="issue_description",
-                    field_type="text",
-                    description=(
-                        "Ask them to briefly describe the issue or what they'd like done. "
-                        "Capture enough detail for a technician to prepare."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_slot",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask which time slot works best for them. "
-                        "Present the options naturally."
-                    ),
-                    choices=[
-                        "tomorrow morning",
-                        "tomorrow afternoon",
-                        "day after tomorrow morning",
-                        "day after tomorrow afternoon",
-                        "next monday morning",
-                        "next monday afternoon",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="site_address",
-                    field_type="text",
-                    description=(
-                        "Ask for the service site address if it may differ from their account address. "
-                        "Confirm it back to them."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.book_appointment,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def book_appointment(self):
-        email = self.get_field("caller_email") or ""
-        service_type = self.get_field("service_type") or "service"
-        description = self.get_field("issue_description") or ""
-        slot = self.get_field("preferred_slot") or "tomorrow morning"
-        address = self.get_field("site_address") or ""
+@agent.on_task_complete("book_appointment")
+def on_done(call: guava.Call) -> None:
+    email = call.get_field("caller_email") or ""
+    service_type = call.get_field("service_type") or "service"
+    description = call.get_field("issue_description") or ""
+    slot = call.get_field("preferred_slot") or "tomorrow morning"
+    address = call.get_field("site_address") or ""
 
-        logging.info("Looking up contact by email: %s", email)
-        try:
-            contact = find_contact_by_email(email)
-        except Exception as e:
-            logging.error("Contact lookup failed: %s", e)
-            contact = None
+    logging.info("Looking up contact by email: %s", email)
+    try:
+        contact = find_contact_by_email(email)
+    except Exception as e:
+        logging.error("Contact lookup failed: %s", e)
+        contact = None
 
-        if not contact:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you couldn't find an account with that email. "
-                    "Offer to transfer them to a team member who can assist manually. "
-                    "Apologize for the inconvenience."
-                )
-            )
-            return
-
-        contact_id = contact["Id"]
-        account_id = contact.get("AccountId") or ""
-        first_name = contact.get("FirstName") or "there"
-
-        full_description = f"Service type: {service_type}\nIssue: {description}"
-        if address:
-            full_description += f"\nSite address: {address}"
-
-        subject = f"{service_type.title()} Appointment"
-
-        logging.info("Creating Event and Case for contact %s — slot: %s", contact_id, slot)
-        event_id = ""
-        case_id = ""
-        try:
-            event_id = create_event(contact_id, account_id, subject, full_description, slot)
-            logging.info("Event created: %s", event_id)
-        except Exception as e:
-            logging.error("Failed to create Event: %s", e)
-
-        try:
-            case_id = create_case(contact_id, account_id, subject, full_description)
-            logging.info("Case created: %s", case_id)
-        except Exception as e:
-            logging.error("Failed to create Case: %s", e)
-
-        slot_friendly = slot.replace("-", " ")
-
-        self.hangup(
+    if not contact:
+        call.hangup(
             final_instructions=(
-                f"Let {first_name} know their {service_type} appointment has been scheduled for "
-                f"{slot_friendly}. "
-                + (f"Their service case number is {case_id}. " if case_id else "")
-                + "A technician will arrive during that window and they'll receive a confirmation "
-                "via email. Thank them for calling Apex Field Services and wish them a great day."
+                "Let the caller know you couldn't find an account with that email. "
+                "Offer to transfer them to a team member who can assist manually. "
+                "Apologize for the inconvenience."
             )
         )
+        return
+
+    contact_id = contact["Id"]
+    account_id = contact.get("AccountId") or ""
+    first_name = contact.get("FirstName") or "there"
+
+    full_description = f"Service type: {service_type}\nIssue: {description}"
+    if address:
+        full_description += f"\nSite address: {address}"
+
+    subject = f"{service_type.title()} Appointment"
+
+    logging.info("Creating Event and Case for contact %s — slot: %s", contact_id, slot)
+    event_id = ""
+    case_id = ""
+    try:
+        event_id = create_event(contact_id, account_id, subject, full_description, slot)
+        logging.info("Event created: %s", event_id)
+    except Exception as e:
+        logging.error("Failed to create Event: %s", e)
+
+    try:
+        case_id = create_case(contact_id, account_id, subject, full_description)
+        logging.info("Case created: %s", case_id)
+    except Exception as e:
+        logging.error("Failed to create Case: %s", e)
+
+    slot_friendly = slot.replace("-", " ")
+
+    call.hangup(
+        final_instructions=(
+            f"Let {first_name} know their {service_type} appointment has been scheduled for "
+            f"{slot_friendly}. "
+            + (f"Their service case number is {case_id}. " if case_id else "")
+            + "A technician will arrive during that window and they'll receive a confirmation "
+            "via email. Thank them for calling Apex Field Services and wish them a great day."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ServiceSchedulingController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

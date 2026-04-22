@@ -53,55 +53,68 @@ def add_order_note(order_id: int, existing_notes: str, new_note: str) -> None:
     resp.raise_for_status()
 
 
-class DeliveryExceptionController(guava.CallController):
-    def __init__(self, customer_name: str, order_number: str, exception_reason: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.order_number = order_number
-        self.exception_reason = exception_reason
+agent = guava.Agent(
+    name="Casey",
+    organization="Pacific Home Goods",
+    purpose="to assist customers with delivery issues and find solutions",
+)
 
-        try:
-            self.shipment = fetch_shipment_by_order_number(order_number)
-        except Exception as e:
-            logging.error("Pre-fetch shipment failed: %s", e)
-            self.shipment = None
 
-        try:
-            self.order = fetch_order_by_number(order_number)
-        except Exception as e:
-            logging.error("Pre-fetch order failed: %s", e)
-            self.order = None
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
 
-        self.set_persona(
-            organization_name="Pacific Home Goods",
-            agent_name="Casey",
-            agent_purpose="to assist customers with delivery issues and find solutions",
+    try:
+        call.shipment = fetch_shipment_by_order_number(order_number)
+    except Exception as e:
+        logging.error("Pre-fetch shipment failed: %s", e)
+        call.shipment = None
+
+    try:
+        call.order = fetch_order_by_number(order_number)
+    except Exception as e:
+        logging.error("Pre-fetch order failed: %s", e)
+        call.order = None
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+    exception_reason = call.get_variable("exception_reason")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {customer_name}. "
+                f"Mention you are calling from Pacific Home Goods about a delivery exception "
+                f"on order #{order_number}. "
+                "Ask them to call back at 1-800-555-0192 or visit pacifichomegoods.com to resolve the issue. "
+                "Keep it under 30 seconds."
+            )
         )
+    elif outcome == "available":
+        tracking_number = call.shipment.get("trackingNumber", "unknown") if call.shipment else "unknown"
+        carrier_code = call.shipment.get("carrierCode", "the carrier") if call.shipment else "the carrier"
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        tracking_number = self.shipment.get("trackingNumber", "unknown") if self.shipment else "unknown"
-        carrier_code = self.shipment.get("carrierCode", "the carrier") if self.shipment else "the carrier"
-
-        self.set_task(
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Inform {self.customer_name} about a delivery exception on order #{self.order_number} "
+                f"Inform {customer_name} about a delivery exception on order #{order_number} "
                 f"and collect updated delivery instructions to resolve the issue."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, may I speak with {self.customer_name}? "
+                    f"Hi, may I speak with {customer_name}? "
                     f"This is Casey calling from Pacific Home Goods regarding your recent order."
                 ),
                 guava.Say(
                     f"I'm reaching out because we received a delivery exception notice from {carrier_code} "
-                    f"for your order #{self.order_number} with tracking number {tracking_number}. "
-                    f"The reason noted was: {self.exception_reason}. "
+                    f"for your order #{order_number} with tracking number {tracking_number}. "
+                    f"The reason noted was: {exception_reason}. "
                     "We want to make sure your package reaches you as quickly as possible."
                 ),
                 guava.Field(
@@ -128,48 +141,42 @@ class DeliveryExceptionController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        resolution = self.get_field("resolution_preference")
-        instructions = self.get_field("updated_instructions") or "No additional instructions provided."
 
-        if self.order:
-            order_id = self.order.get("orderId")
-            existing_notes = self.order.get("internalNotes", "") or ""
-            note = (
-                f"[DELIVERY EXCEPTION] Reason: {self.exception_reason}. "
-                f"Customer resolution preference: {resolution}. "
-                f"Instructions: {instructions}."
-            )
-            try:
-                add_order_note(order_id, existing_notes, note)
-                logging.info("Updated internal notes on order %s", self.order_number)
-            except Exception as e:
-                logging.error("Failed to update order notes: %s", e)
+@agent.on_task_complete("handle_outcome")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+    exception_reason = call.get_variable("exception_reason")
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.customer_name} for their time and patience. "
-                f"Confirm their chosen resolution: {resolution}. "
-                f"Let them know Pacific Home Goods will follow up with the carrier to implement "
-                "their preference, and they can expect an update within one business day. "
-                "Provide the customer service number (1-800-555-0192) if they have further questions. "
-                "Be warm and reassuring."
-            )
+    resolution = call.get_field("resolution_preference")
+    instructions = call.get_field("updated_instructions") or "No additional instructions provided."
+
+    if call.order:
+        order_id = call.order.get("orderId")
+        existing_notes = call.order.get("internalNotes", "") or ""
+        note = (
+            f"[DELIVERY EXCEPTION] Reason: {exception_reason}. "
+            f"Customer resolution preference: {resolution}. "
+            f"Instructions: {instructions}."
         )
+        try:
+            add_order_note(order_id, existing_notes, note)
+            logging.info("Updated internal notes on order %s", order_number)
+        except Exception as e:
+            logging.error("Failed to update order notes: %s", e)
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name}. "
-                f"Mention you are calling from Pacific Home Goods about a delivery exception "
-                f"on order #{self.order_number}. "
-                "Ask them to call back at 1-800-555-0192 or visit pacifichomegoods.com to resolve the issue. "
-                "Keep it under 30 seconds."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} for their time and patience. "
+            f"Confirm their chosen resolution: {resolution}. "
+            f"Let them know Pacific Home Goods will follow up with the carrier to implement "
+            "their preference, and they can expect an update within one business day. "
+            "Provide the customer service number (1-800-555-0192) if they have further questions. "
+            "Be warm and reassuring."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -187,12 +194,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DeliveryExceptionController(
-            customer_name=args.name,
-            order_number=args.order_number,
-            exception_reason=args.exception_reason,
-        ),
+        variables={
+            "customer_name": args.name,
+            "order_number": args.order_number,
+            "exception_reason": args.exception_reason,
+        },
     )

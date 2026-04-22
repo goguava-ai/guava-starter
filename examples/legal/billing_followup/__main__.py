@@ -7,34 +7,54 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sam",
+    organization="Hargrove & Associates Law Firm - Billing",
+    purpose=(
+        "to follow up on an outstanding invoice, confirm its receipt, and "
+        "collect the client's payment intention, commitment date, or dispute "
+        "details in a professional and respectful manner"
+    ),
+)
 
-class BillingFollowupController(guava.CallController):
-    def __init__(self, contact_name, invoice_number, amount_due, due_date):
-        super().__init__()
-        self.contact_name = contact_name
-        self.invoice_number = invoice_number
-        self.amount_due = amount_due
-        self.due_date = due_date
-        self.set_persona(
-            organization_name="Hargrove & Associates Law Firm - Billing",
-            agent_name="Sam",
-            agent_purpose=(
-                "to follow up on an outstanding invoice, confirm its receipt, and "
-                "collect the client's payment intention, commitment date, or dispute "
-                "details in a professional and respectful manner"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_billing_followup,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_billing_followup(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "call_type": "outbound_billing_followup",
+            "status": "recipient_unavailable",
+            "meta": {
+                "contact_name": call.get_variable("contact_name"),
+                "invoice_number": call.get_variable("invoice_number"),
+                "amount_due": call.get_variable("amount_due"),
+                "due_date": call.get_variable("due_date"),
+            },
+        }
+        print(json.dumps(results, indent=2))
+        logging.info("Recipient unavailable for billing follow-up call.")
+        call.hangup(
+            final_instructions=(
+                "Leave a brief, professional voicemail identifying yourself as Sam "
+                "calling from the billing department at Hargrove and Associates Law "
+                f"Firm. State that you are calling regarding invoice number "
+                f"{call.get_variable('invoice_number')} and ask that they return your call at their "
+                "earliest convenience to discuss the matter. Provide the firm's "
+                "billing department number and say goodbye."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "billing_followup",
             objective=(
-                f"Follow up on invoice number {self.invoice_number} in the amount of "
-                f"{self.amount_due}, which was due on {self.due_date}. Confirm the "
+                f"Follow up on invoice number {call.get_variable('invoice_number')} in the amount of "
+                f"{call.get_variable('amount_due')}, which was due on {call.get_variable('due_date')}. Confirm the "
                 "client received the invoice, determine their payment intention, and "
                 "collect a payment commitment date, payment plan request, or dispute "
                 "details as applicable. Remain courteous, professional, and "
@@ -44,8 +64,8 @@ class BillingFollowupController(guava.CallController):
                 guava.Say(
                     f"Good day. I am calling from the billing department at Hargrove "
                     f"and Associates Law Firm. I am reaching out regarding invoice "
-                    f"number {self.invoice_number} in the amount of {self.amount_due}, "
-                    f"which had a due date of {self.due_date}. I wanted to follow up "
+                    f"number {call.get_variable('invoice_number')} in the amount of {call.get_variable('amount_due')}, "
+                    f"which had a due date of {call.get_variable('due_date')}. I wanted to follow up "
                     "to confirm you received the invoice and to discuss the status of "
                     "payment. I appreciate your time."
                 ),
@@ -53,7 +73,7 @@ class BillingFollowupController(guava.CallController):
                     key="invoice_received",
                     description=(
                         f"Whether the client confirms they received invoice number "
-                        f"{self.invoice_number}"
+                        f"{call.get_variable('invoice_number')}"
                     ),
                     field_type="text",
                     required=True,
@@ -96,65 +116,41 @@ class BillingFollowupController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "call_type": "outbound_billing_followup",
-            "meta": {
-                "contact_name": self.contact_name,
-                "invoice_number": self.invoice_number,
-                "amount_due": self.amount_due,
-                "due_date": self.due_date,
-            },
-            "fields": {
-                "invoice_received": self.get_field("invoice_received"),
-                "payment_intention": self.get_field("payment_intention"),
-                "payment_date_commitment": self.get_field("payment_date_commitment"),
-                "dispute_reason": self.get_field("dispute_reason"),
-                "preferred_payment_method": self.get_field("preferred_payment_method"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Billing follow-up results saved.")
-        self.hangup(
-            final_instructions=(
-                "Thank the client by name for their time and for discussing the "
-                "invoice. Summarize the outcome briefly — for example, confirm the "
-                "payment commitment date they provided, acknowledge that a payment "
-                "plan inquiry will be forwarded to the appropriate team, or confirm "
-                "that their dispute has been noted and will be reviewed. Let them know "
-                "they will receive any necessary follow-up by email or phone. Say "
-                "goodbye professionally."
-            )
-        )
 
-    def recipient_unavailable(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "call_type": "outbound_billing_followup",
-            "status": "recipient_unavailable",
-            "meta": {
-                "contact_name": self.contact_name,
-                "invoice_number": self.invoice_number,
-                "amount_due": self.amount_due,
-                "due_date": self.due_date,
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Recipient unavailable for billing follow-up call.")
-        self.hangup(
-            final_instructions=(
-                "Leave a brief, professional voicemail identifying yourself as Sam "
-                "calling from the billing department at Hargrove and Associates Law "
-                f"Firm. State that you are calling regarding invoice number "
-                f"{self.invoice_number} and ask that they return your call at their "
-                "earliest convenience to discuss the matter. Provide the firm's "
-                "billing department number and say goodbye."
-            )
+@agent.on_task_complete("billing_followup")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "call_type": "outbound_billing_followup",
+        "meta": {
+            "contact_name": call.get_variable("contact_name"),
+            "invoice_number": call.get_variable("invoice_number"),
+            "amount_due": call.get_variable("amount_due"),
+            "due_date": call.get_variable("due_date"),
+        },
+        "fields": {
+            "invoice_received": call.get_field("invoice_received"),
+            "payment_intention": call.get_field("payment_intention"),
+            "payment_date_commitment": call.get_field("payment_date_commitment"),
+            "dispute_reason": call.get_field("dispute_reason"),
+            "preferred_payment_method": call.get_field("preferred_payment_method"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Billing follow-up results saved.")
+    call.hangup(
+        final_instructions=(
+            "Thank the client by name for their time and for discussing the "
+            "invoice. Summarize the outcome briefly — for example, confirm the "
+            "payment commitment date they provided, acknowledge that a payment "
+            "plan inquiry will be forwarded to the appropriate team, or confirm "
+            "that their dispute has been noted and will be reviewed. Let them know "
+            "they will receive any necessary follow-up by email or phone. Say "
+            "goodbye professionally."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -175,13 +171,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=BillingFollowupController(
-            contact_name=args.name,
-            invoice_number=args.invoice_number,
-            amount_due=args.amount_due,
-            due_date=args.due_date,
-        ),
+        variables={
+            "contact_name": args.name,
+            "invoice_number": args.invoice_number,
+            "amount_due": args.amount_due,
+            "due_date": args.due_date,
+        },
     )

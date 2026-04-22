@@ -52,60 +52,75 @@ def log_call(patient_id: str, notes: str) -> dict:
     return resp.json()
 
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, appointment_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.appointment_id = appointment_id
-        self.appointment = None
+agent = guava.Agent(
+    name="Sam",
+    organization="Oakridge Family Medicine",
+    purpose="to remind patients of upcoming appointments and confirm their attendance",
+)
 
-        # Pre-call: fetch appointment details
-        try:
-            self.appointment = get_appointment(appointment_id)
-            logging.info(
-                "Fetched appointment %s: scheduled_time=%s, reason=%s",
-                appointment_id,
-                self.appointment.get("scheduled_time"),
-                self.appointment.get("reason"),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+
+    # Fetch appointment details
+    appointment = None
+    try:
+        appointment = get_appointment(appointment_id)
+        logging.info(
+            "Fetched appointment %s: scheduled_time=%s, reason=%s",
+            appointment_id,
+            appointment.get("scheduled_time"),
+            appointment.get("reason"),
+        )
+    except Exception as e:
+        logging.error("Failed to fetch appointment %s pre-call: %s", appointment_id, e)
+
+    scheduled_time = appointment.get("scheduled_time", "your upcoming appointment") if appointment else "your upcoming appointment"
+    reason = appointment.get("reason", "") if appointment else ""
+    duration = appointment.get("duration", 30) if appointment else 30
+
+    call.data = {
+        "appt_display": scheduled_time,
+        "appt_reason": reason,
+        "appt_duration": duration,
+    }
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    appt_display = call.data.get("appt_display", "your upcoming appointment")
+    appt_reason = call.data.get("appt_reason", "")
+    appt_duration = call.data.get("appt_duration", 30)
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for appointment reminder.", patient_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {patient_name} from Oakridge Family Medicine. "
+                f"Let them know you're calling to remind them about their appointment on {appt_display}. "
+                "Ask them to call back to confirm or cancel. Keep it friendly and concise."
             )
-        except Exception as e:
-            logging.error("Failed to fetch appointment %s pre-call: %s", appointment_id, e)
-
-        scheduled_time = self.appointment.get("scheduled_time", "your upcoming appointment") if self.appointment else "your upcoming appointment"
-        reason = self.appointment.get("reason", "") if self.appointment else ""
-        duration = self.appointment.get("duration", 30) if self.appointment else 30
-
-        self.appt_display = scheduled_time
-        self.appt_reason = reason
-        self.appt_duration = duration
-
-        self.set_persona(
-            organization_name="Oakridge Family Medicine",
-            agent_name="Sam",
-            agent_purpose="to remind patients of upcoming appointments and confirm their attendance",
         )
-
-        self.reach_person(
-            contact_full_name=patient_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        reason_clause = f" for {self.appt_reason}" if self.appt_reason else ""
-        self.set_task(
+    elif outcome == "available":
+        reason_clause = f" for {appt_reason}" if appt_reason else ""
+        call.set_task(
+            "save_results",
             objective=(
-                f"Remind {self.patient_name} of their upcoming appointment{reason_clause} "
-                f"at Oakridge Family Medicine scheduled for {self.appt_display} "
-                f"({self.appt_duration} minutes). Confirm whether they will attend, "
+                f"Remind {patient_name} of their upcoming appointment{reason_clause} "
+                f"at Oakridge Family Medicine scheduled for {appt_display} "
+                f"({appt_duration} minutes). Confirm whether they will attend, "
                 "ask if they have any questions, and update the appointment status accordingly."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Sam calling from Oakridge Family Medicine. "
-                    f"I'm calling to remind you about your upcoming appointment{' for ' + self.appt_reason if self.appt_reason else ''} "
-                    f"scheduled for {self.appt_display}. It's about {self.appt_duration} minutes long."
+                    f"Hi {patient_name}, this is Sam calling from Oakridge Family Medicine. "
+                    f"I'm calling to remind you about your upcoming appointment{' for ' + appt_reason if appt_reason else ''} "
+                    f"scheduled for {appt_display}. It's about {appt_duration} minutes long."
                 ),
                 guava.Field(
                     key="confirmation_status",
@@ -134,81 +149,77 @@ class AppointmentReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        confirmation_status = self.get_field("confirmation_status") or "confirmed"
-        has_questions = self.get_field("has_questions") or "no"
-        questions_or_notes = self.get_field("questions_or_notes") or ""
 
-        # Map collected status to DrChrono appointment status
-        if confirmation_status == "confirmed":
-            new_status = "Confirmed"
-        elif confirmation_status == "cancel":
-            new_status = "Cancelled"
-        else:
-            # need-to-reschedule — mark cancelled; office will follow up
-            new_status = "Cancelled"
+@agent.on_task_complete("save_results")
+def on_save_results(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    appointment_id = call.get_variable("appointment_id")
+    appt_display = call.data.get("appt_display", "your upcoming appointment")
 
-        try:
-            update_appointment_status(self.appointment_id, new_status)
-            logging.info("Appointment %s status updated to '%s'", self.appointment_id, new_status)
-        except Exception as e:
-            logging.error("Failed to update appointment %s status: %s", self.appointment_id, e)
+    confirmation_status = call.get_field("confirmation_status") or "confirmed"
+    has_questions = call.get_field("has_questions") or "no"
+    questions_or_notes = call.get_field("questions_or_notes") or ""
 
-        # Build call log notes
-        notes_parts = [
-            f"Reminder call to {self.patient_name} for appointment {self.appointment_id}.",
-            f"Response: {confirmation_status}.",
-        ]
-        if questions_or_notes:
-            notes_parts.append(f"Patient question/note: {questions_or_notes}")
-        call_notes = " ".join(notes_parts)
+    # Map collected status to DrChrono appointment status
+    if confirmation_status == "confirmed":
+        new_status = "Confirmed"
+    elif confirmation_status == "cancel":
+        new_status = "Cancelled"
+    else:
+        # need-to-reschedule — mark cancelled; office will follow up
+        new_status = "Cancelled"
 
-        try:
-            log_call(self.patient_id, call_notes)
-            logging.info("Call logged for patient %s", self.patient_id)
-        except Exception as e:
-            logging.error("Failed to log call for patient %s: %s", self.patient_id, e)
+    try:
+        update_appointment_status(appointment_id, new_status)
+        logging.info("Appointment %s status updated to '%s'", appointment_id, new_status)
+    except Exception as e:
+        logging.error("Failed to update appointment %s status: %s", appointment_id, e)
 
-        if confirmation_status == "confirmed":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for confirming. "
-                    "Remind them to arrive 10 minutes early and bring their insurance card and a photo ID. "
-                    + (
-                        "Let them know their question has been passed along to the care team and "
-                        "someone will follow up before their visit. "
-                        if questions_or_notes else ""
-                    )
-                    + "Wish them a great day."
-                )
-            )
-        elif confirmation_status == "need-to-reschedule":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their appointment has been cancelled and "
-                    "that a team member from Oakridge Family Medicine will call them back "
-                    "to find a new time that works. Apologize for any inconvenience and wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their appointment has been cancelled. "
-                    "Encourage them to call back whenever they're ready to schedule again. "
-                    "Thank them for letting us know and wish them a great day."
-                )
-            )
+    # Build call log notes
+    notes_parts = [
+        f"Reminder call to {patient_name} for appointment {appointment_id}.",
+        f"Response: {confirmation_status}.",
+    ]
+    if questions_or_notes:
+        notes_parts.append(f"Patient question/note: {questions_or_notes}")
+    call_notes = " ".join(notes_parts)
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for appointment reminder.", self.patient_name)
-        self.hangup(
+    try:
+        log_call(patient_id, call_notes)
+        logging.info("Call logged for patient %s", patient_id)
+    except Exception as e:
+        logging.error("Failed to log call for patient %s: %s", patient_id, e)
+
+    if confirmation_status == "confirmed":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Oakridge Family Medicine. "
-                f"Let them know you're calling to remind them about their appointment on {self.appt_display}. "
-                "Ask them to call back to confirm or cancel. Keep it friendly and concise."
+                f"Thank {patient_name} for confirming. "
+                "Remind them to arrive 10 minutes early and bring their insurance card and a photo ID. "
+                + (
+                    "Let them know their question has been passed along to the care team and "
+                    "someone will follow up before their visit. "
+                    if questions_or_notes else ""
+                )
+                + "Wish them a great day."
+            )
+        )
+    elif confirmation_status == "need-to-reschedule":
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their appointment has been cancelled and "
+                "that a team member from Oakridge Family Medicine will call them back "
+                "to find a new time that works. Apologize for any inconvenience and wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their appointment has been cancelled. "
+                "Encourage them to call back whenever they're ready to schedule again. "
+                "Thank them for letting us know and wish them a great day."
             )
         )
 
@@ -229,12 +240,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.appointment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "appointment_id": args.appointment_id,
+        },
     )

@@ -8,34 +8,41 @@ from datetime import datetime, timezone
 
 
 
-class CollectionsOutreachController(guava.CallController):
-    def __init__(self, contact_name: str, balance: str, due_date: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.balance = balance
-        self.due_date = due_date
+agent = guava.Agent(
+    name="Morgan",
+    organization="First National Bank - Account Services",
+    purpose=(
+        "to reach out regarding a past-due account balance, discuss available payment "
+        "options, and collect a commitment-to-pay from the account holder"
+    ),
+)
 
-        self.set_persona(
-            organization_name="First National Bank - Account Services",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to reach out regarding a past-due account balance, discuss available payment "
-                "options, and collect a commitment-to-pay from the account holder"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"You were unable to reach {call.get_variable('contact_name')}. Leave a brief, professional "
+                f"voicemail identifying yourself as Morgan from First National Bank Account "
+                f"Services. Mention that you are calling regarding their account and that there is "
+                f"an important matter they should address. Ask them to return the call at their "
+                f"earliest convenience. Do not disclose the specific balance amount or account "
+                f"details in the voicemail."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_collections_outreach,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_collections_outreach(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "outreach",
             objective=(
-                f"You are contacting {self.contact_name} from First National Bank - Account "
-                f"Services regarding a past-due balance of {self.balance} that was due on "
-                f"{self.due_date}. Your goal is to inform them of the outstanding balance in a "
+                f"You are contacting {call.get_variable('contact_name')} from First National Bank - Account "
+                f"Services regarding a past-due balance of {call.get_variable('balance')} that was due on "
+                f"{call.get_variable('due_date')}. Your goal is to inform them of the outstanding balance in a "
                 f"respectful, non-confrontational manner, present available resolution options "
                 f"including full payment, a payment plan, or dispute process, and obtain a clear "
                 f"commitment-to-pay with specific details. Always remain empathetic and solution-"
@@ -43,9 +50,9 @@ class CollectionsOutreachController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.contact_name}, this is Morgan calling from First National Bank "
+                    f"Hello {call.get_variable('contact_name')}, this is Morgan calling from First National Bank "
                     f"Account Services. I am reaching out today regarding your account, which shows "
-                    f"a balance of {self.balance} that was due on {self.due_date}. I want to help "
+                    f"a balance of {call.get_variable('balance')} that was due on {call.get_variable('due_date')}. I want to help "
                     f"find a solution that works for you."
                 ),
                 guava.Say(
@@ -95,43 +102,32 @@ class CollectionsOutreachController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "balance": self.balance,
-            "due_date": self.due_date,
-            "payment_intention": self.get_field("payment_intention"),
-            "payment_date": self.get_field("payment_date"),
-            "payment_amount": self.get_field("payment_amount"),
-            "dispute_reason": self.get_field("dispute_reason"),
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.contact_name} for speaking with you today. Summarize the agreed-upon "
-                f"next step based on their payment intention: if paying now or on a plan, confirm "
-                f"the date and amount; if disputing, let them know the dispute team will follow up "
-                f"within 3 to 5 business days; if calling back, note the account will remain open. "
-                f"Remind them that the Account Services team is available to help and close the "
-                f"call courteously."
-            )
-        )
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"You were unable to reach {self.contact_name}. Leave a brief, professional "
-                f"voicemail identifying yourself as Morgan from First National Bank Account "
-                f"Services. Mention that you are calling regarding their account and that there is "
-                f"an important matter they should address. Ask them to return the call at their "
-                f"earliest convenience. Do not disclose the specific balance amount or account "
-                f"details in the voicemail."
-            )
+@agent.on_task_complete("outreach")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "balance": call.get_variable("balance"),
+        "due_date": call.get_variable("due_date"),
+        "payment_intention": call.get_field("payment_intention"),
+        "payment_date": call.get_field("payment_date"),
+        "payment_amount": call.get_field("payment_amount"),
+        "dispute_reason": call.get_field("dispute_reason"),
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('contact_name')} for speaking with you today. Summarize the agreed-upon "
+            f"next step based on their payment intention: if paying now or on a plan, confirm "
+            f"the date and amount; if disputing, let them know the dispute team will follow up "
+            f"within 3 to 5 business days; if calling back, note the account will remain open. "
+            f"Remind them that the Account Services team is available to help and close the "
+            f"call courteously."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -153,14 +149,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    controller = CollectionsOutreachController(
-        contact_name=args.name,
-        balance=args.balance,
-        due_date=args.due_date,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "balance": args.balance,
+            "due_date": args.due_date,
+        },
     )

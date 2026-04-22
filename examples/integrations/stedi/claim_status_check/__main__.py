@@ -94,121 +94,122 @@ def summarize_claim_status(response: dict) -> str:
     return description
 
 
-class ClaimStatusCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Ridgeline Health",
+    purpose=(
+        "to help patients and their families check the status of insurance claims "
+        "submitted on their behalf"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Ridgeline Health",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help patients and their families check the status of insurance claims "
-                "submitted on their behalf"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_claim",
+        objective=(
+            "A patient has called to find out what happened to a claim. "
+            "Verify their identity, collect their claim reference number, "
+            "and look up the real-time claim status through Stedi."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Ridgeline Health billing. I'm Sam. "
+                "I can look up the status of a claim for you right now."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A patient has called to find out what happened to a claim. "
-                "Verify their identity, collect their claim reference number, "
-                "and look up the real-time claim status through Stedi."
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask for the patient's first name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Ridgeline Health billing. I'm Sam. "
-                    "I can look up the status of a claim for you right now."
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for the patient's last name.",
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="date",
+                description="Ask for their date of birth.",
+                required=True,
+            ),
+            guava.Field(
+                key="member_id",
+                field_type="text",
+                description="Ask for their insurance member ID.",
+                required=True,
+            ),
+            guava.Field(
+                key="payer_id",
+                field_type="text",
+                description="Ask which insurance company processed the claim.",
+                required=True,
+            ),
+            guava.Field(
+                key="claim_number",
+                field_type="text",
+                description=(
+                    "Ask for the claim reference number from their Explanation of Benefits "
+                    "or billing statement. This is sometimes labeled 'patient control number' "
+                    "or 'patient account number'."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask for the patient's first name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for the patient's last name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="date",
-                    description="Ask for their date of birth.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="member_id",
-                    field_type="text",
-                    description="Ask for their insurance member ID.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="payer_id",
-                    field_type="text",
-                    description="Ask which insurance company processed the claim.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="claim_number",
-                    field_type="text",
-                    description=(
-                        "Ask for the claim reference number from their Explanation of Benefits "
-                        "or billing statement. This is sometimes labeled 'patient control number' "
-                        "or 'patient account number'."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_claim,
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("look_up_claim")
+def look_up_claim(call: guava.Call) -> None:
+    first_name = call.get_field("first_name") or ""
+    last_name = call.get_field("last_name") or ""
+    dob = call.get_field("date_of_birth") or ""
+    member_id = call.get_field("member_id") or ""
+    payer_id = call.get_field("payer_id") or ""
+    claim_number = call.get_field("claim_number") or ""
+
+    logging.info(
+        "Checking claim status — patient: %s %s, claim: %s, payer: %s",
+        first_name, last_name, claim_number, payer_id,
+    )
+
+    try:
+        result = check_claim_status(
+            payer_id, member_id, first_name, last_name, dob, claim_number
         )
-
-        self.accept_call()
-
-    def look_up_claim(self):
-        first_name = self.get_field("first_name") or ""
-        last_name = self.get_field("last_name") or ""
-        dob = self.get_field("date_of_birth") or ""
-        member_id = self.get_field("member_id") or ""
-        payer_id = self.get_field("payer_id") or ""
-        claim_number = self.get_field("claim_number") or ""
-
-        logging.info(
-            "Checking claim status — patient: %s %s, claim: %s, payer: %s",
-            first_name, last_name, claim_number, payer_id,
-        )
-
-        try:
-            result = check_claim_status(
-                payer_id, member_id, first_name, last_name, dob, claim_number
-            )
-            status_description = summarize_claim_status(result)
-        except Exception as e:
-            logging.error("Stedi claim status check failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {first_name} — there was a technical issue checking their claim. "
-                    "Ask them to call back during business hours so a billing specialist can assist. "
-                    "Thank them for their patience."
-                )
-            )
-            return
-
-        logging.info("Claim status for #%s: %s", claim_number, status_description)
-
-        self.hangup(
+        status_description = summarize_claim_status(result)
+    except Exception as e:
+        logging.error("Stedi claim status check failed: %s", e)
+        call.hangup(
             final_instructions=(
-                f"Let {first_name} know the current status of claim #{claim_number}: "
-                f"it is {status_description}. "
-                "If they want to follow up, dispute a denial, or ask about a specific amount, "
-                "let them know they can speak with a billing specialist by calling back. "
-                "Thank them for calling Ridgeline Health."
+                f"Apologize to {first_name} — there was a technical issue checking their claim. "
+                "Ask them to call back during business hours so a billing specialist can assist. "
+                "Thank them for their patience."
             )
         )
+        return
+
+    logging.info("Claim status for #%s: %s", claim_number, status_description)
+
+    call.hangup(
+        final_instructions=(
+            f"Let {first_name} know the current status of claim #{claim_number}: "
+            f"it is {status_description}. "
+            "If they want to follow up, dispute a denial, or ask about a specific amount, "
+            "let them know they can speak with a billing specialist by calling back. "
+            "Thank them for calling Ridgeline Health."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ClaimStatusCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

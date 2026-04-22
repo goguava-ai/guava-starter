@@ -98,201 +98,202 @@ def fetch_upcoming_classes():
     return resp.json().get("Classes", [])
 
 
-class AppointmentBookingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+# Pre-fetch bookable services so we can present real options.
+try:
+    _items = fetch_bookable_items()
+    _session_types = _items.get("SessionTypes", [])
+    _staff = _items.get("Staff", [])
+except Exception as e:
+    logging.error("Failed to fetch bookable items: %s", e)
+    _session_types = []
+    _staff = []
 
-        # Pre-fetch bookable services so we can present real options.
-        try:
-            items = fetch_bookable_items()
-            self._session_types = items.get("SessionTypes", [])
-            self._staff = items.get("Staff", [])
-        except Exception as e:
-            logging.error("Failed to fetch bookable items: %s", e)
-            self._session_types = []
-            self._staff = []
+# Build choice lists from live data, with sensible fallbacks.
+service_names = (
+    [s["Name"] for s in _session_types[:5]]
+    if _session_types
+    else ["Personal Training (60 min)", "Personal Training (30 min)", "Group Fitness Class"]
+)
 
-        # Build choice lists from live data, with sensible fallbacks.
-        service_names = (
-            [s["Name"] for s in self._session_types[:5]]
-            if self._session_types
-            else ["Personal Training (60 min)", "Personal Training (30 min)", "Group Fitness Class"]
-        )
+agent = guava.Agent(
+    name="Jordan",
+    organization="Peak Performance Studio",
+    purpose="to help clients book personal training sessions and fitness classes",
+)
 
-        self.set_persona(
-            organization_name="Peak Performance Studio",
-            agent_name="Jordan",
-            agent_purpose="to help clients book personal training sessions and fitness classes",
-        )
 
-        self.set_task(
-            objective=(
-                "Collect the caller's contact details and preferences, then book them "
-                "into a personal training session or group fitness class at Peak Performance Studio."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "collect_booking_preferences",
+        objective=(
+            "Collect the caller's contact details and preferences, then book them "
+            "into a personal training session or group fitness class at Peak Performance Studio."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Peak Performance Studio! My name is Jordan and "
+                "I'm here to help you get your next session on the books. "
+                "Just a few quick questions and we'll have you all set."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Peak Performance Studio! My name is Jordan and "
-                    "I'm here to help you get your next session on the books. "
-                    "Just a few quick questions and we'll have you all set."
+            guava.Field(
+                key="client_email",
+                field_type="text",
+                description=(
+                    "Ask for the caller's email address so we can look up their account. "
+                    "Confirm the spelling if it sounds ambiguous."
                 ),
-                guava.Field(
-                    key="client_email",
-                    field_type="text",
-                    description=(
-                        "Ask for the caller's email address so we can look up their account. "
-                        "Confirm the spelling if it sounds ambiguous."
-                    ),
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="booking_type",
+                field_type="multiple_choice",
+                description="Ask whether they'd like to book a personal training session or a group fitness class.",
+                choices=["personal training", "group fitness class"],
+                required=True,
+            ),
+            guava.Field(
+                key="service_preference",
+                field_type="multiple_choice",
+                description=(
+                    "Ask which type of session they prefer. "
+                    "Read the options naturally."
                 ),
-                guava.Field(
-                    key="booking_type",
-                    field_type="multiple_choice",
-                    description="Ask whether they'd like to book a personal training session or a group fitness class.",
-                    choices=["personal training", "group fitness class"],
-                    required=True,
+                choices=service_names,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_date",
+                field_type="text",
+                description=(
+                    "Ask what date they would like to come in. "
+                    "Accept natural language like 'this Thursday' or 'next Monday'."
                 ),
-                guava.Field(
-                    key="service_preference",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask which type of session they prefer. "
-                        "Read the options naturally."
-                    ),
-                    choices=service_names,
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_time",
+                field_type="text",
+                description=(
+                    "Ask what time of day works best — morning, afternoon, or a specific time."
                 ),
-                guava.Field(
-                    key="preferred_date",
-                    field_type="text",
-                    description=(
-                        "Ask what date they would like to come in. "
-                        "Accept natural language like 'this Thursday' or 'next Monday'."
-                    ),
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="staff_preference",
+                field_type="text",
+                description=(
+                    "Ask if they have a preferred trainer or instructor, or if any available staff is fine. "
+                    "This field is optional — if they say they don't mind, note 'no preference'."
                 ),
-                guava.Field(
-                    key="preferred_time",
-                    field_type="text",
-                    description=(
-                        "Ask what time of day works best — morning, afternoon, or a specific time."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="staff_preference",
-                    field_type="text",
-                    description=(
-                        "Ask if they have a preferred trainer or instructor, or if any available staff is fine. "
-                        "This field is optional — if they say they don't mind, note 'no preference'."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.handle_complete,
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("collect_booking_preferences")
+def handle_complete(call: guava.Call) -> None:
+    email = call.get_field("client_email")
+    booking_type = call.get_field("booking_type")
+    service_pref = call.get_field("service_preference")
+    preferred_date = call.get_field("preferred_date")
+    preferred_time = call.get_field("preferred_time")
+
+    logging.info(
+        "Booking request — email=%s type=%s service=%s date=%s time=%s",
+        email, booking_type, service_pref, preferred_date, preferred_time,
+    )
+
+    # Look up client account.
+    client = None
+    try:
+        client = lookup_client_by_email(email)
+    except Exception as e:
+        logging.error("Client lookup failed: %s", e)
+
+    if client is None:
+        logging.warning("No client found for email %s; cannot complete booking.", email)
+        call.hangup(
+            final_instructions=(
+                "Apologize warmly and let the caller know you weren't able to find their account "
+                "with the email provided. Ask them to visit the studio or call back during staffed hours "
+                "to complete the booking. Thank them for calling Peak Performance Studio."
+            )
         )
+        return
 
-        self.accept_call()
+    client_id = client.get("Id") or client.get("UniqueId")
 
-    def handle_complete(self):
-        email = self.get_field("client_email")
-        booking_type = self.get_field("booking_type")
-        service_pref = self.get_field("service_preference")
-        preferred_date = self.get_field("preferred_date")
-        preferred_time = self.get_field("preferred_time")
+    booking_confirmed = False
 
-        logging.info(
-            "Booking request — email=%s type=%s service=%s date=%s time=%s",
-            email, booking_type, service_pref, preferred_date, preferred_time,
-        )
-
-        # Look up client account.
-        client = None
+    if booking_type == "group fitness class":
+        # Attempt to enroll the client in an upcoming class matching their preference.
         try:
-            client = lookup_client_by_email(email)
+            classes = fetch_upcoming_classes()
+            target_class = next(
+                (c for c in classes if service_pref.lower() in c.get("ClassDescription", {}).get("Name", "").lower()),
+                classes[0] if classes else None,
+            )
+            if target_class:
+                add_client_to_class(client_id, target_class["Id"])
+                booking_confirmed = True
+                logging.info("Added client %s to class %s", client_id, target_class["Id"])
         except Exception as e:
-            logging.error("Client lookup failed: %s", e)
+            logging.error("Class enrollment failed: %s", e)
 
-        if client is None:
-            logging.warning("No client found for email %s; cannot complete booking.", email)
-            self.hangup(
-                final_instructions=(
-                    "Apologize warmly and let the caller know you weren't able to find their account "
-                    "with the email provided. Ask them to visit the studio or call back during staffed hours "
-                    "to complete the booking. Thank them for calling Peak Performance Studio."
-                )
-            )
-            return
+    else:
+        # Personal training — book an appointment.
+        # Match session type from pre-fetched list.
+        session_type = next(
+            (s for s in _session_types if service_pref.lower() in s.get("Name", "").lower()),
+            _session_types[0] if _session_types else None,
+        )
+        staff_member = _staff[0] if _staff else None
 
-        client_id = client.get("Id") or client.get("UniqueId")
-
-        booking_confirmed = False
-
-        if booking_type == "group fitness class":
-            # Attempt to enroll the client in an upcoming class matching their preference.
+        if session_type and staff_member:
+            # Use a placeholder datetime; in production derive from preferred_date / preferred_time.
+            start_dt = f"{date.today() + timedelta(days=1)}T09:00:00"
+            end_dt = f"{date.today() + timedelta(days=1)}T10:00:00"
             try:
-                classes = fetch_upcoming_classes()
-                target_class = next(
-                    (c for c in classes if service_pref.lower() in c.get("ClassDescription", {}).get("Name", "").lower()),
-                    classes[0] if classes else None,
+                book_appointment(
+                    client_id=client_id,
+                    staff_id=staff_member["Id"],
+                    session_type_id=session_type["Id"],
+                    start_datetime=start_dt,
+                    end_datetime=end_dt,
                 )
-                if target_class:
-                    add_client_to_class(client_id, target_class["Id"])
-                    booking_confirmed = True
-                    logging.info("Added client %s to class %s", client_id, target_class["Id"])
+                booking_confirmed = True
+                logging.info(
+                    "Appointment booked for client %s on %s", client_id, start_dt
+                )
             except Exception as e:
-                logging.error("Class enrollment failed: %s", e)
+                logging.error("Appointment booking failed: %s", e)
 
-        else:
-            # Personal training — book an appointment.
-            # Match session type from pre-fetched list.
-            session_type = next(
-                (s for s in self._session_types if service_pref.lower() in s.get("Name", "").lower()),
-                self._session_types[0] if self._session_types else None,
+    if booking_confirmed:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know their booking is confirmed and that a confirmation email "
+                "is on its way. Remind them to arrive 10 minutes early and to bring water and "
+                "proper workout attire. Wish them a great session and thank them for choosing "
+                "Peak Performance Studio. Be warm and encouraging."
             )
-            staff_member = self._staff[0] if self._staff else None
-
-            if session_type and staff_member:
-                # Use a placeholder datetime; in production derive from preferred_date / preferred_time.
-                start_dt = f"{date.today() + timedelta(days=1)}T09:00:00"
-                end_dt = f"{date.today() + timedelta(days=1)}T10:00:00"
-                try:
-                    book_appointment(
-                        client_id=client_id,
-                        staff_id=staff_member["Id"],
-                        session_type_id=session_type["Id"],
-                        start_datetime=start_dt,
-                        end_datetime=end_dt,
-                    )
-                    booking_confirmed = True
-                    logging.info(
-                        "Appointment booked for client %s on %s", client_id, start_dt
-                    )
-                except Exception as e:
-                    logging.error("Appointment booking failed: %s", e)
-
-        if booking_confirmed:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know their booking is confirmed and that a confirmation email "
-                    "is on its way. Remind them to arrive 10 minutes early and to bring water and "
-                    "proper workout attire. Wish them a great session and thank them for choosing "
-                    "Peak Performance Studio. Be warm and encouraging."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Apologize and let the caller know there was a technical issue completing the booking. "
+                "Ask them to try again or visit the studio in person. Thank them for their patience "
+                "and for calling Peak Performance Studio."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Apologize and let the caller know there was a technical issue completing the booking. "
-                    "Ask them to try again or visit the studio in person. Thank them for their patience "
-                    "and for calling Peak Performance Studio."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=AppointmentBookingController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

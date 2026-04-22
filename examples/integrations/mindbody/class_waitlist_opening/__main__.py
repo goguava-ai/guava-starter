@@ -68,78 +68,92 @@ def remove_client_from_waitlist(client_id: str, class_id: int) -> dict:
     return resp.json()
 
 
-class ClassWaitlistOpeningController(guava.CallController):
-    def __init__(self, client_name: str, client_id: str, class_id: int,
-                 class_name: str, class_datetime: str, instructor_name: str):
-        super().__init__()
-        self.client_name = client_name
-        self.client_id = client_id
-        self.class_id = class_id
-        self.class_name = class_name
-        self.class_datetime = class_datetime
-        self.instructor_name = instructor_name
-        self.spot_still_available = False
+agent = guava.Agent(
+    name="Riley",
+    organization="Harmony Wellness Center",
+    purpose="to notify waitlisted clients about open class spots",
+)
 
-        # Verify the spot is still open before dialing.
-        try:
-            class_details = fetch_class_details(class_id)
-            total_booked = class_details.get("TotalBooked", 0)
-            max_capacity = class_details.get("MaxCapacity", 0)
-            self.spot_still_available = (
-                max_capacity > 0 and total_booked < max_capacity
-            )
-            logging.info(
-                "Class %s capacity check: %d/%d booked — spot available: %s",
-                class_id, total_booked, max_capacity, self.spot_still_available,
-            )
-        except Exception as e:
-            logging.error("Failed to check class capacity for class %s: %s", class_id, e)
-            # Proceed optimistically; let the enrollment call surface the error if needed.
-            self.spot_still_available = True
 
-        self.set_persona(
-            organization_name="Harmony Wellness Center",
-            agent_name="Riley",
-            agent_purpose="to notify waitlisted clients about open class spots",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    class_id = int(call.get_variable("class_id"))
+
+    # Verify the spot is still open before dialing.
+    spot_still_available = False
+    try:
+        class_details = fetch_class_details(class_id)
+        total_booked = class_details.get("TotalBooked", 0)
+        max_capacity = class_details.get("MaxCapacity", 0)
+        spot_still_available = (
+            max_capacity > 0 and total_booked < max_capacity
         )
-
-        self.reach_person(
-            contact_full_name=self.client_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
+        logging.info(
+            "Class %s capacity check: %d/%d booked — spot available: %s",
+            class_id, total_booked, max_capacity, spot_still_available,
         )
+    except Exception as e:
+        logging.error("Failed to check class capacity for class %s: %s", class_id, e)
+        # Proceed optimistically; let the enrollment call surface the error if needed.
+        spot_still_available = True
 
-    def begin_call(self):
-        if not self.spot_still_available:
+    call.spot_still_available = spot_still_available
+    call.reach_person(contact_full_name=client_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    client_name = call.get_variable("client_name")
+    class_name = call.get_variable("class_name")
+    class_datetime = call.get_variable("class_datetime")
+    instructor_name = call.get_variable("instructor_name")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave an urgent but friendly voicemail for {client_name} letting them know "
+                f"a spot has opened in the {class_name} class on {class_datetime} "
+                f"with {instructor_name} at Harmony Wellness Center. "
+                "Ask them to call back or book through the app as soon as possible, "
+                "as spots fill up quickly. Keep it under 25 seconds and be upbeat."
+            )
+        )
+    elif outcome == "available":
+        spot_still_available = call.spot_still_available
+
+        if not spot_still_available:
             # Spot was taken between the pre-check and the call connecting — inform client gracefully.
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Apologize to {self.client_name} and let them know the spot in the "
-                    f"{self.class_name} class unfortunately just filled up before we could connect. "
+                    f"Apologize to {client_name} and let them know the spot in the "
+                    f"{class_name} class unfortunately just filled up before we could connect. "
                     "Let them know they are still on the waitlist and we will call again if another "
                     "spot opens. Thank them for their patience. Be warm and apologetic."
                 )
             )
             return
 
-        self.set_task(
+        call.set_task(
+            "collect_spot_decision",
             objective=(
-                f"Notify {self.client_name} that a spot has opened in the "
-                f"{self.class_name} class on {self.class_datetime} and confirm whether "
+                f"Notify {client_name} that a spot has opened in the "
+                f"{class_name} class on {class_datetime} and confirm whether "
                 "they want to take the spot."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.client_name}! This is Riley calling from Harmony Wellness Center "
-                    f"with great news — a spot just opened up in the {self.class_name} class "
-                    f"with {self.instructor_name} on {self.class_datetime}! "
+                    f"Hi {client_name}! This is Riley calling from Harmony Wellness Center "
+                    f"with great news — a spot just opened up in the {class_name} class "
+                    f"with {instructor_name} on {class_datetime}! "
                     "You were on the waitlist and we wanted to reach you right away."
                 ),
                 guava.Field(
                     key="wants_spot",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask {self.client_name} if they would like to take the open spot in the class. "
+                        f"Ask {client_name} if they would like to take the open spot in the class. "
                         "Let them know spots go quickly so we want to confirm right now."
                     ),
                     choices=["yes", "no"],
@@ -166,89 +180,85 @@ class ClassWaitlistOpeningController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        wants_spot = self.get_field("wants_spot")
-        decline_reason = self.get_field("decline_reason")
 
-        if wants_spot == "yes":
-            enrolled = False
+@agent.on_task_complete("collect_spot_decision")
+def handle_outcome(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    class_id = int(call.get_variable("class_id"))
+    class_name = call.get_variable("class_name")
+    class_datetime = call.get_variable("class_datetime")
+    instructor_name = call.get_variable("instructor_name")
+    wants_spot = call.get_field("wants_spot")
+    decline_reason = call.get_field("decline_reason")
+
+    if wants_spot == "yes":
+        enrolled = False
+        try:
+            add_client_to_class(client_id, class_id)
+            enrolled = True
+            logging.info(
+                "Enrolled client %s in class %s (%s)",
+                client_id, class_id, class_name,
+            )
+        except Exception as e:
+            logging.error(
+                "Failed to enroll client %s in class %s: %s",
+                client_id, class_id, e,
+            )
+
+        if enrolled:
+            call.hangup(
+                final_instructions=(
+                    f"Congratulate {client_name} — they are officially booked in the "
+                    f"{class_name} class on {class_datetime} with {instructor_name}! "
+                    "Let them know a confirmation email is on its way. Remind them to arrive a few "
+                    "minutes early and bring water and a mat if needed. Be enthusiastic and encouraging."
+                )
+            )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Apologize to {client_name} — unfortunately there was a technical issue "
+                    "while trying to secure their spot. Ask them to call the studio directly or "
+                    "log in to the app to complete the enrollment. Thank them for their understanding. "
+                    "Be apologetic and helpful."
+                )
+            )
+
+    else:
+        # Client declined — ask about staying on waitlist (captured in decline_reason).
+        # Remove from waitlist only if they explicitly asked to be removed.
+        if decline_reason and "remove" in decline_reason.lower():
             try:
-                add_client_to_class(self.client_id, self.class_id)
-                enrolled = True
+                remove_client_from_waitlist(client_id, class_id)
                 logging.info(
-                    "Enrolled client %s in class %s (%s)",
-                    self.client_id, self.class_id, self.class_name,
+                    "Removed client %s from waitlist for class %s",
+                    client_id, class_id,
                 )
             except Exception as e:
                 logging.error(
-                    "Failed to enroll client %s in class %s: %s",
-                    self.client_id, self.class_id, e,
+                    "Failed to remove client %s from waitlist for class %s: %s",
+                    client_id, class_id, e,
                 )
 
-            if enrolled:
-                self.hangup(
-                    final_instructions=(
-                        f"Congratulate {self.client_name} — they are officially booked in the "
-                        f"{self.class_name} class on {self.class_datetime} with {self.instructor_name}! "
-                        "Let them know a confirmation email is on its way. Remind them to arrive a few "
-                        "minutes early and bring water and a mat if needed. Be enthusiastic and encouraging."
-                    )
+            call.hangup(
+                final_instructions=(
+                    f"Thank {client_name} and confirm they have been removed from the waitlist "
+                    f"for the {class_name} class. Let them know they can always re-join the "
+                    "waitlist through the app or by calling the studio. Wish them well and be warm."
                 )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Apologize to {self.client_name} — unfortunately there was a technical issue "
-                        "while trying to secure their spot. Ask them to call the studio directly or "
-                        "log in to the app to complete the enrollment. Thank them for their understanding. "
-                        "Be apologetic and helpful."
-                    )
-                )
-
-        else:
-            # Client declined — ask about staying on waitlist (captured in decline_reason).
-            # Remove from waitlist only if they explicitly asked to be removed.
-            if decline_reason and "remove" in decline_reason.lower():
-                try:
-                    remove_client_from_waitlist(self.client_id, self.class_id)
-                    logging.info(
-                        "Removed client %s from waitlist for class %s",
-                        self.client_id, self.class_id,
-                    )
-                except Exception as e:
-                    logging.error(
-                        "Failed to remove client %s from waitlist for class %s: %s",
-                        self.client_id, self.class_id, e,
-                    )
-
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {self.client_name} and confirm they have been removed from the waitlist "
-                        f"for the {self.class_name} class. Let them know they can always re-join the "
-                        "waitlist through the app or by calling the studio. Wish them well and be warm."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {self.client_name} for letting us know. Confirm they are staying on the "
-                        f"waitlist for future {self.class_name} openings and we'll call them if another "
-                        "spot comes up. Wish them a great day. Be warm and brief."
-                    )
-                )
-
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"Leave an urgent but friendly voicemail for {self.client_name} letting them know "
-                f"a spot has opened in the {self.class_name} class on {self.class_datetime} "
-                f"with {self.instructor_name} at Harmony Wellness Center. "
-                "Ask them to call back or book through the app as soon as possible, "
-                "as spots fill up quickly. Keep it under 25 seconds and be upbeat."
             )
-        )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Thank {client_name} for letting us know. Confirm they are staying on the "
+                    f"waitlist for future {class_name} openings and we'll call them if another "
+                    "spot comes up. Wish them a great day. Be warm and brief."
+                )
+            )
 
 
 if __name__ == "__main__":
@@ -277,15 +287,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ClassWaitlistOpeningController(
-            client_name=args.name,
-            client_id=args.client_id,
-            class_id=args.class_id,
-            class_name=args.class_name,
-            class_datetime=args.class_datetime,
-            instructor_name=args.instructor_name,
-        ),
+        variables={
+            "client_name": args.name,
+            "client_id": args.client_id,
+            "class_id": str(args.class_id),
+            "class_name": args.class_name,
+            "class_datetime": args.class_datetime,
+            "instructor_name": args.instructor_name,
+        },
     )

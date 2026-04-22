@@ -61,67 +61,90 @@ def get_query_result(query_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
-class QueryResultDeliveryController(guava.CallController):
-    def __init__(self, query_id: str, contact_name: str):
-        super().__init__()
-        self.query_id = query_id
-        self.contact_name = contact_name
-        self.query_name = "your scheduled query"
-        self.row_count = "an unknown number of"
-        self.status = "completed"
-        self.completion_time = "recently"
-        self.summary_text = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Meridian Analytics",
+    purpose=(
+        "to deliver the results of completed long-running Snowflake queries to "
+        "data analysts on behalf of Meridian Analytics"
+    ),
+)
 
-        # Pre-call: fetch the query result record so the agent has the full summary ready.
-        try:
-            result = get_query_result(query_id)
-            if result:
-                self.query_name = result.get("QUERY_NAME") or self.query_name
-                row_count_raw = result.get("ROW_COUNT")
-                self.row_count = str(row_count_raw) if row_count_raw is not None else self.row_count
-                self.status = result.get("STATUS") or self.status
-                self.completion_time = result.get("COMPLETION_TIME") or self.completion_time
-                self.summary_text = result.get("SUMMARY_TEXT") or ""
-                logging.info(
-                    "Pre-call result for query %s — name: %s, rows: %s, status: %s",
-                    query_id, self.query_name, self.row_count, self.status,
-                )
-            else:
-                logging.warning("No result record found for query ID %s", query_id)
-        except Exception as e:
-            logging.error("Failed to fetch query result for query %s: %s", query_id, e)
 
-        self.set_persona(
-            organization_name="Meridian Analytics",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to deliver the results of completed long-running Snowflake queries to "
-                "data analysts on behalf of Meridian Analytics"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    query_id = call.get_variable("query_id")
+    contact_name = call.get_variable("contact_name")
+
+    # Fetch query result before reaching out so the agent has the full summary ready.
+    query_name = "your scheduled query"
+    row_count = "an unknown number of"
+    status = "completed"
+    completion_time = "recently"
+    summary_text = ""
+
+    try:
+        result = get_query_result(query_id)
+        if result:
+            query_name = result.get("QUERY_NAME") or query_name
+            row_count_raw = result.get("ROW_COUNT")
+            row_count = str(row_count_raw) if row_count_raw is not None else row_count
+            status = result.get("STATUS") or status
+            completion_time = result.get("COMPLETION_TIME") or completion_time
+            summary_text = result.get("SUMMARY_TEXT") or ""
+            logging.info(
+                "Pre-call result for query %s — name: %s, rows: %s, status: %s",
+                query_id, query_name, row_count, status,
+            )
+        else:
+            logging.warning("No result record found for query ID %s", query_id)
+    except Exception as e:
+        logging.error("Failed to fetch query result for query %s: %s", query_id, e)
+
+    call.query_name = query_name
+    call.row_count = row_count
+    call.status = status
+    call.completion_time = completion_time
+    call.summary_text = summary_text
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    query_id = call.get_variable("query_id")
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for query result delivery of query %s",
+            contact_name, query_id,
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.deliver_results,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {contact_name} from Meridian Analytics. "
+                f"Let them know their scheduled query '{call.query_name}' has completed "
+                f"and the results are ready in their dashboard. "
+                "Keep the message short and professional."
+            )
         )
+    elif outcome == "available":
+        has_summary = bool(call.summary_text and call.summary_text.strip())
 
-    def deliver_results(self):
-        has_summary = bool(self.summary_text and self.summary_text.strip())
-
-        self.set_task(
+        call.set_task(
+            "wrap_up",
             objective=(
-                f"Deliver the results of the completed Snowflake query '{self.query_name}' "
-                f"to {self.contact_name} and confirm they have what they need."
+                f"Deliver the results of the completed Snowflake query '{call.query_name}' "
+                f"to {contact_name} and confirm they have what they need."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan calling from Meridian Analytics. "
-                    f"I'm calling to let you know that your scheduled query '{self.query_name}' "
-                    f"has finished running. It completed at {self.completion_time} with a status "
-                    f"of '{self.status}' and returned {self.row_count} rows."
+                    f"Hi {contact_name}, this is Morgan calling from Meridian Analytics. "
+                    f"I'm calling to let you know that your scheduled query '{call.query_name}' "
+                    f"has finished running. It completed at {call.completion_time} with a status "
+                    f"of '{call.status}' and returned {call.row_count} rows."
                     + (
-                        f" Here's a summary of the results: {self.summary_text}"
+                        f" Here's a summary of the results: {call.summary_text}"
                         if has_summary
                         else " The full results are available in your Meridian Analytics dashboard."
                     )
@@ -156,51 +179,40 @@ class QueryResultDeliveryController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.wrap_up,
         )
 
-    def wrap_up(self):
-        follow_up_needed = self.get_field("follow_up_needed") or "no"
-        follow_up_detail = self.get_field("follow_up_detail") or ""
 
-        logging.info(
-            "Query result delivery complete for query %s — follow-up needed: %s",
-            self.query_id, follow_up_needed,
-        )
+@agent.on_task_complete("wrap_up")
+def wrap_up(call: guava.Call) -> None:
+    query_id = call.get_variable("query_id")
+    contact_name = call.get_variable("contact_name")
+    follow_up_needed = call.get_field("follow_up_needed") or "no"
+    follow_up_detail = call.get_field("follow_up_detail") or ""
 
-        if follow_up_needed == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know that their follow-up request has been noted "
-                    "and the data engineering team will be in touch shortly. "
-                    + (
-                        f"Their specific request was: {follow_up_detail}. "
-                        if follow_up_detail
-                        else ""
-                    )
-                    + "Thank them for their time and wish them a productive day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. Let them know the full result set "
-                    "is available in their Meridian Analytics dashboard and they can re-run or "
-                    "schedule the query anytime from there. Wish them a great day."
-                )
-            )
+    logging.info(
+        "Query result delivery complete for query %s — follow-up needed: %s",
+        query_id, follow_up_needed,
+    )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for query result delivery of query %s",
-            self.contact_name, self.query_id,
-        )
-        self.hangup(
+    if follow_up_needed == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} from Meridian Analytics. "
-                f"Let them know their scheduled query '{self.query_name}' has completed "
-                f"and the results are ready in their dashboard. "
-                "Keep the message short and professional."
+                f"Let {contact_name} know that their follow-up request has been noted "
+                "and the data engineering team will be in touch shortly. "
+                + (
+                    f"Their specific request was: {follow_up_detail}. "
+                    if follow_up_detail
+                    else ""
+                )
+                + "Thank them for their time and wish them a productive day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Let them know the full result set "
+                "is available in their Meridian Analytics dashboard and they can re-run or "
+                "schedule the query anytime from there. Wish them a great day."
             )
         )
 
@@ -220,11 +232,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.query_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=QueryResultDeliveryController(
-            query_id=args.query_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "query_id": args.query_id,
+            "contact_name": args.name,
+        },
     )

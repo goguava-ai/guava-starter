@@ -7,40 +7,46 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="CareRx Pharmacy",
+    purpose=(
+        "to proactively notify patients when a prescription refill is due, confirm the refill, "
+        "arrange a convenient pickup time, and connect patients with a pharmacist if they have questions"
+    ),
+)
 
-class PrescriptionRefillController(guava.CallController):
-    def __init__(self, patient_name: str, medication: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.medication = medication
 
-        self.set_persona(
-            organization_name="CareRx Pharmacy",
-            agent_name="Riley",
-            agent_purpose=(
-                "to proactively notify patients when a prescription refill is due, confirm the refill, "
-                "arrange a convenient pickup time, and connect patients with a pharmacist if they have questions"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf of "
+                f"CareRx Pharmacy letting them know their prescription for {call.get_variable('medication')} is due for "
+                "a refill and asking them to call or visit the pharmacy at their convenience."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_refill_outreach,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_refill_outreach(self):
-        self.set_task(
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        medication = call.get_variable("medication")
+        call.set_task(
+            "outreach",
             objective=(
-                f"Notify {self.patient_name} that their prescription for {self.medication} is due for "
+                f"Notify {patient_name} that their prescription for {medication} is due for "
                 "a refill at CareRx Pharmacy. Confirm whether they would like to proceed with the refill, "
                 "collect a preferred pickup date if applicable, and note any questions they have for the "
                 "pharmacist. If they request to speak with a pharmacist, capture that intent clearly."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Riley calling from CareRx Pharmacy. "
-                    f"I'm reaching out because your prescription for {self.medication} is coming up "
+                    f"Hi {patient_name}, this is Riley calling from CareRx Pharmacy. "
+                    f"I'm reaching out because your prescription for {medication} is coming up "
                     "for a refill, and we want to make sure you don't run out."
                 ),
                 guava.Say(
@@ -50,7 +56,7 @@ class PrescriptionRefillController(guava.CallController):
                 guava.Field(
                     key="refill_confirmed",
                     description=(
-                        f"Ask the patient whether they would like to confirm the refill for {self.medication}, "
+                        f"Ask the patient whether they would like to confirm the refill for {medication}, "
                         "decline it, or be connected with a pharmacist for questions. "
                         "Capture one of: 'yes', 'no', or 'call_pharmacist'."
                     ),
@@ -76,55 +82,47 @@ class PrescriptionRefillController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "patient_name": self.patient_name,
-            "medication": self.medication,
-            "refill_confirmed": self.get_field("refill_confirmed"),
-            "preferred_pickup_date": self.get_field("preferred_pickup_date"),
-            "questions_for_pharmacist": self.get_field("questions_for_pharmacist"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Prescription refill results saved.")
 
-        refill_status = self.get_field("refill_confirmed")
-        if refill_status and str(refill_status).strip().lower() == "call_pharmacist":
-            self.hangup(
-                final_instructions=(
-                    "Let the patient know that a CareRx pharmacist will give them a call back within "
-                    "one business day to address their questions. Thank them for being a CareRx customer "
-                    "and wish them good health."
-                )
-            )
-        elif refill_status and str(refill_status).strip().lower() == "yes":
-            pickup_date = self.get_field("preferred_pickup_date")
-            pickup_msg = f"on {pickup_date}" if pickup_date else "at their convenience"
-            self.hangup(
-                final_instructions=(
-                    f"Confirm to the patient that their refill for {self.medication} has been submitted "
-                    f"and will be ready for pickup {pickup_msg} at CareRx Pharmacy. Let them know they "
-                    "will receive a notification when it is ready. Thank them and wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Acknowledge the patient's decision and let them know they can call CareRx Pharmacy "
-                    f"anytime to request a refill for {self.medication} when they are ready. "
-                    "Thank them for their time and wish them good health."
-                )
-            )
+@agent.on_task_complete("outreach")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "patient_name": call.get_variable("patient_name"),
+        "medication": call.get_variable("medication"),
+        "refill_confirmed": call.get_field("refill_confirmed"),
+        "preferred_pickup_date": call.get_field("preferred_pickup_date"),
+        "questions_for_pharmacist": call.get_field("questions_for_pharmacist"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Prescription refill results saved.")
 
-    def recipient_unavailable(self):
-        self.hangup(
+    refill_status = call.get_field("refill_confirmed")
+    if refill_status and str(refill_status).strip().lower() == "call_pharmacist":
+        call.hangup(
             final_instructions=(
-                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf of "
-                f"CareRx Pharmacy letting them know their prescription for {self.medication} is due for "
-                "a refill and asking them to call or visit the pharmacy at their convenience."
+                "Let the patient know that a CareRx pharmacist will give them a call back within "
+                "one business day to address their questions. Thank them for being a CareRx customer "
+                "and wish them good health."
+            )
+        )
+    elif refill_status and str(refill_status).strip().lower() == "yes":
+        pickup_date = call.get_field("preferred_pickup_date")
+        pickup_msg = f"on {pickup_date}" if pickup_date else "at their convenience"
+        call.hangup(
+            final_instructions=(
+                f"Confirm to the patient that their refill for {call.get_variable('medication')} has been submitted "
+                f"and will be ready for pickup {pickup_msg} at CareRx Pharmacy. Let them know they "
+                "will receive a notification when it is ready. Thank them and wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Acknowledge the patient's decision and let them know they can call CareRx Pharmacy "
+                f"anytime to request a refill for {call.get_variable('medication')} when they are ready. "
+                "Thank them for their time and wish them good health."
             )
         )
 
@@ -150,11 +148,11 @@ if __name__ == "__main__":
         args.medication,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PrescriptionRefillController(
-            patient_name=args.name,
-            medication=args.medication,
-        ),
+        variables={
+            "patient_name": args.name,
+            "medication": args.medication,
+        },
     )

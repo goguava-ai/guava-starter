@@ -39,43 +39,48 @@ def get_staff_token() -> str:
     return resp.json()["AccessToken"]
 
 
-class NoShowFollowupController(guava.CallController):
-    def __init__(
-        self,
-        client_name: str,
-        client_id: str,
-        class_name: str,
-        class_date: str,
-    ):
-        super().__init__()
-        self.client_name = client_name
-        self.client_id = client_id
-        self.class_name = class_name
-        self.class_date = class_date
+agent = guava.Agent(
+    name="Riley",
+    organization="FlexFit Studio",
+    purpose="to check in with FlexFit Studio members who missed a class and help re-engage them",
+)
 
-        self.set_persona(
-            organization_name="FlexFit Studio",
-            agent_name="Riley",
-            agent_purpose="to check in with FlexFit Studio members who missed a class and help re-engage them",
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    call.reach_person(contact_full_name=client_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    client_name = call.get_variable("client_name")
+    class_name = call.get_variable("class_name")
+    class_date = call.get_variable("class_date")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a friendly voicemail for {client_name} on behalf of FlexFit Studio. "
+                f"Mention that we noticed they missed {class_name} on {class_date} "
+                "and just wanted to check in — no worries at all! Let them know we'd love to "
+                "see them back on the schedule whenever they're ready, and they can call us or "
+                "book online at flexfitstudio.com. Keep the tone warm, upbeat, and pressure-free. "
+                "Thank them and look forward to seeing them soon."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.client_name,
-            on_success=self.begin_followup,
-            on_failure=self.leave_voicemail,
-        )
-
-    def begin_followup(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "collect_followup_info",
             objective=(
-                f"Follow up with {self.client_name} from FlexFit Studio about their missed "
-                f"{self.class_name} class on {self.class_date}. Check in warmly, find out why "
+                f"Follow up with {client_name} from FlexFit Studio about their missed "
+                f"{class_name} class on {class_date}. Check in warmly, find out why "
                 "they couldn't make it, and see if they'd like to rebook."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.client_name}! This is Riley calling from FlexFit Studio. "
-                    f"We noticed you weren't able to make it to {self.class_name} on {self.class_date} "
+                    f"Hi {client_name}! This is Riley calling from FlexFit Studio. "
+                    f"We noticed you weren't able to make it to {class_name} on {class_date} "
                     "and just wanted to check in — we missed you!"
                 ),
                 guava.Field(
@@ -99,131 +104,128 @@ class NoShowFollowupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        miss_reason = self.get_field("miss_reason")
-        want_to_rebook = self.get_field("want_to_rebook")
 
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Riley",
-            "organization": "FlexFit Studio",
-            "use_case": "no_show_followup",
-            "client_id": self.client_id,
-            "client_name": self.client_name,
-            "class_name": self.class_name,
-            "class_date": self.class_date,
-            "fields": {
-                "miss_reason": miss_reason,
-                "want_to_rebook": want_to_rebook,
+@agent.on_task_complete("collect_followup_info")
+def save_results(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    class_name = call.get_variable("class_name")
+    class_date = call.get_variable("class_date")
+    miss_reason = call.get_field("miss_reason")
+    want_to_rebook = call.get_field("want_to_rebook")
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Riley",
+        "organization": "FlexFit Studio",
+        "use_case": "no_show_followup",
+        "client_id": client_id,
+        "client_name": client_name,
+        "class_name": class_name,
+        "class_date": class_date,
+        "fields": {
+            "miss_reason": miss_reason,
+            "want_to_rebook": want_to_rebook,
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("No-show follow-up result saved for client %s.", client_id)
+
+    # Log the no-show interaction note back to Mindbody as a client visit note
+    # by fetching a staff token and using the client notes endpoint (best-effort).
+    try:
+        token = get_staff_token()
+        note_body = (
+            f"No-show follow-up call on {datetime.now().date().isoformat()}. "
+            f"Missed: {class_name} on {class_date}. "
+            f"Reason: {miss_reason}. "
+            f"Wants to rebook: {want_to_rebook}."
+        )
+        requests.post(
+            f"{BASE_URL}/client/addclientformulae",
+            headers=get_headers(token),
+            json={
+                "ClientId": client_id,
+                "Note": note_body,
             },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("No-show follow-up result saved for client %s.", self.client_id)
+            timeout=10,
+        )
+        logging.info("Logged no-show note to Mindbody for client %s.", client_id)
+    except Exception as e:
+        # Non-critical — the call results are already printed above.
+        logging.warning("Could not log note to Mindbody: %s", e)
 
-        # Log the no-show interaction note back to Mindbody as a client visit note
-        # by fetching a staff token and using the client notes endpoint (best-effort).
-        try:
-            token = get_staff_token()
-            note_body = (
-                f"No-show follow-up call on {datetime.now().date().isoformat()}. "
-                f"Missed: {self.class_name} on {self.class_date}. "
-                f"Reason: {miss_reason}. "
-                f"Wants to rebook: {want_to_rebook}."
+    if want_to_rebook == "yes please":
+        encouragement = (
+            "amazing" if miss_reason == "had an emergency" else "great"
+        )
+        call.hangup(
+            final_instructions=(
+                f"Tell {client_name} that's {encouragement} to hear — we'd love to have "
+                f"them back! Let them know they can call FlexFit Studio anytime to book their "
+                f"next {class_name} class, or they can grab a spot online at "
+                "flexfitstudio.com. Encourage them and let them know the whole team is looking "
+                "forward to seeing them. Thank them for their time and wish them a wonderful day."
             )
-            requests.post(
-                f"{BASE_URL}/client/addclientformulae",
-                headers=get_headers(token),
-                json={
-                    "ClientId": self.client_id,
-                    "Note": note_body,
-                },
-                timeout=10,
-            )
-            logging.info("Logged no-show note to Mindbody for client %s.", self.client_id)
-        except Exception as e:
-            # Non-critical — the call results are already printed above.
-            logging.warning("Could not log note to Mindbody: %s", e)
-
-        if want_to_rebook == "yes please":
-            encouragement = (
-                "amazing" if miss_reason == "had an emergency" else "great"
-            )
-            self.hangup(
-                final_instructions=(
-                    f"Tell {self.client_name} that's {encouragement} to hear — we'd love to have "
-                    f"them back! Let them know they can call FlexFit Studio anytime to book their "
-                    f"next {self.class_name} class, or they can grab a spot online at "
-                    "flexfitstudio.com. Encourage them and let them know the whole team is looking "
-                    "forward to seeing them. Thank them for their time and wish them a wonderful day."
-                )
-            )
-        else:
-            # Not interested in this class type — find out what might work better.
-            self.set_task(
-                objective=(
-                    f"Since {self.client_name} isn't interested in rebooking {self.class_name}, "
-                    "find out what type of class might be a better fit and encourage them to stay engaged."
-                ),
-                checklist=[
-                    guava.Field(
-                        key="preferred_class_type",
-                        field_type="multiple_choice",
-                        description=(
-                            "Ask what type of class they might enjoy more or feel motivated to try. "
-                            "Map their answer to the closest option."
-                        ),
-                        choices=["yoga", "spin", "HIIT", "pilates", "barre", "boxing"],
-                        required=True,
+        )
+    else:
+        # Not interested in this class type — find out what might work better.
+        call.set_task(
+            "collect_alternate_interest",
+            objective=(
+                f"Since {client_name} isn't interested in rebooking {class_name}, "
+                "find out what type of class might be a better fit and encourage them to stay engaged."
+            ),
+            checklist=[
+                guava.Field(
+                    key="preferred_class_type",
+                    field_type="multiple_choice",
+                    description=(
+                        "Ask what type of class they might enjoy more or feel motivated to try. "
+                        "Map their answer to the closest option."
                     ),
-                ],
-                on_complete=self.wrap_up_alternate_interest,
-            )
-
-    def wrap_up_alternate_interest(self):
-        preferred = self.get_field("preferred_class_type")
-
-        # Update results log with the additional preference.
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Riley",
-            "organization": "FlexFit Studio",
-            "use_case": "no_show_followup",
-            "client_id": self.client_id,
-            "client_name": self.client_name,
-            "phase": "alternate_interest",
-            "fields": {
-                "preferred_class_type": preferred,
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info(
-            "Recorded alternate class interest '%s' for client %s.", preferred, self.client_id
+                    choices=["yoga", "spin", "HIIT", "pilates", "barre", "boxing"],
+                    required=True,
+                ),
+            ],
         )
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.client_name} for sharing that — let them know you've noted their "
-                f"interest in {preferred} and the team will keep that in mind. "
-                f"Encourage them warmly: FlexFit Studio has a fantastic {preferred} program and "
-                "you'd love to see them give it a try. Let them know they're always welcome "
-                "and we're rooting for them. Thank them and wish them a great rest of the day."
-            )
-        )
 
-    def leave_voicemail(self):
-        self.hangup(
-            final_instructions=(
-                f"Leave a friendly voicemail for {self.client_name} on behalf of FlexFit Studio. "
-                f"Mention that we noticed they missed {self.class_name} on {self.class_date} "
-                "and just wanted to check in — no worries at all! Let them know we'd love to "
-                "see them back on the schedule whenever they're ready, and they can call us or "
-                "book online at flexfitstudio.com. Keep the tone warm, upbeat, and pressure-free. "
-                "Thank them and look forward to seeing them soon."
-            )
+@agent.on_task_complete("collect_alternate_interest")
+def wrap_up_alternate_interest(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    preferred = call.get_field("preferred_class_type")
+
+    # Update results log with the additional preference.
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Riley",
+        "organization": "FlexFit Studio",
+        "use_case": "no_show_followup",
+        "client_id": client_id,
+        "client_name": client_name,
+        "phase": "alternate_interest",
+        "fields": {
+            "preferred_class_type": preferred,
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info(
+        "Recorded alternate class interest '%s' for client %s.", preferred, client_id
+    )
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {client_name} for sharing that — let them know you've noted their "
+            f"interest in {preferred} and the team will keep that in mind. "
+            f"Encourage them warmly: FlexFit Studio has a fantastic {preferred} program and "
+            "you'd love to see them give it a try. Let them know they're always welcome "
+            "and we're rooting for them. Thank them and wish them a great rest of the day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -250,13 +252,13 @@ if __name__ == "__main__":
         args.class_date,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=NoShowFollowupController(
-            client_name=args.name,
-            client_id=args.client_id,
-            class_name=args.class_name,
-            class_date=args.class_date,
-        ),
+        variables={
+            "client_name": args.name,
+            "client_id": args.client_id,
+            "class_name": args.class_name,
+            "class_date": args.class_date,
+        },
     )

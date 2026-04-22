@@ -43,59 +43,75 @@ def get_view(view_id: str) -> dict:
     return resp.json().get("view", {})
 
 
-class InsightBriefingController(guava.CallController):
-    def __init__(self, view_id: str, contact_name: str):
-        super().__init__()
-        self.view_id = view_id
-        self.contact_name = contact_name
+agent = guava.Agent(
+    name="Taylor",
+    organization="Vertex Analytics",
+    purpose=(
+        "to deliver a verbal KPI briefing from a Tableau view and gauge "
+        "whether the stakeholder wants to schedule a deeper review"
+    ),
+)
 
-        # Fetch view metadata before the call
-        self.view_name = "the requested view"
-        self.view_owner = "your Tableau team"
-        self.updated_display = "recently"
-        self.content_url = ""
 
-        try:
-            view = get_view(view_id)
-            self.view_name = view.get("name", self.view_name)
-            self.view_owner = view.get("owner", {}).get("name", self.view_owner)
-            self.content_url = view.get("contentUrl", "")
-            updated_at_str = view.get("updatedAt", "")
-            if updated_at_str:
-                updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-                self.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
-        except Exception as e:
-            logging.error("Failed to fetch view %s pre-call: %s", view_id, e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    view_id = call.get_variable("view_id")
+    contact_name = call.get_variable("contact_name")
 
-        self.set_persona(
-            organization_name="Vertex Analytics",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to deliver a verbal KPI briefing from a Tableau view and gauge "
-                "whether the stakeholder wants to schedule a deeper review"
-            ),
+    # Fetch view metadata before delivering the briefing
+    call.view_name = "the requested view"
+    call.view_owner = "your Tableau team"
+    call.updated_display = "recently"
+    call.content_url = ""
+
+    try:
+        view = get_view(view_id)
+        call.view_name = view.get("name", call.view_name)
+        call.view_owner = view.get("owner", {}).get("name", call.view_owner)
+        call.content_url = view.get("contentUrl", "")
+        updated_at_str = view.get("updatedAt", "")
+        if updated_at_str:
+            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            call.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
+    except Exception as e:
+        logging.error("Failed to fetch view %s pre-call: %s", view_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    view_id = call.get_variable("view_id")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for insight briefing on view %s",
+            contact_name, view_id,
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.deliver_briefing,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {contact_name} on behalf of "
+                "Vertex Analytics. Let them know you were calling to share a data briefing on "
+                f"the '{call.view_name}' Tableau view and ask them to call back or reach out "
+                "to the analytics team if they'd like a walkthrough. Keep it concise."
+            )
         )
+    elif outcome == "available":
+        owner_note = f" It's maintained by {call.view_owner}." if call.view_owner else ""
 
-    def deliver_briefing(self):
-        owner_note = f" It's maintained by {self.view_owner}." if self.view_owner else ""
-
-        self.set_task(
+        call.set_task(
+            "save_results",
             objective=(
-                f"Deliver a verbal summary of the Tableau view '{self.view_name}' to "
-                f"{self.contact_name}. Share the view name, when it was last updated, and who "
+                f"Deliver a verbal summary of the Tableau view '{call.view_name}' to "
+                f"{contact_name}. Share the view name, when it was last updated, and who "
                 f"owns it. Then ask if they'd like to schedule a deeper review session."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Taylor calling from Vertex Analytics. "
-                    f"I'm reaching out with a quick data briefing on the '{self.view_name}' "
-                    f"Tableau view. It was last updated on {self.updated_display}.{owner_note} "
+                    f"Hi {contact_name}, this is Taylor calling from Vertex Analytics. "
+                    f"I'm reaching out with a quick data briefing on the '{call.view_name}' "
+                    f"Tableau view. It was last updated on {call.updated_display}.{owner_note} "
                     "I have a summary of the latest KPI metadata I'd like to walk you through."
                 ),
                 guava.Field(
@@ -119,47 +135,35 @@ class InsightBriefingController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        wants_review = self.get_field("wants_review") or "no"
-        preferred_time = self.get_field("preferred_time") or ""
 
-        logging.info(
-            "Briefing complete for %s — view: %s, wants_review: %s, preferred_time: %s",
-            self.contact_name, self.view_name, wants_review, preferred_time,
-        )
+@agent.on_task_complete("save_results")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    wants_review = call.get_field("wants_review") or "no"
+    preferred_time = call.get_field("preferred_time") or ""
 
-        if wants_review == "yes":
-            time_note = f" They mentioned {preferred_time} works well." if preferred_time else ""
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time and confirm that you'll have "
-                    "someone from the analytics team reach out to schedule a deeper review.{time_note} "
-                    "Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. Let them know the analytics team "
-                    "is always available if they have questions about the data in the future. "
-                    "Wish them a great day."
-                )
-            )
+    logging.info(
+        "Briefing complete for %s — view: %s, wants_review: %s, preferred_time: %s",
+        contact_name, call.view_name, wants_review, preferred_time,
+    )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for insight briefing on view %s",
-            self.contact_name, self.view_id,
-        )
-        self.hangup(
+    if wants_review == "yes":
+        time_note = f" They mentioned {preferred_time} works well." if preferred_time else ""
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.contact_name} on behalf of "
-                "Vertex Analytics. Let them know you were calling to share a data briefing on "
-                f"the '{self.view_name}' Tableau view and ask them to call back or reach out "
-                "to the analytics team if they'd like a walkthrough. Keep it concise."
+                f"Thank {contact_name} for their time and confirm that you'll have "
+                "someone from the analytics team reach out to schedule a deeper review.{time_note} "
+                "Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Let them know the analytics team "
+                "is always available if they have questions about the data in the future. "
+                "Wish them a great day."
             )
         )
 
@@ -179,11 +183,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.view_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=InsightBriefingController(
-            view_id=args.view_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "view_id": args.view_id,
+            "contact_name": args.name,
+        },
     )

@@ -42,39 +42,57 @@ def post_insurance(patient_id: str, payload: dict, headers: dict) -> bool:
     return resp.ok
 
 
-class InsuranceVerificationController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.headers = {}
-        self.existing_insurance = None
+agent = guava.Agent(
+    name="Avery",
+    organization="Maple Medical Group",
+    purpose=(
+        "to verify and update patient insurance information before upcoming visits"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for insurance verification.", call.get_variable("patient_name"))
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {call.get_variable('patient_name')} from Maple Medical Group. "
+                "Let them know you're calling to verify insurance before their upcoming visit "
+                "and ask them to call back or bring their insurance card to check-in. "
+                "Keep it concise."
+            )
+        )
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        patient_id = call.get_variable("patient_id")
+
+        headers = {}
+        existing_insurance = None
         try:
             token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}"}
-            insurances = get_patient_insurances(patient_id, self.headers)
+            headers = {"Authorization": f"Bearer {token}"}
+            insurances = get_patient_insurances(patient_id, headers)
             if insurances:
-                self.existing_insurance = insurances[0]
+                existing_insurance = insurances[0]
                 logging.info(
                     "Insurance on file for patient %s: %s",
                     patient_id,
-                    self.existing_insurance.get("insuranceplanname", "unknown"),
+                    existing_insurance.get("insuranceplanname", "unknown"),
                 )
         except Exception as e:
             logging.error("Failed to load insurance for patient %s: %s", patient_id, e)
 
-        self.set_persona(
-            organization_name="Maple Medical Group",
-            agent_name="Avery",
-            agent_purpose=(
-                "to verify and update patient insurance information before upcoming visits"
-            ),
-        )
+        call.data = {"headers": headers, "existing_insurance": existing_insurance}
 
-        if self.existing_insurance:
-            ins_name = self.existing_insurance.get("insuranceplanname", "your current plan")
-            ins_id = self.existing_insurance.get("insuranceidnumber", "")
+        if existing_insurance:
+            ins_name = existing_insurance.get("insuranceplanname", "your current plan")
+            ins_id = existing_insurance.get("insuranceidnumber", "")
             pre_intro = (
                 f"Insurance currently on file: {ins_name}"
                 + (f" (ID: {ins_id})" if ins_id else "")
@@ -83,7 +101,8 @@ class InsuranceVerificationController(guava.CallController):
         else:
             pre_intro = "No insurance on file. Collect new insurance details."
 
-        self.set_task(
+        call.set_task(
+            "update_insurance",
             objective=(
                 f"Verify insurance information for {patient_name} before their upcoming visit. "
                 + pre_intro
@@ -97,7 +116,7 @@ class InsuranceVerificationController(guava.CallController):
                     key="insurance_current",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask if their insurance is still {'the same — ' + self.existing_insurance.get('insuranceplanname', '') if self.existing_insurance else 'the same as before'}. "
+                        f"Ask if their insurance is still {'the same — ' + existing_insurance.get('insuranceplanname', '') if existing_insurance else 'the same as before'}. "
                         "Capture yes or no."
                     ),
                     choices=["yes", "no"],
@@ -131,85 +150,72 @@ class InsuranceVerificationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.update_insurance,
         )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=lambda: None,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def update_insurance(self):
-        insurance_current = self.get_field("insurance_current") or ""
-        provider = self.get_field("insurance_provider") or ""
-        member_id = self.get_field("member_id") or ""
-        group_number = self.get_field("group_number") or ""
+@agent.on_task_complete("update_insurance")
+def on_done(call: guava.Call) -> None:
+    insurance_current = call.get_field("insurance_current") or ""
+    provider = call.get_field("insurance_provider") or ""
+    member_id = call.get_field("member_id") or ""
+    group_number = call.get_field("group_number") or ""
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    headers = call.data.get("headers", {}) if call.data else {}
 
-        if "yes" in insurance_current:
-            logging.info("Insurance verified as current for patient %s.", self.patient_id)
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for confirming their insurance is up to date. "
-                    "Let them know they're all set for their upcoming visit. "
-                    "Remind them to bring their insurance card just in case. "
-                    "Wish them a great day."
-                )
-            )
-            return
-
-        if provider:
-            logging.info(
-                "Updating insurance for patient %s: %s / %s / %s",
-                self.patient_id, provider, member_id, group_number,
-            )
-            payload = {"insuranceplanname": provider}
-            if member_id:
-                payload["insuranceidnumber"] = member_id
-            if group_number:
-                payload["insurancegroupnumber"] = group_number
-
-            success = False
-            try:
-                success = post_insurance(self.patient_id, payload, self.headers)
-                logging.info("Insurance updated: %s", success)
-            except Exception as e:
-                logging.error("Failed to update insurance for patient %s: %s", self.patient_id, e)
-
-            if success:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.patient_name} know their insurance information has been updated "
-                        f"to {provider}. Ask them to bring their insurance card to the visit. "
-                        "Thank them and wish them a great day."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Apologize to {self.patient_name} — let them know we weren't able to update "
-                        "their insurance information automatically. Ask them to bring their insurance "
-                        "card to the visit and our front desk will assist them. "
-                        "Thank them for their patience."
-                    )
-                )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know we'll need their updated insurance information "
-                    "at check-in. Ask them to bring their insurance card to the visit. "
-                    "Thank them for calling and wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for insurance verification.", self.patient_name)
-        self.hangup(
+    if "yes" in insurance_current:
+        logging.info("Insurance verified as current for patient %s.", patient_id)
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Maple Medical Group. "
-                "Let them know you're calling to verify insurance before their upcoming visit "
-                "and ask them to call back or bring their insurance card to check-in. "
-                "Keep it concise."
+                f"Thank {patient_name} for confirming their insurance is up to date. "
+                "Let them know they're all set for their upcoming visit. "
+                "Remind them to bring their insurance card just in case. "
+                "Wish them a great day."
+            )
+        )
+        return
+
+    if provider:
+        logging.info(
+            "Updating insurance for patient %s: %s / %s / %s",
+            patient_id, provider, member_id, group_number,
+        )
+        payload = {"insuranceplanname": provider}
+        if member_id:
+            payload["insuranceidnumber"] = member_id
+        if group_number:
+            payload["insurancegroupnumber"] = group_number
+
+        success = False
+        try:
+            success = post_insurance(patient_id, payload, headers)
+            logging.info("Insurance updated: %s", success)
+        except Exception as e:
+            logging.error("Failed to update insurance for patient %s: %s", patient_id, e)
+
+        if success:
+            call.hangup(
+                final_instructions=(
+                    f"Let {patient_name} know their insurance information has been updated "
+                    f"to {provider}. Ask them to bring their insurance card to the visit. "
+                    "Thank them and wish them a great day."
+                )
+            )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Apologize to {patient_name} — let them know we weren't able to update "
+                    "their insurance information automatically. Ask them to bring their insurance "
+                    "card to the visit and our front desk will assist them. "
+                    "Thank them for their patience."
+                )
+            )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know we'll need their updated insurance information "
+                "at check-in. Ask them to bring their insurance card to the visit. "
+                "Thank them for calling and wish them a great day."
             )
         )
 
@@ -228,11 +234,11 @@ if __name__ == "__main__":
         "Initiating insurance verification call to %s (%s)", args.name, args.phone
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=InsuranceVerificationController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+        },
     )

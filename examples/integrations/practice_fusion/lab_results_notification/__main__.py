@@ -59,54 +59,61 @@ def summarize_reports(reports: list[dict]) -> str:
     return "\n".join(lines)
 
 
-class LabResultsController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, result_summary: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.result_summary = result_summary
-        self._report_detail = ""
+agent = guava.Agent(
+    name="Sam",
+    organization="Riverside Family Medicine",
+    purpose="to notify patients of their lab results",
+)
 
-        self.set_persona(
-            organization_name="Riverside Family Medicine",
-            agent_name="Sam",
-            agent_purpose="to notify patients of their lab results",
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    result_summary = call.get_variable("result_summary")
+
+    call.report_detail = ""
+    try:
+        reports = get_recent_diagnostic_reports(patient_id)
+        call.report_detail = summarize_reports(reports)
+        logging.info("Report detail fetched:\n%s", call.report_detail)
+    except requests.HTTPError as exc:
+        logging.error("Failed to fetch diagnostic reports: %s", exc)
+        call.report_detail = result_summary  # fall back to CLI summary
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {patient_name} from Riverside "
+                "Family Medicine. Let them know we are calling regarding their recent lab work and "
+                "ask them to call us back at their earliest convenience. Do not mention specific "
+                "test names, results, or any clinical details in the voicemail."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.deliver_results,
-            on_failure=self.leave_voicemail,
-        )
-
-    def _fetch_report_detail(self):
-        """Fetch FHIR DiagnosticReports and store a plain-text summary for agent context."""
-        try:
-            reports = get_recent_diagnostic_reports(self.patient_id)
-            self._report_detail = summarize_reports(reports)
-            logging.info("Report detail fetched:\n%s", self._report_detail)
-        except requests.HTTPError as exc:
-            logging.error("Failed to fetch diagnostic reports: %s", exc)
-            self._report_detail = self.result_summary  # fall back to CLI summary
-
-    def deliver_results(self):
-        self._fetch_report_detail()
-
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "deliver_results",
             objective=(
-                f"Inform {self.patient_name} that their recent lab results are available "
+                f"Inform {patient_name} that their recent lab results are available "
                 f"and convey the following summary to guide the conversation: "
-                f"{self._report_detail}. "
+                f"{call.report_detail}. "
                 f"Do not read raw status codes verbatim; translate them into plain language "
                 f"(e.g., 'final' means the results are complete). "
                 f"Do not disclose specific numeric values unless the summary explicitly includes them."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, may I please speak with {self.patient_name}?"
+                    f"Hi, may I please speak with {patient_name}?"
                 ),
                 guava.Say(
-                    f"Hello {self.patient_name}, this is Sam calling from Riverside Family Medicine. "
+                    f"Hello {patient_name}, this is Sam calling from Riverside Family Medicine. "
                     f"I'm reaching out because your recent lab results are now available and ready to review."
                 ),
                 guava.Field(
@@ -120,35 +127,28 @@ class LabResultsController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.wrap_up,
         )
 
-    def wrap_up(self):
-        has_questions = self.get_field("has_questions")
-        if has_questions == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know that a nurse or their care team will call them "
-                    "back within one business day to go over their results in detail and answer any "
-                    "questions. Thank them for their time and wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for their time. Remind them that if their doctor "
-                    "recommended any follow-up visits or additional tests, they can schedule those "
-                    "through our patient portal or by calling us back. Wish them well."
-                )
-            )
 
-    def leave_voicemail(self):
-        self.hangup(
+@agent.on_task_complete("deliver_results")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    has_questions = call.get_field("has_questions")
+
+    if has_questions == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.patient_name} from Riverside "
-                "Family Medicine. Let them know we are calling regarding their recent lab work and "
-                "ask them to call us back at their earliest convenience. Do not mention specific "
-                "test names, results, or any clinical details in the voicemail."
+                f"Let {patient_name} know that a nurse or their care team will call them "
+                "back within one business day to go over their results in detail and answer any "
+                "questions. Thank them for their time and wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for their time. Remind them that if their doctor "
+                "recommended any follow-up visits or additional tests, they can schedule those "
+                "through our patient portal or by calling us back. Wish them well."
             )
         )
 
@@ -168,12 +168,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=LabResultsController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            result_summary=args.result_summary,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "result_summary": args.result_summary,
+        },
     )

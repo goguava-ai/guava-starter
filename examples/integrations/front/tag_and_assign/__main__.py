@@ -78,130 +78,131 @@ def get_or_create_tag(tag_name: str) -> str:
     return resp.json()["id"]
 
 
-class TagAndAssignController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Relay Agency",
+    purpose=(
+        "to triage inbound calls at Relay Agency, capture the customer's issue, "
+        "and route the conversation to the right teammate in Front"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Relay Agency",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to triage inbound calls at Relay Agency, capture the customer's issue, "
-                "and route the conversation to the right teammate in Front"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "route_to_front",
+        objective=(
+            "A customer has called Relay Agency. Understand their issue, create a Front "
+            "conversation, apply the appropriate tags, and assign it to the right teammate."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Relay Agency. I'm Morgan — I'll get you connected "
+                "with the right person. Let me grab a few details first."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called Relay Agency. Understand their issue, create a Front "
-                "conversation, apply the appropriate tags, and assign it to the right teammate."
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask for the caller's full name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Relay Agency. I'm Morgan — I'll get you connected "
-                    "with the right person. Let me grab a few details first."
-                ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask for the caller's full name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for their email address.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="category",
-                    field_type="multiple_choice",
-                    description="Ask what their inquiry is about.",
-                    choices=[
-                        "billing",
-                        "technical support",
-                        "account management",
-                        "sales",
-                        "general",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="issue_summary",
-                    field_type="text",
-                    description="Ask for a brief summary of their question or issue.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="urgency",
-                    field_type="multiple_choice",
-                    description="Ask how urgent this is.",
-                    choices=["urgent", "normal", "low priority"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.route_to_front,
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for their email address.",
+                required=True,
+            ),
+            guava.Field(
+                key="category",
+                field_type="multiple_choice",
+                description="Ask what their inquiry is about.",
+                choices=[
+                    "billing",
+                    "technical support",
+                    "account management",
+                    "sales",
+                    "general",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="issue_summary",
+                field_type="text",
+                description="Ask for a brief summary of their question or issue.",
+                required=True,
+            ),
+            guava.Field(
+                key="urgency",
+                field_type="multiple_choice",
+                description="Ask how urgent this is.",
+                choices=["urgent", "normal", "low priority"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("route_to_front")
+def on_done(call: guava.Call) -> None:
+    name = call.get_field("caller_name") or "Unknown"
+    email = call.get_field("caller_email") or ""
+    category = call.get_field("category") or "general"
+    summary = call.get_field("issue_summary") or ""
+    urgency = call.get_field("urgency") or "normal"
+
+    subject = f"[{category.title()}] {summary[:80]}"
+    body = (
+        f"<p>Caller: {name}<br>Email: {email}</p>"
+        f"<p><strong>Category:</strong> {category}<br>"
+        f"<strong>Urgency:</strong> {urgency}</p>"
+        f"<p><strong>Summary:</strong><br>{summary}</p>"
+        f"<p><em>Via voice — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
+    )
+
+    logging.info("Creating Front conversation for %s — category: %s, urgency: %s", name, category, urgency)
+
+    conv_id = ""
+    try:
+        conv_id = create_conversation(FRONT_INBOX_ID, name, email, subject, body)
+        logging.info("Front conversation created: %s", conv_id)
+    except Exception as e:
+        logging.error("Failed to create Front conversation: %s", e)
+
+    if conv_id:
+        # Apply urgency and category tags
+        for tag_name in [category, urgency, "voice"]:
+            try:
+                tag_id = get_or_create_tag(tag_name)
+                apply_tag(conv_id, tag_id)
+            except Exception as e:
+                logging.warning("Could not apply tag '%s': %s", tag_name, e)
+
+        # Assign to the right teammate
+        assignee_id = ROUTING_MAP.get(category, "")
+        if assignee_id:
+            try:
+                assign_conversation(conv_id, assignee_id)
+                logging.info("Conversation %s assigned to %s.", conv_id, assignee_id)
+            except Exception as e:
+                logging.error("Failed to assign conversation %s: %s", conv_id, e)
+
+    call.hangup(
+        final_instructions=(
+            f"Let {name} know their inquiry has been logged and routed to the {category} team. "
+            + ("Given the urgency they indicated, let them know the team will prioritize their request. "
+               if urgency == "urgent" else "")
+            + "Let them know they'll receive a reply via email. "
+            "Thank them for calling Relay Agency and wish them a great day."
         )
-
-        self.accept_call()
-
-    def route_to_front(self):
-        name = self.get_field("caller_name") or "Unknown"
-        email = self.get_field("caller_email") or ""
-        category = self.get_field("category") or "general"
-        summary = self.get_field("issue_summary") or ""
-        urgency = self.get_field("urgency") or "normal"
-
-        subject = f"[{category.title()}] {summary[:80]}"
-        body = (
-            f"<p>Caller: {name}<br>Email: {email}</p>"
-            f"<p><strong>Category:</strong> {category}<br>"
-            f"<strong>Urgency:</strong> {urgency}</p>"
-            f"<p><strong>Summary:</strong><br>{summary}</p>"
-            f"<p><em>Via voice — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</em></p>"
-        )
-
-        logging.info("Creating Front conversation for %s — category: %s, urgency: %s", name, category, urgency)
-
-        conv_id = ""
-        try:
-            conv_id = create_conversation(FRONT_INBOX_ID, name, email, subject, body)
-            logging.info("Front conversation created: %s", conv_id)
-        except Exception as e:
-            logging.error("Failed to create Front conversation: %s", e)
-
-        if conv_id:
-            # Apply urgency and category tags
-            for tag_name in [category, urgency, "voice"]:
-                try:
-                    tag_id = get_or_create_tag(tag_name)
-                    apply_tag(conv_id, tag_id)
-                except Exception as e:
-                    logging.warning("Could not apply tag '%s': %s", tag_name, e)
-
-            # Assign to the right teammate
-            assignee_id = ROUTING_MAP.get(category, "")
-            if assignee_id:
-                try:
-                    assign_conversation(conv_id, assignee_id)
-                    logging.info("Conversation %s assigned to %s.", conv_id, assignee_id)
-                except Exception as e:
-                    logging.error("Failed to assign conversation %s: %s", conv_id, e)
-
-        self.hangup(
-            final_instructions=(
-                f"Let {name} know their inquiry has been logged and routed to the {category} team. "
-                + ("Given the urgency they indicated, let them know the team will prioritize their request. "
-                   if urgency == "urgent" else "")
-                + "Let them know they'll receive a reply via email. "
-                "Thank them for calling Relay Agency and wish them a great day."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=TagAndAssignController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

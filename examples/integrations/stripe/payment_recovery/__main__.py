@@ -47,61 +47,78 @@ def format_amount(cents: int, currency: str = "usd") -> str:
     return f"${cents / 100:,.2f} {currency.upper()}"
 
 
-class PaymentRecoveryController(guava.CallController):
-    def __init__(self, customer_id: str, customer_name: str):
-        super().__init__()
-        self.customer_id = customer_id
-        self.customer_name = customer_name
-        self.invoices = []
-        self.total_owed_str = ""
+agent = guava.Agent(
+    name="Casey",
+    organization="Luminary",
+    purpose=(
+        "to help Luminary customers resolve outstanding payment issues on their account"
+    ),
+)
 
-        try:
-            self.invoices = list_open_invoices(customer_id)
-            if self.invoices:
-                total_cents = sum(inv.get("amount_due", 0) for inv in self.invoices)
-                currency = self.invoices[0].get("currency", "usd")
-                self.total_owed_str = format_amount(total_cents, currency)
-        except Exception as e:
-            logging.error("Failed to fetch invoices for %s pre-call: %s", customer_id, e)
 
-        self.set_persona(
-            organization_name="Luminary",
-            agent_name="Casey",
-            agent_purpose=(
-                "to help Luminary customers resolve outstanding payment issues on their account"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_id = call.get_variable("customer_id")
+    customer_name = call.get_variable("customer_name")
+
+    invoices = []
+    total_owed_str = ""
+
+    try:
+        invoices = list_open_invoices(customer_id)
+        if invoices:
+            total_cents = sum(inv.get("amount_due", 0) for inv in invoices)
+            currency = invoices[0].get("currency", "usd")
+            total_owed_str = format_amount(total_cents, currency)
+    except Exception as e:
+        logging.error("Failed to fetch invoices for %s pre-call: %s", customer_id, e)
+
+    call.invoices = invoices
+    call.total_owed_str = total_owed_str
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_id = call.get_variable("customer_id")
+    customer_name = call.get_variable("customer_name")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for payment recovery", customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {customer_name} on behalf of Luminary. "
+                "Let them know you're calling about a payment issue on their account and ask them "
+                "to log in to update their payment method, or call us back at their convenience. "
+                "Keep it concise and non-threatening."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_recovery,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_recovery(self):
-        if not self.invoices:
-            logging.info("No open invoices found for customer %s — call unnecessary", self.customer_id)
-            self.hangup(
+    elif outcome == "available":
+        if not call.invoices:
+            logging.info("No open invoices found for customer %s — call unnecessary", customer_id)
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know you're calling from Luminary about their account. "
+                    f"Let {customer_name} know you're calling from Luminary about their account. "
                     "Upon review, it looks like their balance is actually clear. "
                     "Apologize for any confusion and wish them a great day."
                 )
             )
             return
 
-        invoice_count = len(self.invoices)
-        amount_note = f" totaling {self.total_owed_str}" if self.total_owed_str else ""
+        invoice_count = len(call.invoices)
+        amount_note = f" totaling {call.total_owed_str}" if call.total_owed_str else ""
 
-        self.set_task(
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Reach {self.customer_name} about {invoice_count} outstanding "
+                f"Reach {customer_name} about {invoice_count} outstanding "
                 f"invoice{'s' if invoice_count > 1 else ''}{amount_note} on their Luminary account. "
                 "Understand why payment failed and, if they've resolved the issue, retry the charge."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Casey calling from Luminary. "
+                    f"Hi {customer_name}, this is Casey calling from Luminary. "
                     f"I'm reaching out because we noticed a payment issue on your account — "
                     f"there {'are' if invoice_count > 1 else 'is'} {invoice_count} outstanding "
                     f"invoice{'s' if invoice_count > 1 else ''}{amount_note} that we weren't "
@@ -145,73 +162,65 @@ class PaymentRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        cause = self.get_field("cause") or "unknown"
-        updated_payment = self.get_field("updated_payment") or ""
 
-        logging.info(
-            "Payment recovery outcome for %s — cause: %s, updated: %s",
-            self.customer_id, cause, updated_payment,
-        )
+@agent.on_task_complete("handle_outcome")
+def handle_outcome(call: guava.Call) -> None:
+    customer_id = call.get_variable("customer_id")
+    customer_name = call.get_variable("customer_name")
+    cause = call.get_field("cause") or "unknown"
+    updated_payment = call.get_field("updated_payment") or ""
 
-        if "retry" in updated_payment:
-            # Attempt to pay all open invoices
-            success_count = 0
-            for invoice in self.invoices:
-                try:
-                    pay_invoice(invoice["id"])
-                    success_count += 1
-                    logging.info("Invoice %s paid successfully", invoice["id"])
-                except Exception as e:
-                    logging.error("Failed to pay invoice %s: %s", invoice["id"], e)
+    logging.info(
+        "Payment recovery outcome for %s — cause: %s, updated: %s",
+        customer_id, cause, updated_payment,
+    )
 
-            if success_count == len(self.invoices):
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know their payment was collected successfully — "
-                        "their account is now fully up to date. "
-                        "Thank them for resolving this so quickly and wish them a great day."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know that the payment retry wasn't successful. "
-                        "Ask them to log in and update their payment method, or call us back. "
-                        "Assure them their account won't be affected immediately. "
-                        "Thank them for their time."
-                    )
-                )
-        elif "dispute" in updated_payment:
-            self.hangup(
+    if "retry" in updated_payment:
+        # Attempt to pay all open invoices
+        success_count = 0
+        for invoice in call.invoices:
+            try:
+                pay_invoice(invoice["id"])
+                success_count += 1
+                logging.info("Invoice %s paid successfully", invoice["id"])
+            except Exception as e:
+                logging.error("Failed to pay invoice %s: %s", invoice["id"], e)
+
+        if success_count == len(call.invoices):
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know you've noted their dispute and a billing specialist "
-                    "will review the charges and reach out by email within one business day. "
-                    "Thank them for letting us know."
+                    f"Let {customer_name} know their payment was collected successfully — "
+                    "their account is now fully up to date. "
+                    "Thank them for resolving this so quickly and wish them a great day."
                 )
             )
         else:
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Thank {self.customer_name} for their time. "
-                    "Let them know they can update their payment method by logging into their account, "
-                    "and once updated, we'll automatically retry the outstanding invoice. "
-                    "Let them know we'll also send a reminder email with next steps. "
-                    "Wish them a great day."
+                    f"Let {customer_name} know that the payment retry wasn't successful. "
+                    "Ask them to log in and update their payment method, or call us back. "
+                    "Assure them their account won't be affected immediately. "
+                    "Thank them for their time."
                 )
             )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for payment recovery", self.customer_name)
-        self.hangup(
+    elif "dispute" in updated_payment:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name} on behalf of Luminary. "
-                "Let them know you're calling about a payment issue on their account and ask them "
-                "to log in to update their payment method, or call us back at their convenience. "
-                "Keep it concise and non-threatening."
+                f"Let {customer_name} know you've noted their dispute and a billing specialist "
+                "will review the charges and reach out by email within one business day. "
+                "Thank them for letting us know."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. "
+                "Let them know they can update their payment method by logging into their account, "
+                "and once updated, we'll automatically retry the outstanding invoice. "
+                "Let them know we'll also send a reminder email with next steps. "
+                "Wish them a great day."
             )
         )
 
@@ -231,11 +240,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.customer_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PaymentRecoveryController(
-            customer_id=args.customer_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "customer_id": args.customer_id,
+            "customer_name": args.name,
+        },
     )

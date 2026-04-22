@@ -75,127 +75,128 @@ def format_product(product: dict) -> str:
     return f"{name}{brand_str} — {price_str}"
 
 
-class ProductCatalogSearchController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Taylor",
+    organization="Horizon Home",
+    purpose=(
+        "to help Horizon Home customers find products in our catalog by searching "
+        "based on what they describe"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Horizon Home",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to help Horizon Home customers find products in our catalog by searching "
-                "based on what they describe"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "search_and_present",
+        objective=(
+            "A customer is looking for a product. Collect their description and any "
+            "preferences, search the catalog, and share the best matches."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Horizon Home. This is Taylor. "
+                "Tell me what you're looking for and I'll search our catalog for you."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer is looking for a product. Collect their description and any "
-                "preferences, search the catalog, and share the best matches."
+            guava.Field(
+                key="product_description",
+                field_type="text",
+                description=(
+                    "Ask the customer to describe the product they're looking for — "
+                    "what it does, any brand preferences, color, size, or other attributes."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Horizon Home. This is Taylor. "
-                    "Tell me what you're looking for and I'll search our catalog for you."
+            guava.Field(
+                key="category",
+                field_type="multiple_choice",
+                description="Ask which product category this falls under, if they know.",
+                choices=[
+                    "furniture",
+                    "kitchen and dining",
+                    "bedding and bath",
+                    "lighting",
+                    "outdoor",
+                    "decor and accessories",
+                    "not sure",
+                ],
+                required=False,
+            ),
+            guava.Field(
+                key="max_budget",
+                field_type="text",
+                description=(
+                    "Ask if they have a budget or maximum price in mind. "
+                    "If they say 'no limit' or don't know, leave it open."
                 ),
-                guava.Field(
-                    key="product_description",
-                    field_type="text",
-                    description=(
-                        "Ask the customer to describe the product they're looking for — "
-                        "what it does, any brand preferences, color, size, or other attributes."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="category",
-                    field_type="multiple_choice",
-                    description="Ask which product category this falls under, if they know.",
-                    choices=[
-                        "furniture",
-                        "kitchen and dining",
-                        "bedding and bath",
-                        "lighting",
-                        "outdoor",
-                        "decor and accessories",
-                        "not sure",
-                    ],
-                    required=False,
-                ),
-                guava.Field(
-                    key="max_budget",
-                    field_type="text",
-                    description=(
-                        "Ask if they have a budget or maximum price in mind. "
-                        "If they say 'no limit' or don't know, leave it open."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.search_and_present,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def search_and_present(self):
-        description = self.get_field("product_description") or ""
-        category = self.get_field("category") or ""
-        if category == "not sure":
-            category = ""
-        budget_str = self.get_field("max_budget") or ""
+@agent.on_task_complete("search_and_present")
+def on_done(call: guava.Call) -> None:
+    description = call.get_field("product_description") or ""
+    category = call.get_field("category") or ""
+    if category == "not sure":
+        category = ""
+    budget_str = call.get_field("max_budget") or ""
 
+    max_price = 0.0
+    try:
+        cleaned = budget_str.replace("$", "").replace(",", "").strip()
+        max_price = float(cleaned) if cleaned else 0.0
+    except ValueError:
         max_price = 0.0
-        try:
-            cleaned = budget_str.replace("$", "").replace(",", "").strip()
-            max_price = float(cleaned) if cleaned else 0.0
-        except ValueError:
-            max_price = 0.0
 
-        logging.info(
-            "Searching products: query='%s', category='%s', max_price=%.2f",
-            description, category, max_price,
+    logging.info(
+        "Searching products: query='%s', category='%s', max_price=%.2f",
+        description, category, max_price,
+    )
+
+    try:
+        products = search_products(
+            query=description,
+            category=category,
+            max_price=max_price,
+            in_stock_only=True,
         )
+    except Exception as e:
+        logging.error("Product catalog search failed: %s", e)
+        products = []
 
-        try:
-            products = search_products(
-                query=description,
-                category=category,
-                max_price=max_price,
-                in_stock_only=True,
-            )
-        except Exception as e:
-            logging.error("Product catalog search failed: %s", e)
-            products = []
-
-        if not products:
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know you didn't find any products matching their description "
-                    "in stock right now. Suggest they visit horizonhome.com to browse the full catalog "
-                    "or sign up for restock alerts. Offer to note their request for the merchandising team. "
-                    "Be warm and helpful."
-                )
-            )
-            return
-
-        product_lines = [format_product(p) for p in products[:3]]
-        product_summary = "; ".join(product_lines)
-        logging.info("Found %d products for query: %s", len(products), description)
-
-        self.hangup(
+    if not products:
+        call.hangup(
             final_instructions=(
-                f"Tell the customer you found {len(products)} matching products. "
-                f"Read them the top options: {product_summary}. "
-                "Describe each one naturally — name, brand, and price. "
-                "Let them know they can also browse at horizonhome.com or call back to narrow the search further. "
-                "Thank them for calling Horizon Home."
+                "Let the customer know you didn't find any products matching their description "
+                "in stock right now. Suggest they visit horizonhome.com to browse the full catalog "
+                "or sign up for restock alerts. Offer to note their request for the merchandising team. "
+                "Be warm and helpful."
             )
         )
+        return
+
+    product_lines = [format_product(p) for p in products[:3]]
+    product_summary = "; ".join(product_lines)
+    logging.info("Found %d products for query: %s", len(products), description)
+
+    call.hangup(
+        final_instructions=(
+            f"Tell the customer you found {len(products)} matching products. "
+            f"Read them the top options: {product_summary}. "
+            "Describe each one naturally — name, brand, and price. "
+            "Let them know they can also browse at horizonhome.com or call back to narrow the search further. "
+            "Thank them for calling Horizon Home."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ProductCatalogSearchController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

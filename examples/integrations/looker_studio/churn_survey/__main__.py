@@ -12,36 +12,39 @@ from google.cloud import bigquery
 BIGQUERY_TABLE = os.environ["BIGQUERY_TABLE"]
 
 
-class ChurnSurveyController(guava.CallController):
-    def __init__(self, contact_name: str, account_name: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.account_name = account_name
+agent = guava.Agent(
+    name="Morgan",
+    organization="Acme Corp",
+    purpose=(
+        "to understand why a customer recently cancelled "
+        "and whether there's anything Acme Corp can do to improve"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Acme Corp",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to understand why a customer recently cancelled "
-                "and whether there's anything Acme Corp can do to improve"
-            ),
-        )
 
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.hangup,
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.reach_person(contact_full_name=contact_name)
 
-    def begin_survey(self):
-        self.set_task(
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_name = call.get_variable("account_name")
+
+    if outcome == "unavailable":
+        call.hangup()
+    elif outcome == "available":
+        call.set_task(
+            "save_to_bigquery",
             objective=(
-                f"Conduct a brief exit survey with {self.contact_name} from {self.account_name}. "
+                f"Conduct a brief exit survey with {contact_name} from {account_name}. "
                 "The goal is to understand why they cancelled and whether they'd ever return."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan from Acme Corp. "
+                    f"Hi {contact_name}, this is Morgan from Acme Corp. "
                     "I saw that your account was recently cancelled and I wanted to reach out personally. "
                     "I have just a couple of questions — it'll take under two minutes and your feedback really matters to us."
                 ),
@@ -85,35 +88,39 @@ class ChurnSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_to_bigquery,
         )
 
-    def save_to_bigquery(self):
-        row = {
-            "call_timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "account_name": self.account_name,
-            "primary_reason": self.get_field("primary_reason"),
-            "competitor_chosen": self.get_field("competitor_chosen"),
-            "would_return": self.get_field("would_return"),
-            "feedback": self.get_field("feedback"),
-        }
 
-        client = bigquery.Client()
-        errors = client.insert_rows_json(BIGQUERY_TABLE, [row])
-        if errors:
-            logging.error("BigQuery insert failed: %s", errors)
-        else:
-            logging.info("Row written to BigQuery: %s", row)
+@agent.on_task_complete("save_to_bigquery")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_name = call.get_variable("account_name")
 
-        self.hangup(
-            final_instructions=(
-                "Thank them sincerely for their candid feedback. "
-                "Let them know their input will be shared with the product team. "
-                "If they seemed open to returning, mention they can always reach out at acmecorp.com. "
-                "Wish them well."
-            )
+    row = {
+        "call_timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": contact_name,
+        "account_name": account_name,
+        "primary_reason": call.get_field("primary_reason"),
+        "competitor_chosen": call.get_field("competitor_chosen"),
+        "would_return": call.get_field("would_return"),
+        "feedback": call.get_field("feedback"),
+    }
+
+    client = bigquery.Client()
+    errors = client.insert_rows_json(BIGQUERY_TABLE, [row])
+    if errors:
+        logging.error("BigQuery insert failed: %s", errors)
+    else:
+        logging.info("Row written to BigQuery: %s", row)
+
+    call.hangup(
+        final_instructions=(
+            "Thank them sincerely for their candid feedback. "
+            "Let them know their input will be shared with the product team. "
+            "If they seemed open to returning, mention they can always reach out at acmecorp.com. "
+            "Wish them well."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -124,11 +131,11 @@ if __name__ == "__main__":
     parser.add_argument("--account", required=True, help="Account or company name")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ChurnSurveyController(
-            contact_name=args.name,
-            account_name=args.account,
-        ),
+        variables={
+            "contact_name": args.name,
+            "account_name": args.account,
+        },
     )

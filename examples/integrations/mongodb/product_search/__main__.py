@@ -55,125 +55,126 @@ PRICE_LIMITS = {
 }
 
 
-class ProductSearchController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Jordan",
+    organization="Vantage",
+    purpose=(
+        "to help Vantage customers find the right product in the catalog "
+        "based on their needs and budget"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Vantage",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to help Vantage customers find the right product in the catalog "
-                "based on their needs and budget"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "product_search",
+        objective=(
+            "A customer has called to find a product. "
+            "Understand what they're looking for, search the catalog, "
+            "and recommend the best matches."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Vantage. I'm Jordan. "
+                "I'd love to help you find exactly what you're looking for. "
+                "Let me ask you a couple of quick questions."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called to find a product. "
-                "Understand what they're looking for, search the catalog, "
-                "and recommend the best matches."
+            guava.Field(
+                key="category",
+                field_type="multiple_choice",
+                description="Ask what type of product they're looking for.",
+                choices=[
+                    "analytics",
+                    "monitoring",
+                    "security",
+                    "automation",
+                    "integration",
+                    "any",
+                ],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Vantage. I'm Jordan. "
-                    "I'd love to help you find exactly what you're looking for. "
-                    "Let me ask you a couple of quick questions."
+            guava.Field(
+                key="use_case",
+                field_type="text",
+                description=(
+                    "Ask what they're trying to accomplish — the more specific the better. "
+                    "Capture their answer."
                 ),
-                guava.Field(
-                    key="category",
-                    field_type="multiple_choice",
-                    description="Ask what type of product they're looking for.",
-                    choices=[
-                        "analytics",
-                        "monitoring",
-                        "security",
-                        "automation",
-                        "integration",
-                        "any",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="use_case",
-                    field_type="text",
-                    description=(
-                        "Ask what they're trying to accomplish — the more specific the better. "
-                        "Capture their answer."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="budget",
-                    field_type="multiple_choice",
-                    description="Ask if they have a budget in mind.",
-                    choices=list(PRICE_LIMITS.keys()),
-                    required=False,
-                ),
-                guava.Field(
-                    key="in_stock_only",
-                    field_type="multiple_choice",
-                    description="Ask if they need something available immediately.",
-                    choices=["yes, in stock only", "no, show me everything"],
-                    required=False,
-                ),
-            ],
-            on_complete=self.search_and_recommend,
-        )
+                required=True,
+            ),
+            guava.Field(
+                key="budget",
+                field_type="multiple_choice",
+                description="Ask if they have a budget in mind.",
+                choices=list(PRICE_LIMITS.keys()),
+                required=False,
+            ),
+            guava.Field(
+                key="in_stock_only",
+                field_type="multiple_choice",
+                description="Ask if they need something available immediately.",
+                choices=["yes, in stock only", "no, show me everything"],
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def search_and_recommend(self):
-        category = self.get_field("category") or "any"
-        use_case = self.get_field("use_case") or ""
-        budget_str = self.get_field("budget") or "no limit"
-        in_stock_pref = self.get_field("in_stock_only") or ""
+@agent.on_task_complete("product_search")
+def on_product_search_done(call: guava.Call) -> None:
+    category = call.get_field("category") or "any"
+    use_case = call.get_field("use_case") or ""
+    budget_str = call.get_field("budget") or "no limit"
+    in_stock_pref = call.get_field("in_stock_only") or ""
 
-        max_price = PRICE_LIMITS.get(budget_str)
-        in_stock_only = "in stock only" in in_stock_pref
+    max_price = PRICE_LIMITS.get(budget_str)
+    in_stock_only = "in stock only" in in_stock_pref
 
-        logging.info(
-            "Searching products: category=%s, max_price=%s, in_stock=%s",
-            category, max_price, in_stock_only,
-        )
+    logging.info(
+        "Searching products: category=%s, max_price=%s, in_stock=%s",
+        category, max_price, in_stock_only,
+    )
 
-        try:
-            results = search_products(category, max_price, in_stock_only)
-        except Exception as e:
-            logging.error("Product search failed: %s", e)
-            results = []
+    try:
+        results = search_products(category, max_price, in_stock_only)
+    except Exception as e:
+        logging.error("Product search failed: %s", e)
+        results = []
 
-        if not results:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you didn't find any products matching their criteria. "
-                    "Suggest they try broadening the category or budget, or offer to connect "
-                    "them with a product specialist who can recommend alternatives."
-                )
-            )
-            return
-
-        top = results[0]
-        top_str = format_product(top)
-        others = results[1:]
-        others_str = "; ".join(format_product(p) for p in others)
-
-        logging.info("Found %d matching products", len(results))
-
-        self.hangup(
+    if not results:
+        call.hangup(
             final_instructions=(
-                f"Let the caller know you found {len(results)} matching product(s). "
-                f"Your top recommendation based on their needs ({use_case}) and budget is: {top_str}. "
-                + (f"Other strong options: {others_str}. " if others else "")
-                + "Mention that they can call back if they'd like to narrow the search further. "
-                "Offer to connect them with a product specialist for a deeper recommendation."
+                "Let the caller know you didn't find any products matching their criteria. "
+                "Suggest they try broadening the category or budget, or offer to connect "
+                "them with a product specialist who can recommend alternatives."
             )
         )
+        return
+
+    top = results[0]
+    top_str = format_product(top)
+    others = results[1:]
+    others_str = "; ".join(format_product(p) for p in others)
+
+    logging.info("Found %d matching products", len(results))
+
+    call.hangup(
+        final_instructions=(
+            f"Let the caller know you found {len(results)} matching product(s). "
+            f"Your top recommendation based on their needs ({use_case}) and budget is: {top_str}. "
+            + (f"Other strong options: {others_str}. " if others else "")
+            + "Mention that they can call back if they'd like to narrow the search further. "
+            "Offer to connect them with a product specialist for a deeper recommendation."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ProductSearchController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

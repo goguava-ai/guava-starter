@@ -100,200 +100,201 @@ def format_start_at(start_at: str) -> str:
         return start_at
 
 
-class AppointmentCancellationController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Crestwood Wellness",
+    purpose="to help Crestwood Wellness clients cancel or reschedule their appointments",
+)
 
-        self.set_persona(
-            organization_name="Crestwood Wellness",
-            agent_name="Sam",
-            agent_purpose="to help Crestwood Wellness clients cancel or reschedule their appointments",
-        )
 
-        self.set_task(
-            objective=(
-                "A client has called to cancel or reschedule an existing appointment. "
-                "Verify their booking, confirm their intention, and process the request."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "handle_complete",
+        objective=(
+            "A client has called to cancel or reschedule an existing appointment. "
+            "Verify their booking, confirm their intention, and process the request."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Crestwood Wellness. This is Sam. "
+                "I can help you cancel or reschedule your appointment today."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Crestwood Wellness. This is Sam. "
-                    "I can help you cancel or reschedule your appointment today."
+            guava.Field(
+                key="booking_id",
+                field_type="text",
+                description=(
+                    "Ask for their booking confirmation ID. "
+                    "Let them know it was provided when they originally booked."
                 ),
-                guava.Field(
-                    key="booking_id",
-                    field_type="text",
-                    description=(
-                        "Ask for their booking confirmation ID. "
-                        "Let them know it was provided when they originally booked."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="customer_email",
-                    field_type="text",
-                    description="Ask for the email address on their account to verify their identity.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="action",
-                    field_type="multiple_choice",
-                    description="Ask whether they'd like to cancel their appointment or reschedule it.",
-                    choices=["cancel", "reschedule"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="cancellation_reason",
-                    field_type="text",
-                    description="If cancelling, ask if they'd like to share a reason (optional).",
-                    required=False,
-                ),
-                guava.Field(
-                    key="new_preferred_date",
-                    field_type="text",
-                    description="If rescheduling, what new date would they prefer?",
-                    required=False,
-                ),
-                guava.Field(
-                    key="new_preferred_time",
-                    field_type="multiple_choice",
-                    description="If rescheduling, what time of day works best?",
-                    choices=["morning", "afternoon", "evening"],
-                    required=False,
-                ),
-            ],
-            on_complete=self.handle_complete,
+                required=True,
+            ),
+            guava.Field(
+                key="customer_email",
+                field_type="text",
+                description="Ask for the email address on their account to verify their identity.",
+                required=True,
+            ),
+            guava.Field(
+                key="action",
+                field_type="multiple_choice",
+                description="Ask whether they'd like to cancel their appointment or reschedule it.",
+                choices=["cancel", "reschedule"],
+                required=True,
+            ),
+            guava.Field(
+                key="cancellation_reason",
+                field_type="text",
+                description="If cancelling, ask if they'd like to share a reason (optional).",
+                required=False,
+            ),
+            guava.Field(
+                key="new_preferred_date",
+                field_type="text",
+                description="If rescheduling, what new date would they prefer?",
+                required=False,
+            ),
+            guava.Field(
+                key="new_preferred_time",
+                field_type="multiple_choice",
+                description="If rescheduling, what time of day works best?",
+                choices=["morning", "afternoon", "evening"],
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("handle_complete")
+def handle_complete(call: guava.Call) -> None:
+    booking_id = (call.get_field("booking_id") or "").strip()
+    customer_email = (call.get_field("customer_email") or "").strip().lower()
+    action = (call.get_field("action") or "").lower()
+    cancellation_reason = call.get_field("cancellation_reason") or ""
+    new_preferred_date = call.get_field("new_preferred_date") or ""
+    new_preferred_time = call.get_field("new_preferred_time") or "morning"
+
+    logging.info(
+        "Processing %s for booking %s (email: %s)",
+        action, booking_id, customer_email,
+    )
+
+    # Fetch and verify the booking
+    booking = None
+    try:
+        booking = get_booking(booking_id)
+    except Exception as e:
+        logging.error("Failed to fetch booking %s: %s", booking_id, e)
+
+    if not booking:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know we couldn't find a booking with ID '{booking_id}'. "
+                "Ask them to double-check the ID from their confirmation email. "
+                "If they need further help they can visit CreswoodWellness.com. Be apologetic."
+            )
         )
+        return
 
-        self.accept_call()
+    booking_version = booking.get("version", 0)
+    current_start = booking.get("start_at", "")
+    readable_current = format_start_at(current_start) if current_start else "your scheduled time"
+    booking_status = booking.get("status", "")
 
-    def handle_complete(self):
-        booking_id = (self.get_field("booking_id") or "").strip()
-        customer_email = (self.get_field("customer_email") or "").strip().lower()
-        action = (self.get_field("action") or "").lower()
-        cancellation_reason = self.get_field("cancellation_reason") or ""
-        new_preferred_date = self.get_field("new_preferred_date") or ""
-        new_preferred_time = self.get_field("new_preferred_time") or "morning"
-
-        logging.info(
-            "Processing %s for booking %s (email: %s)",
-            action, booking_id, customer_email,
+    if booking_status in ("CANCELLED_BY_CUSTOMER", "CANCELLED_BY_SELLER", "NO_SHOW"):
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know booking {booking_id} (originally at {readable_current}) "
+                f"already has a status of '{booking_status.lower()}' and cannot be modified. "
+                "If they believe this is an error, ask them to contact us directly. Be helpful."
+            )
         )
+        return
 
-        # Fetch and verify the booking
-        booking = None
+    if action == "cancel":
+        cancelled_booking = None
         try:
-            booking = get_booking(booking_id)
+            cancelled_booking = cancel_booking(booking_id, booking_version)
+            logging.info(
+                "Booking %s cancelled, new status: %s",
+                booking_id, cancelled_booking.get("status"),
+            )
         except Exception as e:
-            logging.error("Failed to fetch booking %s: %s", booking_id, e)
+            logging.error("Failed to cancel booking %s: %s", booking_id, e)
 
-        if not booking:
-            self.hangup(
+        if cancelled_booking and "CANCELLED" in cancelled_booking.get("status", ""):
+            reason_note = f" Reason noted: {cancellation_reason}." if cancellation_reason else ""
+            call.hangup(
                 final_instructions=(
-                    f"Let the caller know we couldn't find a booking with ID '{booking_id}'. "
-                    "Ask them to double-check the ID from their confirmation email. "
-                    "If they need further help they can visit CreswoodWellness.com. Be apologetic."
+                    f"Let the caller know their appointment originally scheduled for "
+                    f"{readable_current} has been successfully cancelled.{reason_note} "
+                    "Let them know they're welcome to call back any time to rebook. "
+                    "Thank them and wish them a good day."
                 )
             )
-            return
-
-        booking_version = booking.get("version", 0)
-        current_start = booking.get("start_at", "")
-        readable_current = format_start_at(current_start) if current_start else "your scheduled time"
-        booking_status = booking.get("status", "")
-
-        if booking_status in ("CANCELLED_BY_CUSTOMER", "CANCELLED_BY_SELLER", "NO_SHOW"):
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know booking {booking_id} (originally at {readable_current}) "
-                    f"already has a status of '{booking_status.lower()}' and cannot be modified. "
-                    "If they believe this is an error, ask them to contact us directly. Be helpful."
-                )
-            )
-            return
-
-        if action == "cancel":
-            cancelled_booking = None
-            try:
-                cancelled_booking = cancel_booking(booking_id, booking_version)
-                logging.info(
-                    "Booking %s cancelled, new status: %s",
-                    booking_id, cancelled_booking.get("status"),
-                )
-            except Exception as e:
-                logging.error("Failed to cancel booking %s: %s", booking_id, e)
-
-            if cancelled_booking and "CANCELLED" in cancelled_booking.get("status", ""):
-                reason_note = f" Reason noted: {cancellation_reason}." if cancellation_reason else ""
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know their appointment originally scheduled for "
-                        f"{readable_current} has been successfully cancelled.{reason_note} "
-                        "Let them know they're welcome to call back any time to rebook. "
-                        "Thank them and wish them a good day."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        "Apologize — we weren't able to cancel the booking automatically at this time. "
-                        "Let the caller know our team will follow up by email within one business day "
-                        "to confirm the cancellation. Be apologetic and reassuring."
-                    )
-                )
-
-        elif action == "reschedule":
-            if not new_preferred_date:
-                self.hangup(
-                    final_instructions=(
-                        "Apologize — we didn't capture a new preferred date for rescheduling. "
-                        "Ask the caller to call back and we'll be happy to reschedule for them."
-                    )
-                )
-                return
-
-            new_start_at = build_start_at(new_preferred_date, new_preferred_time)
-            readable_new = format_start_at(new_start_at)
-
-            rescheduled = None
-            try:
-                rescheduled = reschedule_booking(booking_id, booking_version, new_start_at)
-                logging.info(
-                    "Booking %s rescheduled to %s, status=%s",
-                    booking_id, new_start_at, rescheduled.get("status"),
-                )
-            except Exception as e:
-                logging.error("Failed to reschedule booking %s: %s", booking_id, e)
-
-            if rescheduled:
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know their appointment has been rescheduled to {readable_new}. "
-                        f"Their booking ID remains {booking_id}. "
-                        "They'll receive an updated confirmation email shortly. "
-                        "Thank them for choosing Crestwood Wellness."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        "Apologize — we weren't able to reschedule the booking automatically at this time. "
-                        "Let the caller know our team will reach out by email within one business day "
-                        "to arrange the new time. Be warm and apologetic."
-                    )
-                )
         else:
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    "Let the caller know we weren't sure whether they wanted to cancel or reschedule. "
-                    "Ask them to call back and we'll be happy to assist. Apologize for any confusion."
+                    "Apologize — we weren't able to cancel the booking automatically at this time. "
+                    "Let the caller know our team will follow up by email within one business day "
+                    "to confirm the cancellation. Be apologetic and reassuring."
                 )
             )
+
+    elif action == "reschedule":
+        if not new_preferred_date:
+            call.hangup(
+                final_instructions=(
+                    "Apologize — we didn't capture a new preferred date for rescheduling. "
+                    "Ask the caller to call back and we'll be happy to reschedule for them."
+                )
+            )
+            return
+
+        new_start_at = build_start_at(new_preferred_date, new_preferred_time)
+        readable_new = format_start_at(new_start_at)
+
+        rescheduled = None
+        try:
+            rescheduled = reschedule_booking(booking_id, booking_version, new_start_at)
+            logging.info(
+                "Booking %s rescheduled to %s, status=%s",
+                booking_id, new_start_at, rescheduled.get("status"),
+            )
+        except Exception as e:
+            logging.error("Failed to reschedule booking %s: %s", booking_id, e)
+
+        if rescheduled:
+            call.hangup(
+                final_instructions=(
+                    f"Let the caller know their appointment has been rescheduled to {readable_new}. "
+                    f"Their booking ID remains {booking_id}. "
+                    "They'll receive an updated confirmation email shortly. "
+                    "Thank them for choosing Crestwood Wellness."
+                )
+            )
+        else:
+            call.hangup(
+                final_instructions=(
+                    "Apologize — we weren't able to reschedule the booking automatically at this time. "
+                    "Let the caller know our team will reach out by email within one business day "
+                    "to arrange the new time. Be warm and apologetic."
+                )
+            )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know we weren't sure whether they wanted to cancel or reschedule. "
+                "Ask them to call back and we'll be happy to assist. Apologize for any confusion."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=AppointmentCancellationController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

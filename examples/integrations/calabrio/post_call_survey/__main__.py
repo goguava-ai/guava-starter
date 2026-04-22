@@ -51,35 +51,48 @@ def submit_survey_response(
     return resp.json()
 
 
-class PostCallSurveyController(guava.CallController):
-    def __init__(self, customer_name: str, interaction_id: str, agent_name: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.interaction_id = interaction_id
-        self.agent_name = agent_name
+agent = guava.Agent(
+    name="Alex",
+    organization="Horizon Contact Center",
+    purpose=(
+        "to collect brief feedback about a customer's recent experience with "
+        "Horizon Contact Center"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Horizon Contact Center",
-            agent_name="Alex",
-            agent_purpose=(
-                "to collect brief feedback about a customer's recent experience with "
-                "Horizon Contact Center"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        customer_name = call.get_variable("customer_name")
+        interaction_id = call.get_variable("interaction_id")
+        logging.info(
+            "Unable to reach %s for post-call survey (interaction %s)",
+            customer_name, interaction_id,
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {customer_name} from Horizon Contact "
+                "Center. Let them know you were following up about their recent call and "
+                "wanted to get quick feedback. Mention they can share feedback through "
+                "our website as well. Thank them for their time."
+            )
         )
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        agent_name = call.get_variable("agent_name")
+        first_name = customer_name.split()[0] if customer_name else "there"
 
-    def begin_survey(self):
-        first_name = self.customer_name.split()[0] if self.customer_name else "there"
-
-        self.set_task(
+        call.set_task(
+            "post_call_survey",
             objective=(
-                f"Conduct a brief post-call satisfaction survey with {self.customer_name} "
-                f"about their recent interaction with agent {self.agent_name}."
+                f"Conduct a brief post-call satisfaction survey with {customer_name} "
+                f"about their recent interaction with agent {agent_name}."
             ),
             checklist=[
                 guava.Say(
@@ -141,105 +154,94 @@ class PostCallSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_survey,
         )
 
-    def record_survey(self):
-        willing = self.get_field("willing_to_participate")
 
-        if willing == "no":
-            logging.info("Customer %s declined survey", self.customer_name)
-            self.hangup(
-                final_instructions=(
-                    "Thank them for their time and let them know their feedback is always "
-                    "welcome. Wish them a great day."
-                )
-            )
-            return
+@agent.on_task_complete("post_call_survey")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    interaction_id = call.get_variable("interaction_id")
+    willing = call.get_field("willing_to_participate")
 
-        overall = self.get_field("overall_satisfaction") or "3"
-        agent_score = self.get_field("agent_score") or "3"
-        issue_resolved_raw = self.get_field("issue_resolved")
-        recommend_raw = self.get_field("would_recommend")
-        verbatim = self.get_field("verbatim_feedback") or ""
-
-        resolution_confirmed = issue_resolved_raw == "yes"
-        would_recommend = recommend_raw == "yes"
-
-        logging.info(
-            "Survey complete for interaction %s — satisfaction: %s, agent: %s, resolved: %s",
-            self.interaction_id, overall, agent_score, issue_resolved_raw,
-        )
-
-        try:
-            result = submit_survey_response(
-                interaction_id=self.interaction_id,
-                customer_name=self.customer_name,
-                overall_satisfaction=int(overall),
-                agent_score=int(agent_score),
-                resolution_confirmed=resolution_confirmed,
-                verbatim=verbatim,
-                would_recommend=would_recommend,
-            )
-            survey_id = result.get("id") or result.get("surveyResponseId", "")
-            logging.info("Survey response recorded: %s", survey_id)
-
-            outcome = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Alex",
-                "use_case": "post_call_survey",
-                "customer_name": self.customer_name,
-                "interaction_id": self.interaction_id,
-                "survey_response_id": str(survey_id),
-                "overall_satisfaction": overall,
-                "agent_score": agent_score,
-                "issue_resolved": issue_resolved_raw,
-                "would_recommend": recommend_raw,
-                "verbatim": verbatim,
-            }
-            print(json.dumps(outcome, indent=2))
-        except Exception as e:
-            logging.error("Failed to submit survey response: %s", e)
-
-        first_name = self.customer_name.split()[0] if self.customer_name else "there"
-        overall_int = int(overall)
-
-        if overall_int >= 4:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {first_name} genuinely for their time and positive feedback. "
-                    "Let them know their input helps us continue to improve. "
-                    "Wish them a wonderful day."
-                )
-            )
-        elif not resolution_confirmed or overall_int <= 2:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {first_name} for their honest feedback and sincerely apologize "
-                    "for any disappointment with the experience. Let them know their feedback "
-                    "will be reviewed by our team and that a supervisor may follow up if "
-                    "their issue was unresolved. Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {first_name} for their feedback. Let them know we appreciate "
-                    "them taking the time and that their input helps us improve. Wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for post-call survey (interaction %s)",
-            self.customer_name, self.interaction_id,
-        )
-        self.hangup(
+    if willing == "no":
+        logging.info("Customer %s declined survey", customer_name)
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.customer_name} from Horizon Contact "
-                "Center. Let them know you were following up about their recent call and "
-                "wanted to get quick feedback. Mention they can share feedback through "
-                "our website as well. Thank them for their time."
+                "Thank them for their time and let them know their feedback is always "
+                "welcome. Wish them a great day."
+            )
+        )
+        return
+
+    overall = call.get_field("overall_satisfaction") or "3"
+    agent_score = call.get_field("agent_score") or "3"
+    issue_resolved_raw = call.get_field("issue_resolved")
+    recommend_raw = call.get_field("would_recommend")
+    verbatim = call.get_field("verbatim_feedback") or ""
+
+    resolution_confirmed = issue_resolved_raw == "yes"
+    would_recommend = recommend_raw == "yes"
+
+    logging.info(
+        "Survey complete for interaction %s — satisfaction: %s, agent: %s, resolved: %s",
+        interaction_id, overall, agent_score, issue_resolved_raw,
+    )
+
+    try:
+        result = submit_survey_response(
+            interaction_id=interaction_id,
+            customer_name=customer_name,
+            overall_satisfaction=int(overall),
+            agent_score=int(agent_score),
+            resolution_confirmed=resolution_confirmed,
+            verbatim=verbatim,
+            would_recommend=would_recommend,
+        )
+        survey_id = result.get("id") or result.get("surveyResponseId", "")
+        logging.info("Survey response recorded: %s", survey_id)
+
+        outcome = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Alex",
+            "use_case": "post_call_survey",
+            "customer_name": customer_name,
+            "interaction_id": interaction_id,
+            "survey_response_id": str(survey_id),
+            "overall_satisfaction": overall,
+            "agent_score": agent_score,
+            "issue_resolved": issue_resolved_raw,
+            "would_recommend": recommend_raw,
+            "verbatim": verbatim,
+        }
+        print(json.dumps(outcome, indent=2))
+    except Exception as e:
+        logging.error("Failed to submit survey response: %s", e)
+
+    first_name = customer_name.split()[0] if customer_name else "there"
+    overall_int = int(overall)
+
+    if overall_int >= 4:
+        call.hangup(
+            final_instructions=(
+                f"Thank {first_name} genuinely for their time and positive feedback. "
+                "Let them know their input helps us continue to improve. "
+                "Wish them a wonderful day."
+            )
+        )
+    elif not resolution_confirmed or overall_int <= 2:
+        call.hangup(
+            final_instructions=(
+                f"Thank {first_name} for their honest feedback and sincerely apologize "
+                "for any disappointment with the experience. Let them know their feedback "
+                "will be reviewed by our team and that a supervisor may follow up if "
+                "their issue was unresolved. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {first_name} for their feedback. Let them know we appreciate "
+                "them taking the time and that their input helps us improve. Wish them a great day."
             )
         )
 
@@ -260,12 +262,12 @@ if __name__ == "__main__":
         args.name, args.interaction_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PostCallSurveyController(
-            customer_name=args.name,
-            interaction_id=args.interaction_id,
-            agent_name=args.agent_name,
-        ),
+        variables={
+            "customer_name": args.name,
+            "interaction_id": args.interaction_id,
+            "agent_name": args.agent_name,
+        },
     )

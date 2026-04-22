@@ -56,55 +56,70 @@ def update_customer_metadata(customer_id: str, metadata: dict) -> None:
     resp.raise_for_status()
 
 
-class ChurnWinbackController(guava.CallController):
-    def __init__(self, customer_id: str, customer_name: str):
-        super().__init__()
-        self.customer_id = customer_id
-        self.customer_name = customer_name
-        self.plan_name = "your previous plan"
-        self.canceled_date = ""
+agent = guava.Agent(
+    name="Sam",
+    organization="Luminary",
+    purpose=(
+        "to reconnect with former Luminary customers and understand what would "
+        "bring them back"
+    ),
+)
 
-        try:
-            subscriptions = list_canceled_subscriptions(customer_id)
-            if subscriptions:
-                sub = subscriptions[0]
-                items = sub.get("items", {}).get("data", [])
-                if items:
-                    price = items[0].get("price", {})
-                    self.plan_name = price.get("nickname") or price.get("id") or self.plan_name
-                ended_at = sub.get("ended_at")
-                if ended_at:
-                    self.canceled_date = datetime.utcfromtimestamp(ended_at).strftime("%B %d, %Y")
-        except Exception as e:
-            logging.error("Failed to fetch canceled subscriptions for %s: %s", customer_id, e)
 
-        self.set_persona(
-            organization_name="Luminary",
-            agent_name="Sam",
-            agent_purpose=(
-                "to reconnect with former Luminary customers and understand what would "
-                "bring them back"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_id = call.get_variable("customer_id")
+    customer_name = call.get_variable("customer_name")
+
+    plan_name = "your previous plan"
+    canceled_date = ""
+
+    try:
+        subscriptions = list_canceled_subscriptions(customer_id)
+        if subscriptions:
+            sub = subscriptions[0]
+            items = sub.get("items", {}).get("data", [])
+            if items:
+                price = items[0].get("price", {})
+                plan_name = price.get("nickname") or price.get("id") or plan_name
+            ended_at = sub.get("ended_at")
+            if ended_at:
+                canceled_date = datetime.utcfromtimestamp(ended_at).strftime("%B %d, %Y")
+    except Exception as e:
+        logging.error("Failed to fetch canceled subscriptions for %s: %s", customer_id, e)
+
+    call.plan_name = plan_name
+    call.canceled_date = canceled_date
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for churn winback", customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {customer_name} on behalf of Luminary. "
+                "Let them know you were calling to check in after their cancellation and that "
+                "you'll send a quick email. No action needed — just keep it friendly and brief."
+            )
         )
+    elif outcome == "available":
+        date_note = f" on {call.canceled_date}" if call.canceled_date else " recently"
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_winback,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_winback(self):
-        date_note = f" on {self.canceled_date}" if self.canceled_date else " recently"
-
-        self.set_task(
+        call.set_task(
+            "record_and_close",
             objective=(
-                f"Reconnect with {self.customer_name}, a former Luminary customer who canceled "
-                f"'{self.plan_name}'{date_note}. "
+                f"Reconnect with {customer_name}, a former Luminary customer who canceled "
+                f"'{call.plan_name}'{date_note}. "
                 "Understand why they left and gauge their interest in returning."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Sam calling from Luminary. "
+                    f"Hi {customer_name}, this is Sam calling from Luminary. "
                     f"I noticed you canceled your subscription{date_note} and I wanted to "
                     "reach out personally — not to pressure you, but just to hear how things "
                     "went and see if there's anything we could have done better. "
@@ -150,82 +165,75 @@ class ChurnWinbackController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.record_and_close,
         )
 
-    def record_and_close(self):
-        reason = self.get_field("primary_reason") or "unknown"
-        competitor = self.get_field("competitor") or ""
-        what_would_bring_back = self.get_field("what_would_bring_back") or ""
-        interest = self.get_field("interest_in_returning") or "unlikely"
 
-        logging.info(
-            "Churn winback complete for %s — reason: %s, interest: %s",
-            self.customer_id, reason, interest,
+@agent.on_task_complete("record_and_close")
+def record_and_close(call: guava.Call) -> None:
+    customer_id = call.get_variable("customer_id")
+    customer_name = call.get_variable("customer_name")
+    reason = call.get_field("primary_reason") or "unknown"
+    competitor = call.get_field("competitor") or ""
+    what_would_bring_back = call.get_field("what_would_bring_back") or ""
+    interest = call.get_field("interest_in_returning") or "unlikely"
+
+    logging.info(
+        "Churn winback complete for %s — reason: %s, interest: %s",
+        customer_id, reason, interest,
+    )
+
+    metadata = {
+        "winback_reason": reason,
+        "winback_interest": interest,
+        "winback_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+    if competitor:
+        metadata["winback_competitor"] = competitor
+    if what_would_bring_back:
+        metadata["winback_feedback"] = what_would_bring_back[:500]  # Stripe metadata limit
+
+    try:
+        update_customer_metadata(customer_id, metadata)
+
+        # If they're interested in returning and a winback coupon is configured, attach it.
+        if interest == "definitely interested" and WINBACK_COUPON_ID:
+            attach_winback_coupon(customer_id, WINBACK_COUPON_ID)
+            logging.info("Winback coupon %s attached to customer %s", WINBACK_COUPON_ID, customer_id)
+
+    except Exception as e:
+        logging.error("Failed to update customer %s metadata: %s", customer_id, e)
+
+    if interest == "definitely interested":
+        coupon_note = (
+            " As a thank-you for your time, we've applied a discount to your account "
+            "that will automatically be applied if you decide to resubscribe."
+            if WINBACK_COUPON_ID
+            else ""
         )
-
-        metadata = {
-            "winback_reason": reason,
-            "winback_interest": interest,
-            "winback_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        }
-        if competitor:
-            metadata["winback_competitor"] = competitor
-        if what_would_bring_back:
-            metadata["winback_feedback"] = what_would_bring_back[:500]  # Stripe metadata limit
-
-        try:
-            update_customer_metadata(self.customer_id, metadata)
-
-            # If they're interested in returning and a winback coupon is configured, attach it.
-            if interest == "definitely interested" and WINBACK_COUPON_ID:
-                attach_winback_coupon(self.customer_id, WINBACK_COUPON_ID)
-                logging.info("Winback coupon %s attached to customer %s", WINBACK_COUPON_ID, self.customer_id)
-
-        except Exception as e:
-            logging.error("Failed to update customer %s metadata: %s", self.customer_id, e)
-
-        if interest == "definitely interested":
-            coupon_note = (
-                " As a thank-you for your time, we've applied a discount to your account "
-                "that will automatically be applied if you decide to resubscribe."
-                if WINBACK_COUPON_ID
-                else ""
-            )
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} warmly for their candid feedback. "
-                    + coupon_note
-                    + " Let them know a team member will follow up by email with information "
-                    "about what's new at Luminary. Express genuine excitement about the "
-                    "possibility of having them back. Wish them a great day."
-                )
-            )
-        elif interest == "maybe/need to think about it":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} genuinely for their time and feedback. "
-                    "Let them know the door is always open and we'd love to earn their business back. "
-                    "Let them know a team member may follow up by email with some updates. "
-                    "No pressure — just wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} sincerely for taking the time to share their feedback. "
-                    "Let them know their insights will genuinely help us improve. "
-                    "Wish them all the best and let them know they're always welcome back."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for churn winback", self.customer_name)
-        self.hangup(
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.customer_name} on behalf of Luminary. "
-                "Let them know you were calling to check in after their cancellation and that "
-                "you'll send a quick email. No action needed — just keep it friendly and brief."
+                f"Thank {customer_name} warmly for their candid feedback. "
+                + coupon_note
+                + " Let them know a team member will follow up by email with information "
+                "about what's new at Luminary. Express genuine excitement about the "
+                "possibility of having them back. Wish them a great day."
+            )
+        )
+    elif interest == "maybe/need to think about it":
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} genuinely for their time and feedback. "
+                "Let them know the door is always open and we'd love to earn their business back. "
+                "Let them know a team member may follow up by email with some updates. "
+                "No pressure — just wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} sincerely for taking the time to share their feedback. "
+                "Let them know their insights will genuinely help us improve. "
+                "Wish them all the best and let them know they're always welcome back."
             )
         )
 
@@ -245,11 +253,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.customer_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ChurnWinbackController(
-            customer_id=args.customer_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "customer_id": args.customer_id,
+            "customer_name": args.name,
+        },
     )

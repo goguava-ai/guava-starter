@@ -63,61 +63,68 @@ def update_claim_followup_status(claim_id: str, outcome: str) -> None:
     )
 
 
-class DenialNotificationController(guava.CallController):
-    def __init__(
-        self,
-        patient_name: str,
-        claim_id: str,
-        denial_reason: str,
-        service_description: str,
-        service_date: str,
-        claim_amount: str,
-    ):
-        super().__init__()
-        self.patient_name = patient_name
-        self.claim_id = claim_id
-        self.denial_reason = denial_reason
-        self.service_description = service_description
-        self.service_date = service_date
-        self.claim_amount = claim_amount
+agent = guava.Agent(
+    name="Alex",
+    organization="Riverside Family Medicine Billing",
+    purpose=(
+        "to notify patients about insurance claim denials and help them understand "
+        "their options for next steps"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Riverside Family Medicine Billing",
-            agent_name="Alex",
-            agent_purpose=(
-                "to notify patients about insurance claim denials and help them understand "
-                "their options for next steps"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    claim_id = call.get_variable("claim_id")
+    service_date = call.get_variable("service_date")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for denial notification on claim %s",
+            patient_name, claim_id,
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.deliver_notification,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a professional voicemail for {patient_name} from Riverside Family "
+                "Medicine billing. Let them know this call is regarding an insurance claim "
+                f"from {service_date} and ask them to call back at their earliest "
+                "convenience. Provide the billing department callback number. "
+                "Keep the message brief and professional — do not mention the word 'denial'."
+            )
         )
+    elif outcome == "available":
+        first_name = patient_name.split()[0] if patient_name else "there"
+        service_description = call.get_variable("service_description")
+        claim_amount = call.get_variable("claim_amount")
+        denial_reason = call.get_variable("denial_reason")
 
-    def deliver_notification(self):
-        first_name = self.patient_name.split()[0] if self.patient_name else "there"
-
-        self.set_task(
+        call.set_task(
+            "record_outcome",
             objective=(
-                f"Notify {self.patient_name} that their insurance claim for "
-                f"'{self.service_description}' on {self.service_date} was denied. "
+                f"Notify {patient_name} that their insurance claim for "
+                f"'{service_description}' on {service_date} was denied. "
                 "Explain the denial reason and gather their preferred next step."
             ),
             checklist=[
                 guava.Say(
                     f"Hi {first_name}, this is Alex calling from Riverside Family Medicine "
                     "billing. I'm calling with an important update about an insurance claim "
-                    f"for your visit on {self.service_date}."
+                    f"for your visit on {service_date}."
                 ),
                 guava.Field(
                     key="understood_denial",
                     field_type="multiple_choice",
                     description=(
-                        f"Explain that insurance claim {self.claim_id} for "
-                        f"'{self.service_description}' (${self.claim_amount}) was denied "
-                        f"with the reason: '{self.denial_reason}'. Ask if they understand "
+                        f"Explain that insurance claim {claim_id} for "
+                        f"'{service_description}' (${claim_amount}) was denied "
+                        f"with the reason: '{denial_reason}'. Ask if they understand "
                         "and would like to hear their options."
                     ),
                     choices=["yes, please explain my options", "no, I have questions first"],
@@ -149,90 +156,82 @@ class DenialNotificationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_outcome,
         )
 
-    def record_outcome(self):
-        next_step = self.get_field("preferred_next_step")
-        questions = self.get_field("additional_questions") or ""
-        first_name = self.patient_name.split()[0] if self.patient_name else "there"
 
-        logging.info(
-            "Denial notification outcome for claim %s: next_step=%s",
-            self.claim_id, next_step,
-        )
+@agent.on_task_complete("record_outcome")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    claim_id = call.get_variable("claim_id")
+    denial_reason = call.get_variable("denial_reason")
+    service_description = call.get_variable("service_description")
+    service_date = call.get_variable("service_date")
+    claim_amount = call.get_variable("claim_amount")
+    next_step = call.get_field("preferred_next_step")
+    questions = call.get_field("additional_questions") or ""
+    first_name = patient_name.split()[0] if patient_name else "there"
 
-        outcome = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Alex",
-            "use_case": "denial_notification",
-            "patient_name": self.patient_name,
-            "claim_id": self.claim_id,
-            "denial_reason": self.denial_reason,
-            "service_description": self.service_description,
-            "service_date": self.service_date,
-            "claim_amount": self.claim_amount,
-            "preferred_next_step": next_step,
-            "additional_questions": questions,
-        }
-        print(json.dumps(outcome, indent=2))
+    logging.info(
+        "Denial notification outcome for claim %s: next_step=%s",
+        claim_id, next_step,
+    )
 
-        try:
-            update_claim_followup_status(self.claim_id, next_step)
-            logging.info("Waystar claim %s updated with notification outcome", self.claim_id)
-        except Exception as e:
-            logging.warning("Failed to update Waystar claim status: %s", e)
+    outcome = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Alex",
+        "use_case": "denial_notification",
+        "patient_name": patient_name,
+        "claim_id": claim_id,
+        "denial_reason": denial_reason,
+        "service_description": service_description,
+        "service_date": service_date,
+        "claim_amount": claim_amount,
+        "preferred_next_step": next_step,
+        "additional_questions": questions,
+    }
+    print(json.dumps(outcome, indent=2))
 
-        if next_step == "file an appeal on my behalf":
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know that we will file an appeal with their insurance "
-                    "company on their behalf. The appeal process typically takes 30 to 60 days. "
-                    "Let them know our billing team will contact them with an update. "
-                    "Thank them for letting us handle this."
-                )
-            )
-        elif next_step == "arrange self-pay":
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know that our billing team will send them a statement "
-                    f"for the balance of ${self.claim_amount}. "
-                    "Let them know payment plan options may be available and they can discuss "
-                    "those with our billing department. Provide the billing department number. "
-                    "Thank them for their time."
-                )
-            )
-        elif next_step == "I will contact my insurance company":
-            self.hangup(
-                final_instructions=(
-                    f"Encourage {first_name} to contact their insurance company and reference "
-                    f"claim number {self.claim_id}. Let them know our billing team is available "
-                    "if they need documentation or additional information for the appeal. "
-                    "Thank them for calling and wish them success with the appeal."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know there's no rush and our billing team will follow "
-                    "up with them by mail with their options in writing. "
-                    "Reassure them that no immediate action is required right now. "
-                    "Thank them for their time."
-                )
-            )
+    try:
+        update_claim_followup_status(claim_id, next_step)
+        logging.info("Waystar claim %s updated with notification outcome", claim_id)
+    except Exception as e:
+        logging.warning("Failed to update Waystar claim status: %s", e)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for denial notification on claim %s",
-            self.patient_name, self.claim_id,
-        )
-        self.hangup(
+    if next_step == "file an appeal on my behalf":
+        call.hangup(
             final_instructions=(
-                f"Leave a professional voicemail for {self.patient_name} from Riverside Family "
-                "Medicine billing. Let them know this call is regarding an insurance claim "
-                f"from {self.service_date} and ask them to call back at their earliest "
-                "convenience. Provide the billing department callback number. "
-                "Keep the message brief and professional — do not mention the word 'denial'."
+                f"Let {first_name} know that we will file an appeal with their insurance "
+                "company on their behalf. The appeal process typically takes 30 to 60 days. "
+                "Let them know our billing team will contact them with an update. "
+                "Thank them for letting us handle this."
+            )
+        )
+    elif next_step == "arrange self-pay":
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know that our billing team will send them a statement "
+                f"for the balance of ${claim_amount}. "
+                "Let them know payment plan options may be available and they can discuss "
+                "those with our billing department. Provide the billing department number. "
+                "Thank them for their time."
+            )
+        )
+    elif next_step == "I will contact my insurance company":
+        call.hangup(
+            final_instructions=(
+                f"Encourage {first_name} to contact their insurance company and reference "
+                f"claim number {claim_id}. Let them know our billing team is available "
+                "if they need documentation or additional information for the appeal. "
+                "Thank them for calling and wish them success with the appeal."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know there's no rush and our billing team will follow "
+                "up with them by mail with their options in writing. "
+                "Reassure them that no immediate action is required right now. "
+                "Thank them for their time."
             )
         )
 
@@ -256,15 +255,15 @@ if __name__ == "__main__":
         args.name, args.claim_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DenialNotificationController(
-            patient_name=args.name,
-            claim_id=args.claim_id,
-            denial_reason=args.denial_reason,
-            service_description=args.service,
-            service_date=args.service_date,
-            claim_amount=args.amount,
-        ),
+        variables={
+            "patient_name": args.name,
+            "claim_id": args.claim_id,
+            "denial_reason": args.denial_reason,
+            "service_description": args.service,
+            "service_date": args.service_date,
+            "claim_amount": args.amount,
+        },
     )

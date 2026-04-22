@@ -22,32 +22,33 @@ DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]
 
 DOCUMENT_QA = DocumentQA(documents=DOCUMENTS)
 
+agent = guava.Agent(
+    name="Jordan",
+    organization="Meridian Technologies",
+    purpose=(
+        "to answer employee questions about company policies, benefits, "
+        "time-off procedures, and workplace guidelines"
+    ),
+)
 
-class HRHandbookController(guava.CallController):
-    """Answers employee policy questions using the company handbook."""
 
-    def __init__(self):
-        super().__init__()
-        self.set_persona(
-            organization_name="Meridian Technologies",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to answer employee questions about company policies, benefits, "
-                "time-off procedures, and workplace guidelines"
-            ),
-        )
-        self.read_script(
-            "Hello, you've reached Meridian Technologies HR support. How can I help you today?"
-        )
-        self.accept_call()
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-    def on_question(self, question: str) -> str:
-        return DOCUMENT_QA.ask(question)
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.read_script(
+        "Hello, you've reached Meridian Technologies HR support. How can I help you today?"
+    )
+
+
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    return DOCUMENT_QA.ask(question)
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=HRHandbookController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -34,38 +34,38 @@ def get_call_count(phone: str) -> int:
     return count
 
 
-class CallDedupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Ironhull Support",
+    purpose="to provide support to Ironhull customers efficiently and without unnecessary repetition",
+)
 
-        caller_phone = self.get_caller_number() or ""
-        self.caller_phone = caller_phone
-        self.is_repeat = is_repeat_caller(caller_phone) if caller_phone else False
-        self.call_count = get_call_count(caller_phone) if caller_phone else 1
 
-        if caller_phone:
-            mark_caller(caller_phone)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        logging.info(
-            "Caller %s — repeat within window: %s, lifetime calls: %d",
-            caller_phone, self.is_repeat, self.call_count,
-        )
 
-        self.set_persona(
-            organization_name="Ironhull Support",
-            agent_name="Morgan",
-            agent_purpose="to provide support to Ironhull customers efficiently and without unnecessary repetition",
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    caller_phone = call.get_caller_number() or ""
+    call.caller_phone = caller_phone
+    call.is_repeat = is_repeat_caller(caller_phone) if caller_phone else False
+    call.call_count = get_call_count(caller_phone) if caller_phone else 1
 
-        if self.is_repeat:
-            self._handle_repeat_caller()
-        else:
-            self._handle_new_call()
+    if caller_phone:
+        mark_caller(caller_phone)
 
-    def _handle_repeat_caller(self):
+    logging.info(
+        "Caller %s — repeat within window: %s, lifetime calls: %d",
+        caller_phone, call.is_repeat, call.call_count,
+    )
+
+    if call.is_repeat:
         window_minutes = DEDUP_WINDOW_SECONDS // 60
 
-        self.set_task(
+        call.set_task(
+            "handle_repeat_outcome",
             objective=(
                 "This caller has called multiple times within a short window. "
                 "Acknowledge this empathetically, understand if their previous issue wasn't resolved, "
@@ -107,13 +107,10 @@ class CallDedupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_repeat_outcome,
         )
-
-        self.accept_call()
-
-    def _handle_new_call(self):
-        self.set_task(
+    else:
+        call.set_task(
+            "handle_new_call_outcome",
             objective=(
                 "A caller has reached Ironhull Support. Greet them, understand their issue, "
                 "and assist them."
@@ -145,55 +142,53 @@ class CallDedupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_new_call_outcome,
         )
 
-        self.accept_call()
 
-    def handle_repeat_outcome(self):
-        status = self.get_field("issue_status") or "still unresolved"
-        detail = self.get_field("issue_detail") or ""
-        escalate = self.get_field("escalate") or "no, just help me here"
+@agent.on_task_complete("handle_repeat_outcome")
+def on_repeat_done(call: guava.Call) -> None:
+    status = call.get_field("issue_status") or "still unresolved"
+    detail = call.get_field("issue_detail") or ""
+    escalate = call.get_field("escalate") or "no, just help me here"
 
-        logging.info(
-            "Repeat caller %s — status: %s, escalate: %s", self.caller_phone, status, escalate,
-        )
+    logging.info(
+        "Repeat caller %s — status: %s, escalate: %s", call.caller_phone, status, escalate,
+    )
 
-        if escalate == "yes, escalate":
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know they're being escalated to a senior support specialist "
-                    "who will call them back within 15 minutes. Apologize for the inconvenience "
-                    "and thank them for their patience. Be empathetic and reassuring."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Address the caller's issue directly based on what they described. "
-                    f"Their situation: {detail}. "
-                    "Do your best to resolve it or set a clear expectation on next steps. "
-                    "Thank them for their patience and wish them a good day."
-                )
-            )
-
-    def handle_new_call_outcome(self):
-        name = self.get_field("caller_name") or "there"
-        resolution = self.get_field("resolution") or ""
-
-        logging.info("Call resolved for %s (%s).", name, self.caller_phone)
-
-        self.hangup(
+    if escalate == "yes, escalate":
+        call.hangup(
             final_instructions=(
-                f"Confirm the resolution with {name}: {resolution}. "
-                "Thank them for calling Ironhull Support and wish them a great day."
+                "Let the caller know they're being escalated to a senior support specialist "
+                "who will call them back within 15 minutes. Apologize for the inconvenience "
+                "and thank them for their patience. Be empathetic and reassuring."
             )
         )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Address the caller's issue directly based on what they described. "
+                f"Their situation: {detail}. "
+                "Do your best to resolve it or set a clear expectation on next steps. "
+                "Thank them for their patience and wish them a good day."
+            )
+        )
+
+
+@agent.on_task_complete("handle_new_call_outcome")
+def on_new_done(call: guava.Call) -> None:
+    name = call.get_field("caller_name") or "there"
+    resolution = call.get_field("resolution") or ""
+
+    logging.info("Call resolved for %s (%s).", name, call.caller_phone)
+
+    call.hangup(
+        final_instructions=(
+            f"Confirm the resolution with {name}: {resolution}. "
+            "Thank them for calling Ironhull Support and wish them a great day."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=CallDedupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -66,41 +66,63 @@ def add_public_comment(ticket_id: int, body: str) -> None:
     resp.raise_for_status()
 
 
-class OutageNotifyController(guava.CallController):
-    def __init__(self, customer_name: str, ticket_id: int, outage_message: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.ticket_id = ticket_id
-        self.outage_message = outage_message
+agent = guava.Agent(
+    name="Morgan",
+    organization="Horizon Software",
+    purpose=(
+        "to notify customers affected by an active service outage and provide "
+        "a status update on behalf of Horizon Software"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Horizon Software",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to notify customers affected by an active service outage and provide "
-                "a status update on behalf of Horizon Software"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = int(call.get_variable("ticket_id"))
+    outage_message = call.get_variable("outage_message")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for outage notification", customer_name)
+        try:
+            add_public_comment(
+                ticket_id,
+                (
+                    f"Outage notification attempted — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
+                    f"Customer: {customer_name} — not available, voicemail left."
+                ),
+            )
+        except Exception as e:
+            logging.error("Failed to log voicemail attempt on ticket #%s: %s", ticket_id, e)
+
+        call.hangup(
+            final_instructions=(
+                f"Leave a concise voicemail for {customer_name} on behalf of Horizon Software. "
+                "Let them know we're calling about a known service issue affecting their account, "
+                "that our team is actively working on a fix, and they'll receive an email update "
+                "as soon as service is restored. Provide our support line number for questions."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.deliver_notification,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_notification(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "log_outcome",
             objective=(
-                f"Notify {self.customer_name} about the current service outage and confirm "
+                f"Notify {customer_name} about the current service outage and confirm "
                 "they received the update."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Morgan calling from Horizon Software. "
+                    f"Hi {customer_name}, this is Morgan calling from Horizon Software. "
                     "I'm calling because we've identified a service issue that may be affecting your account "
                     "and I wanted to give you a direct update."
                 ),
-                guava.Say(self.outage_message),
+                guava.Say(outage_message),
                 guava.Field(
                     key="acknowledged",
                     field_type="text",
@@ -121,60 +143,41 @@ class OutageNotifyController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.log_outcome,
         )
 
-    def log_outcome(self):
-        needs_callback = self.get_field("needs_callback") or "no"
 
-        comment_body = (
-            f"Outage notification call completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-            f"Customer notified: {self.customer_name}\n"
-            f"Callback requested: {needs_callback}"
-        )
+@agent.on_task_complete("log_outcome")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = int(call.get_variable("ticket_id"))
+    needs_callback = call.get_field("needs_callback") or "no"
 
-        try:
-            add_public_comment(self.ticket_id, comment_body)
-            logging.info("Notification logged on ticket #%s", self.ticket_id)
-        except Exception as e:
-            logging.error("Failed to log notification on ticket #%s: %s", self.ticket_id, e)
+    comment_body = (
+        f"Outage notification call completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"Customer notified: {customer_name}\n"
+        f"Callback requested: {needs_callback}"
+    )
 
-        if needs_callback == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know a support engineer will call them back "
-                    "as soon as the service is restored. Apologize again for the disruption "
-                    "and thank them for their patience with Horizon Software."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time and understanding. "
-                    "Let them know we'll send an email notification when service is fully restored. "
-                    "Apologize for the inconvenience and wish them a good day."
-                )
-            )
+    try:
+        add_public_comment(ticket_id, comment_body)
+        logging.info("Notification logged on ticket #%s", ticket_id)
+    except Exception as e:
+        logging.error("Failed to log notification on ticket #%s: %s", ticket_id, e)
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for outage notification", self.customer_name)
-        try:
-            add_public_comment(
-                self.ticket_id,
-                (
-                    f"Outage notification attempted — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-                    f"Customer: {self.customer_name} — not available, voicemail left."
-                ),
-            )
-        except Exception as e:
-            logging.error("Failed to log voicemail attempt on ticket #%s: %s", self.ticket_id, e)
-
-        self.hangup(
+    if needs_callback == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a concise voicemail for {self.customer_name} on behalf of Horizon Software. "
-                "Let them know we're calling about a known service issue affecting their account, "
-                "that our team is actively working on a fix, and they'll receive an email update "
-                "as soon as service is restored. Provide our support line number for questions."
+                f"Let {customer_name} know a support engineer will call them back "
+                "as soon as the service is restored. Apologize again for the disruption "
+                "and thank them for their patience with Horizon Software."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time and understanding. "
+                "Let them know we'll send an email notification when service is fully restored. "
+                "Apologize for the inconvenience and wish them a good day."
             )
         )
 
@@ -206,7 +209,6 @@ if __name__ == "__main__":
     logging.info("Found %d open incident tickets to notify", len(incident_tickets))
 
     agent_number = os.environ["GUAVA_AGENT_NUMBER"]
-    client = guava.Client()
 
     for ticket in incident_tickets:
         ticket_id = ticket["id"]
@@ -236,14 +238,14 @@ if __name__ == "__main__":
             "Calling %s (%s) for ticket #%s", customer_name, phone, ticket_id
         )
         try:
-            client.create_outbound(
+            agent.call_phone(
                 from_number=agent_number,
                 to_number=phone,
-                call_controller=OutageNotifyController(
-                    customer_name=customer_name,
-                    ticket_id=ticket_id,
-                    outage_message=args.outage_message,
-                ),
+                variables={
+                    "customer_name": customer_name,
+                    "ticket_id": str(ticket_id),
+                    "outage_message": args.outage_message,
+                },
             )
         except Exception as e:
             logging.error(

@@ -52,59 +52,76 @@ def log_call(patient_id: str, notes: str) -> dict:
     return resp.json()
 
 
-class LabResultsNotificationController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, lab_doc_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.lab_doc_id = lab_doc_id
-        self.lab_doc = None
+agent = guava.Agent(
+    name="Taylor",
+    organization="Oakridge Family Medicine",
+    purpose=(
+        "to notify patients that their lab results are available "
+        "and connect them with the right next step"
+    ),
+)
 
-        # Pre-call: fetch lab document details
-        try:
-            self.lab_doc = get_lab_document(lab_doc_id)
-            logging.info(
-                "Fetched lab document %s: description=%s, lab_name=%s, date=%s",
-                lab_doc_id,
-                self.lab_doc.get("description"),
-                self.lab_doc.get("lab_name"),
-                self.lab_doc.get("document_date"),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    lab_doc_id = call.get_variable("lab_doc_id")
+
+    # Fetch lab document details
+    lab_doc = None
+    try:
+        lab_doc = get_lab_document(lab_doc_id)
+        logging.info(
+            "Fetched lab document %s: description=%s, lab_name=%s, date=%s",
+            lab_doc_id,
+            lab_doc.get("description"),
+            lab_doc.get("lab_name"),
+            lab_doc.get("document_date"),
+        )
+    except Exception as e:
+        logging.error("Failed to fetch lab document %s pre-call: %s", lab_doc_id, e)
+
+    description = lab_doc.get("description", "lab work") if lab_doc else "lab work"
+    lab_name = lab_doc.get("lab_name", "") if lab_doc else ""
+    document_date = lab_doc.get("document_date", "") if lab_doc else ""
+
+    call.data = {
+        "lab_description": description,
+        "lab_name": lab_name,
+        "lab_date": document_date,
+    }
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    lab_description = call.data.get("lab_description", "lab work")
+    lab_name = call.data.get("lab_name", "")
+    lab_date = call.data.get("lab_date", "")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for lab results notification.", patient_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {patient_name} from Oakridge Family Medicine. "
+                "Let them know you're calling to notify them that their lab results are now available. "
+                "Do not mention any specific values or findings. "
+                "Ask them to call back or log in to the patient portal to review. "
+                "Keep it concise and friendly."
             )
-        except Exception as e:
-            logging.error("Failed to fetch lab document %s pre-call: %s", lab_doc_id, e)
-
-        description = self.lab_doc.get("description", "lab work") if self.lab_doc else "lab work"
-        lab_name = self.lab_doc.get("lab_name", "") if self.lab_doc else ""
-        document_date = self.lab_doc.get("document_date", "") if self.lab_doc else ""
-
-        self.lab_description = description
-        self.lab_name = lab_name
-        self.lab_date = document_date
-
-        self.set_persona(
-            organization_name="Oakridge Family Medicine",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to notify patients that their lab results are available "
-                "and connect them with the right next step"
-            ),
         )
-
-        self.reach_person(
-            contact_full_name=patient_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        lab_clause = f" from {self.lab_name}" if self.lab_name else ""
-        date_clause = f" dated {self.lab_date}" if self.lab_date else ""
+    elif outcome == "available":
+        lab_clause = f" from {lab_name}" if lab_name else ""
+        date_clause = f" dated {lab_date}" if lab_date else ""
 
         # IMPORTANT: Do NOT read out actual lab values or results over the phone.
         # Only notify the patient that results are available and guide them to review securely.
-        self.set_task(
+        call.set_task(
+            "save_results",
             objective=(
-                f"Notify {self.patient_name} that their {self.lab_description} results{lab_clause}{date_clause} "
+                f"Notify {patient_name} that their {lab_description} results{lab_clause}{date_clause} "
                 "are now available at Oakridge Family Medicine. "
                 "Do not share or discuss the actual lab values — only confirm the results are in. "
                 "Find out if they received the notification, whether they want an appointment to review, "
@@ -112,9 +129,9 @@ class LabResultsNotificationController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Taylor calling from Oakridge Family Medicine. "
-                    f"I'm calling to let you know that your {self.lab_description} results"
-                    + (f" from {self.lab_name}" if self.lab_name else "")
+                    f"Hi {patient_name}, this is Taylor calling from Oakridge Family Medicine. "
+                    f"I'm calling to let you know that your {lab_description} results"
+                    + (f" from {lab_name}" if lab_name else "")
                     + " are now available. "
                     "Your doctor will be happy to review them with you. "
                     "I'm not able to go over the specific values on this call, "
@@ -151,74 +168,68 @@ class LabResultsNotificationController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        acknowledged = self.get_field("acknowledged") or "yes"
-        wants_appointment = self.get_field("wants_appointment") or "no"
-        preferred_contact = self.get_field("preferred_contact_method") or "phone"
 
-        # Update lab document status to patient_notified
-        try:
-            mark_lab_notified(self.lab_doc_id)
-            logging.info("Lab document %s marked as patient_notified", self.lab_doc_id)
-        except Exception as e:
-            logging.error("Failed to update lab document %s status: %s", self.lab_doc_id, e)
+@agent.on_task_complete("save_results")
+def on_save_results(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    lab_doc_id = call.get_variable("lab_doc_id")
+    lab_description = call.data.get("lab_description", "lab work")
 
-        # Log the call
-        notes = (
-            f"Lab results notification call to {self.patient_name} for lab document {self.lab_doc_id} "
-            f"({self.lab_description}). "
-            f"Patient acknowledged: {acknowledged}. "
-            f"Wants appointment: {wants_appointment}. "
-            f"Preferred contact method: {preferred_contact}."
+    acknowledged = call.get_field("acknowledged") or "yes"
+    wants_appointment = call.get_field("wants_appointment") or "no"
+    preferred_contact = call.get_field("preferred_contact_method") or "phone"
+
+    # Update lab document status to patient_notified
+    try:
+        mark_lab_notified(lab_doc_id)
+        logging.info("Lab document %s marked as patient_notified", lab_doc_id)
+    except Exception as e:
+        logging.error("Failed to update lab document %s status: %s", lab_doc_id, e)
+
+    # Log the call
+    notes = (
+        f"Lab results notification call to {patient_name} for lab document {lab_doc_id} "
+        f"({lab_description}). "
+        f"Patient acknowledged: {acknowledged}. "
+        f"Wants appointment: {wants_appointment}. "
+        f"Preferred contact method: {preferred_contact}."
+    )
+    try:
+        log_call(patient_id, notes)
+        logging.info("Call logged for patient %s", patient_id)
+    except Exception as e:
+        logging.error("Failed to log call for patient %s: %s", patient_id, e)
+
+    appointment_followup = ""
+    if wants_appointment == "yes":
+        appointment_followup = (
+            "Let them know a team member will call them to schedule an appointment "
+            "to review the results with their doctor. "
         )
-        try:
-            log_call(self.patient_id, notes)
-            logging.info("Call logged for patient %s", self.patient_id)
-        except Exception as e:
-            logging.error("Failed to log call for patient %s: %s", self.patient_id, e)
-
-        appointment_followup = ""
-        if wants_appointment == "yes":
-            appointment_followup = (
-                "Let them know a team member will call them to schedule an appointment "
-                "to review the results with their doctor. "
-            )
-        elif wants_appointment == "already-scheduled":
-            appointment_followup = (
-                "Acknowledge that they already have an appointment scheduled "
-                "and confirm the results will be ready for that visit. "
-            )
-
-        contact_instructions = {
-            "phone": "Let them know the office will call them with any follow-up.",
-            "portal": "Encourage them to log in to the patient portal to view their results securely.",
-            "mail": "Let them know a summary will be mailed to the address on file.",
-        }.get(preferred_contact, "")
-
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.patient_name} for confirming. "
-                + appointment_followup
-                + contact_instructions
-                + " Remind them they can always call Oakridge Family Medicine with any questions. "
-                "Wish them a great day."
-            )
+    elif wants_appointment == "already-scheduled":
+        appointment_followup = (
+            "Acknowledge that they already have an appointment scheduled "
+            "and confirm the results will be ready for that visit. "
         )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for lab results notification.", self.patient_name)
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Oakridge Family Medicine. "
-                "Let them know you're calling to notify them that their lab results are now available. "
-                "Do not mention any specific values or findings. "
-                "Ask them to call back or log in to the patient portal to review. "
-                "Keep it concise and friendly."
-            )
+    contact_instructions = {
+        "phone": "Let them know the office will call them with any follow-up.",
+        "portal": "Encourage them to log in to the patient portal to view their results securely.",
+        "mail": "Let them know a summary will be mailed to the address on file.",
+    }.get(preferred_contact, "")
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {patient_name} for confirming. "
+            + appointment_followup
+            + contact_instructions
+            + " Remind them they can always call Oakridge Family Medicine with any questions. "
+            "Wish them a great day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -237,12 +248,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.lab_doc_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=LabResultsNotificationController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            lab_doc_id=args.lab_doc_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "lab_doc_id": args.lab_doc_id,
+        },
     )

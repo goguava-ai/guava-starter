@@ -25,68 +25,81 @@ def get_tracking_url(carrier_code: str, tracking_number: str) -> str:
     return ""
 
 
-class DeliveryConfirmationController(guava.CallController):
-    def __init__(self, customer_name: str, order_number: str, shipment_id: int):
-        super().__init__()
-        self.customer_name = customer_name
-        self.order_number = order_number
-        self.shipment_id = shipment_id
-        self.tracking_number = ""
-        self.carrier_code = ""
-        self.tracking_url = ""
+agent = guava.Agent(
+    name="Riley",
+    organization="Coastal Supply Co.",
+    purpose=(
+        "to confirm delivery of recent orders and check in on customer satisfaction "
+        "on behalf of Coastal Supply Co."
+    ),
+)
 
-        # Pre-call: fetch the shipment to get carrier and tracking details.
-        # This lets the agent give the customer their tracking info if they haven't received
-        # the package yet, rather than asking them to look it up themselves.
-        try:
-            resp = requests.get(
-                f"{BASE_URL}/shipments",
-                auth=AUTH,
-                params={"shipmentId": shipment_id},
-                timeout=10,
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    shipment_id = int(call.get_variable("shipment_id"))
+
+    # Pre-call: fetch the shipment to get carrier and tracking details.
+    # This lets the agent give the customer their tracking info if they haven't received
+    # the package yet, rather than asking them to look it up themselves.
+    call.tracking_number = ""
+    call.carrier_code = ""
+    call.tracking_url = ""
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/shipments",
+            auth=AUTH,
+            params={"shipmentId": shipment_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        shipments = resp.json().get("shipments", [])
+        if shipments:
+            shipment = shipments[0]
+            call.tracking_number = shipment.get("trackingNumber", "")
+            call.carrier_code = shipment.get("carrierCode", "")
+            if call.tracking_number and call.carrier_code:
+                call.tracking_url = get_tracking_url(call.carrier_code, call.tracking_number)
+            logging.info(
+                "Pre-call: shipment %s — carrier: %s, tracking: %s",
+                shipment_id,
+                call.carrier_code,
+                call.tracking_number,
             )
-            resp.raise_for_status()
-            shipments = resp.json().get("shipments", [])
-            if shipments:
-                shipment = shipments[0]
-                self.tracking_number = shipment.get("trackingNumber", "")
-                self.carrier_code = shipment.get("carrierCode", "")
-                if self.tracking_number and self.carrier_code:
-                    self.tracking_url = get_tracking_url(self.carrier_code, self.tracking_number)
-                logging.info(
-                    "Pre-call: shipment %s — carrier: %s, tracking: %s",
-                    shipment_id,
-                    self.carrier_code,
-                    self.tracking_number,
-                )
-        except Exception as e:
-            logging.error("Failed to fetch shipment %s pre-call: %s", shipment_id, e)
+    except Exception as e:
+        logging.error("Failed to fetch shipment %s pre-call: %s", shipment_id, e)
 
-        self.set_persona(
-            organization_name="Coastal Supply Co.",
-            agent_name="Riley",
-            agent_purpose=(
-                "to confirm delivery of recent orders and check in on customer satisfaction "
-                "on behalf of Coastal Supply Co."
-            ),
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {customer_name} on behalf of "
+                "Coastal Supply Co. Let them know we were calling to confirm that order "
+                f"{order_number} arrived safely and that we hope everything looks great. "
+                "If they have any issues or questions, ask them to call us back or reach out "
+                "at support@coastalsupply.com. No action is needed if everything is fine. "
+                "Thank them for being a Coastal Supply Co. customer."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=customer_name,
-            on_success=self.confirm_delivery,
-            on_failure=self.leave_voicemail,
-        )
-
-    def confirm_delivery(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Confirm that {self.customer_name} received order {self.order_number} and "
+                f"Confirm that {customer_name} received order {order_number} and "
                 "collect their satisfaction rating."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Riley calling from Coastal Supply Co. "
-                    f"I'm following up on your recent order, {self.order_number}, to make sure "
+                    f"Hi {customer_name}, this is Riley calling from Coastal Supply Co. "
+                    f"I'm following up on your recent order, {order_number}, to make sure "
                     "everything arrived as expected."
                 ),
                 guava.Field(
@@ -122,97 +135,89 @@ class DeliveryConfirmationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        delivery_status = self.get_field("delivery_status") or ""
-        satisfaction = self.get_field("satisfaction") or ""
-        wants_review = self.get_field("wants_review") or ""
 
-        logging.info(
-            "Delivery confirmation for order %s — status: %s, satisfaction: %s, wants_review: %s",
-            self.order_number,
-            delivery_status,
-            satisfaction,
-            wants_review,
-        )
+@agent.on_task_complete("handle_outcome")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
 
-        if "damaged" in delivery_status.lower():
-            self.hangup(
-                final_instructions=(
-                    f"Sincerely apologize to {self.customer_name} that their package arrived damaged. "
-                    "Let them know this is being escalated to our shipping claims team right away "
-                    "and someone will reach out to them within 1 business day to arrange a "
-                    "replacement or refund. "
-                    "Thank them for letting us know and for their patience."
-                )
-            )
-            return
+    delivery_status = call.get_field("delivery_status") or ""
+    satisfaction = call.get_field("satisfaction") or ""
+    wants_review = call.get_field("wants_review") or ""
 
-        if "no" in delivery_status.lower() or "haven't" in delivery_status.lower():
-            carrier_display = self.carrier_code.upper().replace("_", " ") if self.carrier_code else "the carrier"
-            tracking_part = ""
-            if self.tracking_number:
-                tracking_part = (
-                    f" Your tracking number with {carrier_display} is {self.tracking_number}."
-                )
-                if self.tracking_url:
-                    tracking_part += f" You can check the latest status at: {self.tracking_url}"
+    logging.info(
+        "Delivery confirmation for order %s — status: %s, satisfaction: %s, wants_review: %s",
+        order_number,
+        delivery_status,
+        satisfaction,
+        wants_review,
+    )
 
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know their order {self.order_number} shows as shipped "
-                    f"in our system.{tracking_part} "
-                    "Tell them it may still be in transit and to check the tracking link for the "
-                    "latest carrier update. "
-                    "If the package does not arrive within 2 more days, ask them to call us back "
-                    "or email support@coastalsupply.com and we will open an investigation. "
-                    "Apologize for any inconvenience and thank them for calling."
-                )
-            )
-            return
-
-        # Package was received — handle satisfaction response.
-        if "dissatisfied" in satisfaction.lower():
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} sincerely for their honest feedback. "
-                    "Acknowledge that we fell short of their expectations. "
-                    "Let them know a member of our customer care team will follow up personally "
-                    "to make things right. "
-                    "Apologize and wish them a great day."
-                )
-            )
-        elif wants_review.lower() == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} warmly for being a Coastal Supply Co. customer "
-                    "and for their positive feedback. "
-                    "Let them know they can leave a review at coastalsupply.com/reviews — "
-                    "it only takes a minute and means a lot to the team. "
-                    "Wish them a great day and let them know we're here if they ever need anything."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for taking the time to confirm receipt of their order. "
-                    "Let them know we're glad everything arrived and that Coastal Supply Co. is always "
-                    "here if they need anything in the future. "
-                    "Wish them a great day."
-                )
-            )
-
-    def leave_voicemail(self):
-        self.hangup(
+    if "damaged" in delivery_status.lower():
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.customer_name} on behalf of "
-                "Coastal Supply Co. Let them know we were calling to confirm that order "
-                f"{self.order_number} arrived safely and that we hope everything looks great. "
-                "If they have any issues or questions, ask them to call us back or reach out "
-                "at support@coastalsupply.com. No action is needed if everything is fine. "
-                "Thank them for being a Coastal Supply Co. customer."
+                f"Sincerely apologize to {customer_name} that their package arrived damaged. "
+                "Let them know this is being escalated to our shipping claims team right away "
+                "and someone will reach out to them within 1 business day to arrange a "
+                "replacement or refund. "
+                "Thank them for letting us know and for their patience."
+            )
+        )
+        return
+
+    if "no" in delivery_status.lower() or "haven't" in delivery_status.lower():
+        carrier_display = call.carrier_code.upper().replace("_", " ") if call.carrier_code else "the carrier"
+        tracking_part = ""
+        if call.tracking_number:
+            tracking_part = (
+                f" Your tracking number with {carrier_display} is {call.tracking_number}."
+            )
+            if call.tracking_url:
+                tracking_part += f" You can check the latest status at: {call.tracking_url}"
+
+        call.hangup(
+            final_instructions=(
+                f"Let {customer_name} know their order {order_number} shows as shipped "
+                f"in our system.{tracking_part} "
+                "Tell them it may still be in transit and to check the tracking link for the "
+                "latest carrier update. "
+                "If the package does not arrive within 2 more days, ask them to call us back "
+                "or email support@coastalsupply.com and we will open an investigation. "
+                "Apologize for any inconvenience and thank them for calling."
+            )
+        )
+        return
+
+    # Package was received — handle satisfaction response.
+    if "dissatisfied" in satisfaction.lower():
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} sincerely for their honest feedback. "
+                "Acknowledge that we fell short of their expectations. "
+                "Let them know a member of our customer care team will follow up personally "
+                "to make things right. "
+                "Apologize and wish them a great day."
+            )
+        )
+    elif wants_review.lower() == "yes":
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} warmly for being a Coastal Supply Co. customer "
+                "and for their positive feedback. "
+                "Let them know they can leave a review at coastalsupply.com/reviews — "
+                "it only takes a minute and means a lot to the team. "
+                "Wish them a great day and let them know we're here if they ever need anything."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for taking the time to confirm receipt of their order. "
+                "Let them know we're glad everything arrived and that Coastal Supply Co. is always "
+                "here if they need anything in the future. "
+                "Wish them a great day."
             )
         )
 
@@ -241,12 +246,12 @@ if __name__ == "__main__":
         args.shipment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DeliveryConfirmationController(
-            customer_name=args.name,
-            order_number=args.order_number,
-            shipment_id=args.shipment_id,
-        ),
+        variables={
+            "customer_name": args.name,
+            "order_number": args.order_number,
+            "shipment_id": str(args.shipment_id),
+        },
     )

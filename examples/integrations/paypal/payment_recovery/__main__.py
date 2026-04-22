@@ -33,55 +33,67 @@ def get_subscription(subscription_id: str, headers: dict) -> dict | None:
     return resp.json()
 
 
-class PaymentRecoveryController(guava.CallController):
-    def __init__(self, customer_name: str, subscription_id: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.subscription_id = subscription_id
-        self.subscription = None
-        self.headers = {}
+agent = guava.Agent(
+    name="Alex",
+    organization="Northgate Commerce",
+    purpose=(
+        "to help Northgate Commerce customers resolve failed subscription payments"
+    ),
+)
 
-        try:
-            token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            self.subscription = get_subscription(subscription_id, self.headers)
-        except Exception as e:
-            logging.error("Failed to load subscription %s: %s", subscription_id, e)
 
-        self.set_persona(
-            organization_name="Northgate Commerce",
-            agent_name="Alex",
-            agent_purpose=(
-                "to help Northgate Commerce customers resolve failed subscription payments"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
+
+    call.customer_name = customer_name
+    call.subscription_id = subscription_id
+    call.subscription = None
+
+    try:
+        token = get_access_token()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        call.subscription = get_subscription(subscription_id, headers)
+    except Exception as e:
+        logging.error("Failed to load subscription %s: %s", subscription_id, e)
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for payment recovery.", call.customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {call.customer_name} from Northgate Commerce. "
+                "Let them know you're calling about a payment issue on their PayPal subscription "
+                "and ask them to log into PayPal to update their payment method. "
+                "Keep it concise and non-threatening."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_recovery,
-            on_failure=self.leave_voicemail,
-        )
-
-    def begin_recovery(self):
+    elif outcome == "available":
         failed_count = 0
         last_amount = ""
-        if self.subscription:
-            billing = self.subscription.get("billing_info", {})
+        if call.subscription:
+            billing = call.subscription.get("billing_info", {})
             failed_count = billing.get("failed_payments_count", 0)
             last = billing.get("last_payment", {}).get("amount", {})
             if last.get("value"):
                 last_amount = f"${last['value']} {last.get('currency_code', 'USD')}"
 
-        self.set_task(
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Reach {self.customer_name} about a failed PayPal subscription payment. "
+                f"Reach {call.customer_name} about a failed PayPal subscription payment. "
                 f"There {'have been' if failed_count > 1 else 'has been'} {failed_count or 'a'} failed "
                 f"payment{'s' if failed_count != 1 else ''}{' of ' + last_amount if last_amount else ''}. "
                 "Help them understand what happened and guide them to update their payment method in PayPal."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Alex calling from Northgate Commerce. "
+                    f"Hi {call.customer_name}, this is Alex calling from Northgate Commerce. "
                     "I'm reaching out because we noticed a payment issue with your PayPal subscription. "
                     + (f"There {'have' if failed_count != 1 else 'has'} been {failed_count} failed "
                        f"payment attempt{'s' if failed_count != 1 else ''}" if failed_count else "A recent payment didn't go through")
@@ -112,61 +124,51 @@ class PaymentRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        cause = self.get_field("cause") or ""
-        willing = self.get_field("willing_to_update") or ""
 
-        logging.info(
-            "Payment recovery outcome for subscription %s — cause: %s, response: %s",
-            self.subscription_id, cause, willing,
-        )
+@agent.on_task_complete("handle_outcome")
+def on_done(call: guava.Call) -> None:
+    cause = call.get_field("cause") or ""
+    willing = call.get_field("willing_to_update") or ""
 
-        if "cancel" in willing:
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge {self.customer_name}'s wish to cancel. Let them know they can "
-                    "cancel their subscription by logging into PayPal and going to their subscription settings. "
-                    "Thank them for being a customer and wish them well."
-                )
-            )
-        elif "already updated" in willing:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know PayPal will automatically retry the payment "
-                    "with the updated method. They should see the charge go through within 24 hours. "
-                    "Thank them for updating quickly and wish them a great day."
-                )
-            )
-        elif "help" in willing:
-            self.hangup(
-                final_instructions=(
-                    f"Guide {self.customer_name} to update their payment method: "
-                    "log into paypal.com → click the gear icon → Payments → Manage automatic payments → "
-                    "find Northgate Commerce → Update payment method. "
-                    "Let them know PayPal will retry once updated. Thank them for their time."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time. Let them know they need to update "
-                    "their payment method in PayPal to avoid subscription interruption. "
-                    "PayPal will retry automatically once the method is updated. "
-                    "Wish them a great day."
-                )
-            )
+    logging.info(
+        "Payment recovery outcome for subscription %s — cause: %s, response: %s",
+        call.subscription_id, cause, willing,
+    )
 
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for payment recovery.", self.customer_name)
-        self.hangup(
+    if "cancel" in willing:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name} from Northgate Commerce. "
-                "Let them know you're calling about a payment issue on their PayPal subscription "
-                "and ask them to log into PayPal to update their payment method. "
-                "Keep it concise and non-threatening."
+                f"Acknowledge {call.customer_name}'s wish to cancel. Let them know they can "
+                "cancel their subscription by logging into PayPal and going to their subscription settings. "
+                "Thank them for being a customer and wish them well."
+            )
+        )
+    elif "already updated" in willing:
+        call.hangup(
+            final_instructions=(
+                f"Let {call.customer_name} know PayPal will automatically retry the payment "
+                "with the updated method. They should see the charge go through within 24 hours. "
+                "Thank them for updating quickly and wish them a great day."
+            )
+        )
+    elif "help" in willing:
+        call.hangup(
+            final_instructions=(
+                f"Guide {call.customer_name} to update their payment method: "
+                "log into paypal.com → click the gear icon → Payments → Manage automatic payments → "
+                "find Northgate Commerce → Update payment method. "
+                "Let them know PayPal will retry once updated. Thank them for their time."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {call.customer_name} for their time. Let them know they need to update "
+                "their payment method in PayPal to avoid subscription interruption. "
+                "PayPal will retry automatically once the method is updated. "
+                "Wish them a great day."
             )
         )
 
@@ -181,11 +183,11 @@ if __name__ == "__main__":
     parser.add_argument("--subscription-id", required=True, help="PayPal subscription ID (I-...)")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PaymentRecoveryController(
-            customer_name=args.name,
-            subscription_id=args.subscription_id,
-        ),
+        variables={
+            "customer_name": args.name,
+            "subscription_id": args.subscription_id,
+        },
     )

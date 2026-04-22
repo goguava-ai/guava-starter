@@ -7,32 +7,39 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Jamie",
+    organization="ShopNow",
+    purpose=(
+        "to collect structured feedback about a customer's recent purchase experience, "
+        "including product satisfaction and delivery quality"
+    ),
+)
 
-class PostPurchaseSurveyController(guava.CallController):
-    def __init__(self, contact_name, product_name, order_number):
-        super().__init__()
-        self.contact_name = contact_name
-        self.product_name = product_name
-        self.order_number = order_number
-        self.set_persona(
-            organization_name="ShopNow",
-            agent_name="Jamie",
-            agent_purpose=(
-                "to collect structured feedback about a customer's recent purchase experience, "
-                "including product satisfaction and delivery quality"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_survey(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    product_name = call.get_variable("product_name")
+    order_number = call.get_variable("order_number")
+
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for post-purchase survey on order %s.",
+            contact_name,
+            order_number,
+        )
+    elif outcome == "available":
+        call.set_task(
+            "post_purchase_survey",
             objective=(
-                f"Conduct a brief post-purchase satisfaction survey with {self.contact_name} "
-                f"regarding their recent ShopNow order #{self.order_number} for '{self.product_name}'. "
+                f"Conduct a brief post-purchase satisfaction survey with {contact_name} "
+                f"regarding their recent ShopNow order #{order_number} for '{product_name}'. "
                 "Collect a numeric product rating from 1 to 5, a delivery experience rating from 1 to 5, "
                 "confirm whether the product matched its description, ask if they would purchase again, "
                 "obtain permission to use their feedback as a review, "
@@ -41,9 +48,9 @@ class PostPurchaseSurveyController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Jamie from ShopNow. "
-                    f"I'm calling because you recently received your order of '{self.product_name}', "
-                    f"order number {self.order_number}. "
+                    f"Hi {contact_name}, this is Jamie from ShopNow. "
+                    f"I'm calling because you recently received your order of '{product_name}', "
+                    f"order number {order_number}. "
                     "We'd love just two minutes of your time to hear how everything went. "
                     "Your feedback helps us serve you better."
                 ),
@@ -102,41 +109,37 @@ class PostPurchaseSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "product_name": self.product_name,
-            "order_number": self.order_number,
-            "product_rating": self.get_field("product_rating"),
-            "delivery_experience_rating": self.get_field("delivery_experience_rating"),
-            "product_as_described": self.get_field("product_as_described"),
-            "would_purchase_again": self.get_field("would_purchase_again"),
-            "review_permission": self.get_field("review_permission"),
-            "improvement_feedback": self.get_field("improvement_feedback"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info(
-            "Post-purchase survey completed for %s, order %s", self.contact_name, self.order_number
-        )
-        self.hangup(
-            final_instructions=(
-                "Thank the customer sincerely for taking the time to share their feedback. "
-                "Let them know their responses will be used to improve the ShopNow experience. "
-                "Remind them they can reach ShopNow support anytime with questions, "
-                "and wish them a wonderful day before ending the call."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for post-purchase survey on order %s.",
-            self.contact_name,
-            self.order_number,
+@agent.on_task_complete("post_purchase_survey")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "product_name": call.get_variable("product_name"),
+        "order_number": call.get_variable("order_number"),
+        "product_rating": call.get_field("product_rating"),
+        "delivery_experience_rating": call.get_field("delivery_experience_rating"),
+        "product_as_described": call.get_field("product_as_described"),
+        "would_purchase_again": call.get_field("would_purchase_again"),
+        "review_permission": call.get_field("review_permission"),
+        "improvement_feedback": call.get_field("improvement_feedback"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info(
+        "Post-purchase survey completed for %s, order %s",
+        call.get_variable("contact_name"),
+        call.get_variable("order_number"),
+    )
+    call.hangup(
+        final_instructions=(
+            "Thank the customer sincerely for taking the time to share their feedback. "
+            "Let them know their responses will be used to improve the ShopNow experience. "
+            "Remind them they can reach ShopNow support anytime with questions, "
+            "and wish them a wonderful day before ending the call."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -148,12 +151,12 @@ if __name__ == "__main__":
     parser.add_argument("--order-number", required=True, help="Order number")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PostPurchaseSurveyController(
-            contact_name=args.name,
-            product_name=args.product_name,
-            order_number=args.order_number,
-        ),
+        variables={
+            "contact_name": args.name,
+            "product_name": args.product_name,
+            "order_number": args.order_number,
+        },
     )

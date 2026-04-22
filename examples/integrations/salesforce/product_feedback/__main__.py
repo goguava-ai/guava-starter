@@ -71,172 +71,173 @@ def create_product_idea(contact_id: str, account_id: str, title: str, body: str)
     resp.raise_for_status()
 
 
-class ProductFeedbackController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Taylor",
+    organization="Helix Platform",
+    purpose=(
+        "to collect structured product feedback and feature requests from Helix Platform "
+        "customers and route them to the right team"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Helix Platform",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to collect structured product feedback and feature requests from Helix Platform "
-                "customers and route them to the right team"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "log_feedback",
+        objective=(
+            "A customer has called to share product feedback or a feature request. "
+            "Greet them warmly, collect their contact details, and capture their feedback "
+            "in enough detail to be actionable for the product team."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Helix Platform. I'm Taylor, and I'd love to hear "
+                "your feedback. Customer input directly shapes our product roadmap, "
+                "so your thoughts are genuinely valuable."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called to share product feedback or a feature request. "
-                "Greet them warmly, collect their contact details, and capture their feedback "
-                "in enough detail to be actionable for the product team."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for the email address on their account so we can follow up.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Helix Platform. I'm Taylor, and I'd love to hear "
-                    "your feedback. Customer input directly shapes our product roadmap, "
-                    "so your thoughts are genuinely valuable."
+            guava.Field(
+                key="feedback_type",
+                field_type="multiple_choice",
+                description="Ask what type of feedback they have.",
+                choices=[
+                    "feature request",
+                    "bug report",
+                    "usability concern",
+                    "performance issue",
+                    "general praise",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="product_area",
+                field_type="multiple_choice",
+                description="Ask which area of the product their feedback relates to.",
+                choices=[
+                    "dashboard / reporting",
+                    "integrations",
+                    "mobile app",
+                    "API / developer tools",
+                    "billing / account management",
+                    "notifications / alerts",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="feedback_detail",
+                field_type="text",
+                description=(
+                    "Ask them to describe their feedback in their own words. "
+                    "Encourage them to be specific — what is the problem, what would the "
+                    "ideal solution look like, and how often does this affect them?"
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for the email address on their account so we can follow up.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="business_impact",
+                field_type="multiple_choice",
+                description=(
+                    "Ask how much this impacts their daily work. "
+                    "'Just so our product team understands the priority, how much does this "
+                    "affect your work today?'"
                 ),
-                guava.Field(
-                    key="feedback_type",
-                    field_type="multiple_choice",
-                    description="Ask what type of feedback they have.",
-                    choices=[
-                        "feature request",
-                        "bug report",
-                        "usability concern",
-                        "performance issue",
-                        "general praise",
-                    ],
-                    required=True,
+                choices=["blocks my work entirely", "significant daily friction", "minor inconvenience", "nice to have"],
+                required=True,
+            ),
+            guava.Field(
+                key="okay_to_contact",
+                field_type="multiple_choice",
+                description=(
+                    "Ask if the product team can reach out to them for a deeper conversation "
+                    "if needed. Keep it optional."
                 ),
-                guava.Field(
-                    key="product_area",
-                    field_type="multiple_choice",
-                    description="Ask which area of the product their feedback relates to.",
-                    choices=[
-                        "dashboard / reporting",
-                        "integrations",
-                        "mobile app",
-                        "API / developer tools",
-                        "billing / account management",
-                        "notifications / alerts",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="feedback_detail",
-                    field_type="text",
-                    description=(
-                        "Ask them to describe their feedback in their own words. "
-                        "Encourage them to be specific — what is the problem, what would the "
-                        "ideal solution look like, and how often does this affect them?"
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="business_impact",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask how much this impacts their daily work. "
-                        "'Just so our product team understands the priority, how much does this "
-                        "affect your work today?'"
-                    ),
-                    choices=["blocks my work entirely", "significant daily friction", "minor inconvenience", "nice to have"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="okay_to_contact",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask if the product team can reach out to them for a deeper conversation "
-                        "if needed. Keep it optional."
-                    ),
-                    choices=["yes", "no"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.log_feedback,
-        )
+                choices=["yes", "no"],
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def log_feedback(self):
-        email = self.get_field("caller_email") or ""
-        feedback_type = self.get_field("feedback_type") or "general feedback"
-        product_area = self.get_field("product_area") or "other"
-        detail = self.get_field("feedback_detail") or ""
-        impact = self.get_field("business_impact") or ""
-        ok_to_contact = self.get_field("okay_to_contact") or "no"
+@agent.on_task_complete("log_feedback")
+def on_done(call: guava.Call) -> None:
+    email = call.get_field("caller_email") or ""
+    feedback_type = call.get_field("feedback_type") or "general feedback"
+    product_area = call.get_field("product_area") or "other"
+    detail = call.get_field("feedback_detail") or ""
+    impact = call.get_field("business_impact") or ""
+    ok_to_contact = call.get_field("okay_to_contact") or "no"
 
-        logging.info("Looking up contact by email: %s", email)
+    logging.info("Looking up contact by email: %s", email)
+    try:
+        contact = find_contact_by_email(email)
+    except Exception as e:
+        logging.error("Contact lookup failed: %s", e)
+        contact = None
+
+    subject = f"{feedback_type.title()} — {product_area.title()}"
+    description = (
+        f"Feedback type: {feedback_type}\n"
+        f"Product area: {product_area}\n"
+        f"Business impact: {impact}\n"
+        f"Open to follow-up: {ok_to_contact}\n\n"
+        f"Feedback:\n{detail}"
+    )
+
+    first_name = "there"
+    if contact:
+        contact_id = contact["Id"]
+        account_id = contact.get("AccountId") or ""
+        first_name = contact.get("FirstName") or "there"
+
+        logging.info("Creating feedback Case for contact %s.", contact_id)
+        case_id = ""
         try:
-            contact = find_contact_by_email(email)
+            sf_type = "Feature Request" if feedback_type == "feature request" else "Problem"
+            case_id = create_feedback_case(contact_id, account_id, subject, description, sf_type)
+            logging.info("Case created: %s", case_id)
         except Exception as e:
-            logging.error("Contact lookup failed: %s", e)
-            contact = None
+            logging.error("Failed to create Case: %s", e)
 
-        subject = f"{feedback_type.title()} — {product_area.title()}"
-        description = (
-            f"Feedback type: {feedback_type}\n"
-            f"Product area: {product_area}\n"
-            f"Business impact: {impact}\n"
-            f"Open to follow-up: {ok_to_contact}\n\n"
-            f"Feedback:\n{detail}"
-        )
-
-        first_name = "there"
-        if contact:
-            contact_id = contact["Id"]
-            account_id = contact.get("AccountId") or ""
-            first_name = contact.get("FirstName") or "there"
-
-            logging.info("Creating feedback Case for contact %s.", contact_id)
-            case_id = ""
+        if feedback_type == "feature request" and account_id:
             try:
-                sf_type = "Feature Request" if feedback_type == "feature request" else "Problem"
-                case_id = create_feedback_case(contact_id, account_id, subject, description, sf_type)
-                logging.info("Case created: %s", case_id)
+                create_product_idea(contact_id, account_id, subject, detail)
+                logging.info("Chatter FeedItem created for feature request.")
             except Exception as e:
-                logging.error("Failed to create Case: %s", e)
+                logging.warning("Could not create FeedItem (Chatter may be disabled): %s", e)
 
-            if feedback_type == "feature request" and account_id:
-                try:
-                    create_product_idea(contact_id, account_id, subject, detail)
-                    logging.info("Chatter FeedItem created for feature request.")
-                except Exception as e:
-                    logging.warning("Could not create FeedItem (Chatter may be disabled): %s", e)
-
-            self.hangup(
-                final_instructions=(
-                    f"Thank {first_name} sincerely for taking the time to share their feedback. "
-                    "Let them know it has been recorded and passed to the product team. "
-                    + (f"Mention that their case reference number is {case_id}. " if case_id else "")
-                    + ("Let them know the product team may reach out for a deeper conversation. "
-                       if ok_to_contact == "yes" else "")
-                    + "Wish them a great day."
-                )
+        call.hangup(
+            final_instructions=(
+                f"Thank {first_name} sincerely for taking the time to share their feedback. "
+                "Let them know it has been recorded and passed to the product team. "
+                + (f"Mention that their case reference number is {case_id}. " if case_id else "")
+                + ("Let them know the product team may reach out for a deeper conversation. "
+                   if ok_to_contact == "yes" else "")
+                + "Wish them a great day."
             )
-        else:
-            logging.warning("No Salesforce Contact found for email %s.", email)
-            self.hangup(
-                final_instructions=(
-                    "Thank the caller for their feedback and let them know it has been noted. "
-                    "Mention that a member of the team will follow up if they'd like to discuss further. "
-                    "Wish them a great day."
-                )
+        )
+    else:
+        logging.warning("No Salesforce Contact found for email %s.", email)
+        call.hangup(
+            final_instructions=(
+                "Thank the caller for their feedback and let them know it has been noted. "
+                "Mention that a member of the team will follow up if they'd like to discuss further. "
+                "Wish them a great day."
             )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ProductFeedbackController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -52,47 +52,62 @@ def close_ticket(ticket_id: str) -> dict:
     return resp.json()
 
 
-class CsatSurveyController(guava.CallController):
-    def __init__(self, ticket_id: str, customer_name: str):
-        super().__init__()
-        self.ticket_id = ticket_id
-        self.customer_name = customer_name
-        self.ticket_subject = "your recent support request"
+agent = guava.Agent(
+    name="Taylor",
+    organization="Clearline Software",
+    purpose=(
+        "to collect customer satisfaction feedback on behalf of Clearline Software "
+        "after a support ticket has been resolved"
+    ),
+)
 
-        # Pre-call: fetch the ticket to personalize the survey with the issue subject.
-        try:
-            ticket = get_ticket(ticket_id)
-            if ticket and ticket.get("subject"):
-                self.ticket_subject = f"'{ticket['subject']}'"
-        except Exception as e:
-            logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
 
-        self.set_persona(
-            organization_name="Clearline Software",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to collect customer satisfaction feedback on behalf of Clearline Software "
-                "after a support ticket has been resolved"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    ticket_id = call.get_variable("ticket_id")
+    customer_name = call.get_variable("customer_name")
+
+    # Pre-call: fetch the ticket to personalize the survey with the issue subject.
+    call.ticket_subject = "your recent support request"
+    try:
+        ticket = get_ticket(ticket_id)
+        if ticket and ticket.get("subject"):
+            call.ticket_subject = f"'{ticket['subject']}'"
+    except Exception as e:
+        logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = call.get_variable("ticket_id")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for ticket #%s CSAT survey",
+            customer_name, ticket_id,
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                "Leave a brief, friendly voicemail on behalf of Clearline Software letting the "
+                "customer know we were calling to follow up on their recently resolved support "
+                "ticket. Let them know no action is needed and we hope everything is working well."
+            )
         )
-
-    def begin_survey(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "save_results",
             objective=(
-                f"Collect CSAT feedback from {self.customer_name} regarding their recently "
-                f"resolved ticket {self.ticket_subject}."
+                f"Collect CSAT feedback from {customer_name} regarding their recently "
+                f"resolved ticket {call.ticket_subject}."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Taylor calling from Clearline Software. "
+                    f"Hi {customer_name}, this is Taylor calling from Clearline Software. "
                     f"I'm following up on your recently resolved support ticket regarding "
-                    f"{self.ticket_subject}. I have just a couple of quick questions — "
+                    f"{call.ticket_subject}. I have just a couple of quick questions — "
                     "this will only take about a minute."
                 ),
                 guava.Field(
@@ -127,74 +142,64 @@ class CsatSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        rating = self.get_field("satisfaction_rating") or "not provided"
-        resolution = self.get_field("resolution_quality") or "not provided"
-        feedback = self.get_field("open_feedback") or ""
 
-        logging.info(
-            "CSAT results for ticket #%s — rating: %s, resolution: %s",
-            self.ticket_id, rating, resolution,
-        )
+@agent.on_task_complete("save_results")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = call.get_variable("ticket_id")
+    rating = call.get_field("satisfaction_rating") or "not provided"
+    resolution = call.get_field("resolution_quality") or "not provided"
+    feedback = call.get_field("open_feedback") or ""
 
-        # Build internal note with survey results
-        note_lines = [
-            f"CSAT survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Customer: {self.customer_name}",
-            f"Satisfaction rating: {rating}/5",
-            f"Resolution quality: {resolution.replace('-', ' ').title()}",
-        ]
-        if feedback and feedback.strip().lower() not in ("none", "n/a", ""):
-            note_lines.append(f"Open feedback: {feedback}")
+    logging.info(
+        "CSAT results for ticket #%s — rating: %s, resolution: %s",
+        ticket_id, rating, resolution,
+    )
 
+    # Build internal note with survey results
+    note_lines = [
+        f"CSAT survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Customer: {customer_name}",
+        f"Satisfaction rating: {rating}/5",
+        f"Resolution quality: {resolution.replace('-', ' ').title()}",
+    ]
+    if feedback and feedback.strip().lower() not in ("none", "n/a", ""):
+        note_lines.append(f"Open feedback: {feedback}")
+
+    try:
+        add_internal_note(ticket_id, "\n".join(note_lines))
+        logging.info("CSAT note added to ticket #%s", ticket_id)
+    except Exception as e:
+        logging.error("Failed to save CSAT note to ticket #%s: %s", ticket_id, e)
+
+    # Close the ticket if the customer says it's fully resolved
+    if resolution == "fully-resolved":
         try:
-            add_internal_note(self.ticket_id, "\n".join(note_lines))
-            logging.info("CSAT note added to ticket #%s", self.ticket_id)
+            close_ticket(ticket_id)
+            logging.info("Ticket #%s closed after CSAT survey", ticket_id)
         except Exception as e:
-            logging.error("Failed to save CSAT note to ticket #%s: %s", self.ticket_id, e)
-
-        # Close the ticket if the customer says it's fully resolved
-        if resolution == "fully-resolved":
-            try:
-                close_ticket(self.ticket_id)
-                logging.info("Ticket #%s closed after CSAT survey", self.ticket_id)
-            except Exception as e:
-                logging.error(
-                    "Failed to close ticket #%s after CSAT: %s", self.ticket_id, e
-                )
-
-        rating_int = int(rating) if rating.isdigit() else 0
-        if rating_int <= 2:
-            self.hangup(
-                final_instructions=(
-                    f"Sincerely thank {self.customer_name} for their candid feedback. "
-                    "Acknowledge that we fell short of their expectations and let them know "
-                    "a member of our team will personally follow up to make things right. "
-                    "Apologize again and wish them a good day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} warmly for taking the time to share their feedback. "
-                    "Let them know their input helps us improve our support team. "
-                    "Wish them a great day and let them know we're here if they need anything else."
-                )
+            logging.error(
+                "Failed to close ticket #%s after CSAT: %s", ticket_id, e
             )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for ticket #%s CSAT survey",
-            self.customer_name, self.ticket_id,
-        )
-        self.hangup(
+    rating_int = int(rating) if rating.isdigit() else 0
+    if rating_int <= 2:
+        call.hangup(
             final_instructions=(
-                "Leave a brief, friendly voicemail on behalf of Clearline Software letting the "
-                "customer know we were calling to follow up on their recently resolved support "
-                "ticket. Let them know no action is needed and we hope everything is working well."
+                f"Sincerely thank {customer_name} for their candid feedback. "
+                "Acknowledge that we fell short of their expectations and let them know "
+                "a member of our team will personally follow up to make things right. "
+                "Apologize again and wish them a good day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} warmly for taking the time to share their feedback. "
+                "Let them know their input helps us improve our support team. "
+                "Wish them a great day and let them know we're here if they need anything else."
             )
         )
 
@@ -217,11 +222,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.ticket_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CsatSurveyController(
-            ticket_id=args.ticket_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "ticket_id": args.ticket_id,
+            "customer_name": args.name,
+        },
     )

@@ -7,33 +7,41 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Casey",
+    organization="ShopNow - Customer Safety Team",
+    purpose=(
+        "to notify affected customers of an urgent product recall, "
+        "provide safety instructions, and arrange a return, replacement, or store credit"
+    ),
+)
 
-class RecallNotificationController(guava.CallController):
-    def __init__(self, contact_name, product_name, recall_reason, order_number):
-        super().__init__()
-        self.contact_name = contact_name
-        self.product_name = product_name
-        self.recall_reason = recall_reason
-        self.order_number = order_number
-        self.set_persona(
-            organization_name="ShopNow - Customer Safety Team",
-            agent_name="Casey",
-            agent_purpose=(
-                "to notify affected customers of an urgent product recall, "
-                "provide safety instructions, and arrange a return, replacement, or store credit"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_recall_notification,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_recall_notification(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    product_name = call.get_variable("product_name")
+    recall_reason = call.get_variable("recall_reason")
+    order_number = call.get_variable("order_number")
+
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for recall notification on order %s, product '%s'.",
+            contact_name,
+            order_number,
+            product_name,
+        )
+    elif outcome == "available":
+        call.set_task(
+            "recall_notification",
             objective=(
-                f"Urgently notify {self.contact_name} that their ShopNow order #{self.order_number} "
-                f"containing '{self.product_name}' is subject to a product recall due to: {self.recall_reason}. "
+                f"Urgently notify {contact_name} that their ShopNow order #{order_number} "
+                f"containing '{product_name}' is subject to a product recall due to: {recall_reason}. "
                 "Clearly communicate the safety concern, instruct them to stop using the product immediately, "
                 "confirm they have understood the recall, determine whether they still have the product in use, "
                 "collect their chosen resolution (return for refund, replacement, or store credit), "
@@ -43,11 +51,11 @@ class RecallNotificationController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.contact_name}, this is Casey calling from the ShopNow Customer Safety Team. "
+                    f"Hello {contact_name}, this is Casey calling from the ShopNow Customer Safety Team. "
                     "I'm reaching out regarding an important safety notice that affects a product "
-                    f"from your recent order #{self.order_number}. "
-                    f"We have issued an official recall for '{self.product_name}' "
-                    f"due to the following safety concern: {self.recall_reason}. "
+                    f"from your recent order #{order_number}. "
+                    f"We have issued an official recall for '{product_name}' "
+                    f"due to the following safety concern: {recall_reason}. "
                     "Please stop using this product immediately as a precautionary measure. "
                     "We sincerely apologize for any concern this may cause and want to assure you "
                     "that your safety is our absolute top priority."
@@ -107,47 +115,40 @@ class RecallNotificationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "product_name": self.product_name,
-            "recall_reason": self.recall_reason,
-            "order_number": self.order_number,
-            "recall_acknowledged": self.get_field("recall_acknowledged"),
-            "product_still_in_use": self.get_field("product_still_in_use"),
-            "resolution_choice": self.get_field("resolution_choice"),
-            "return_label_delivery_preference": self.get_field("return_label_delivery_preference"),
-            "questions_about_recall": self.get_field("questions_about_recall"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info(
-            "Recall notification call completed for %s, order %s, product '%s'",
-            self.contact_name,
-            self.order_number,
-            self.product_name,
-        )
-        self.hangup(
-            final_instructions=(
-                "Thank the customer for their time and for taking this matter seriously. "
-                "Confirm that their chosen resolution and return label delivery preference have been recorded "
-                "and that they will be contacted within 24 to 48 hours with next steps. "
-                "Provide the ShopNow Customer Safety Team phone number or support email if they have "
-                "further questions. Emphasize that their safety is ShopNow's highest priority, "
-                "and close the call with care and professionalism."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for recall notification on order %s, product '%s'.",
-            self.contact_name,
-            self.order_number,
-            self.product_name,
+@agent.on_task_complete("recall_notification")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "product_name": call.get_variable("product_name"),
+        "recall_reason": call.get_variable("recall_reason"),
+        "order_number": call.get_variable("order_number"),
+        "recall_acknowledged": call.get_field("recall_acknowledged"),
+        "product_still_in_use": call.get_field("product_still_in_use"),
+        "resolution_choice": call.get_field("resolution_choice"),
+        "return_label_delivery_preference": call.get_field("return_label_delivery_preference"),
+        "questions_about_recall": call.get_field("questions_about_recall"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info(
+        "Recall notification call completed for %s, order %s, product '%s'",
+        call.get_variable("contact_name"),
+        call.get_variable("order_number"),
+        call.get_variable("product_name"),
+    )
+    call.hangup(
+        final_instructions=(
+            "Thank the customer for their time and for taking this matter seriously. "
+            "Confirm that their chosen resolution and return label delivery preference have been recorded "
+            "and that they will be contacted within 24 to 48 hours with next steps. "
+            "Provide the ShopNow Customer Safety Team phone number or support email if they have "
+            "further questions. Emphasize that their safety is ShopNow's highest priority, "
+            "and close the call with care and professionalism."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -162,13 +163,13 @@ if __name__ == "__main__":
     parser.add_argument("--order-number", required=True, help="Customer's order number containing the product")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=RecallNotificationController(
-            contact_name=args.name,
-            product_name=args.product_name,
-            recall_reason=args.recall_reason,
-            order_number=args.order_number,
-        ),
+        variables={
+            "contact_name": args.name,
+            "product_name": args.product_name,
+            "recall_reason": args.recall_reason,
+            "order_number": args.order_number,
+        },
     )

@@ -51,47 +51,75 @@ def update_conversation_status(conversation_id: str, status: str) -> None:
     resp.raise_for_status()
 
 
-class OutboundFollowupController(guava.CallController):
-    def __init__(self, contact_name: str, conversation_id: str, author_id: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.conversation_id = conversation_id
-        self.author_id = author_id
-        self.conv_subject = "your recent inquiry"
+agent = guava.Agent(
+    name="Morgan",
+    organization="Relay Agency",
+    purpose=(
+        "to follow up personally with customers on pending Front conversations "
+        "and resolve any outstanding questions"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    conversation_id = call.get_variable("conversation_id")
+
+    conv_subject = "your recent inquiry"
+    try:
+        conv = get_conversation(conversation_id)
+        if conv and conv.get("subject"):
+            conv_subject = f"'{conv['subject']}'"
+    except Exception as e:
+        logging.error("Failed to fetch conversation %s pre-call: %s", conversation_id, e)
+
+    call.conv_subject = conv_subject
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        contact_name = call.get_variable("contact_name")
+        conversation_id = call.get_variable("conversation_id")
+        author_id = call.get_variable("author_id")
+        conv_subject = call.conv_subject
+
+        logging.info("Unable to reach %s for follow-up on conversation %s.", contact_name, conversation_id)
         try:
-            conv = get_conversation(conversation_id)
-            if conv and conv.get("subject"):
-                self.conv_subject = f"'{conv['subject']}'"
+            add_comment(
+                conversation_id,
+                author_id,
+                f"Follow-up call attempted — {contact_name} unavailable, voicemail left. "
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            )
         except Exception as e:
-            logging.error("Failed to fetch conversation %s pre-call: %s", conversation_id, e)
+            logging.error("Failed to add voicemail comment: %s", e)
 
-        self.set_persona(
-            organization_name="Relay Agency",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to follow up personally with customers on pending Front conversations "
-                "and resolve any outstanding questions"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {contact_name} from Relay Agency. "
+                f"Mention you're following up on {conv_subject} and ask them to reply "
+                "to the email thread or call back at their convenience. Keep it short."
+            )
         )
+    elif outcome == "available":
+        contact_name = call.get_variable("contact_name")
+        conv_subject = call.conv_subject
 
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_followup,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_followup(self):
-        self.set_task(
+        call.set_task(
+            "log_and_update",
             objective=(
-                f"Follow up with {self.contact_name} on {self.conv_subject}. "
+                f"Follow up with {contact_name} on {conv_subject}. "
                 "Understand if their question or issue has been addressed, capture any updates, "
                 "and determine if the conversation can be closed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan from Relay Agency. "
-                    f"I'm following up on {self.conv_subject} to make sure everything is sorted."
+                    f"Hi {contact_name}, this is Morgan from Relay Agency. "
+                    f"I'm following up on {conv_subject} to make sure everything is sorted."
                 ),
                 guava.Field(
                     key="issue_resolved",
@@ -122,76 +150,61 @@ class OutboundFollowupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.log_and_update,
         )
 
-    def log_and_update(self):
-        resolved = self.get_field("issue_resolved") or "not resolved"
-        remaining = self.get_field("remaining_questions") or ""
-        can_close = self.get_field("can_close") or "keep it open"
 
-        note_lines = [
-            f"Follow-up call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Spoke with: {self.contact_name}",
-            f"Resolution status: {resolved}",
-            f"Can close: {can_close}",
-        ]
-        if remaining:
-            note_lines.append(f"Outstanding: {remaining}")
+@agent.on_task_complete("log_and_update")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    conversation_id = call.get_variable("conversation_id")
+    author_id = call.get_variable("author_id")
 
-        logging.info(
-            "Follow-up complete for conversation %s — resolved: %s, close: %s",
-            self.conversation_id, resolved, can_close,
-        )
+    resolved = call.get_field("issue_resolved") or "not resolved"
+    remaining = call.get_field("remaining_questions") or ""
+    can_close = call.get_field("can_close") or "keep it open"
 
+    note_lines = [
+        f"Follow-up call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Spoke with: {contact_name}",
+        f"Resolution status: {resolved}",
+        f"Can close: {can_close}",
+    ]
+    if remaining:
+        note_lines.append(f"Outstanding: {remaining}")
+
+    logging.info(
+        "Follow-up complete for conversation %s — resolved: %s, close: %s",
+        conversation_id, resolved, can_close,
+    )
+
+    try:
+        add_comment(conversation_id, author_id, "\n".join(note_lines))
+        logging.info("Comment added to conversation %s.", conversation_id)
+    except Exception as e:
+        logging.error("Failed to add comment to conversation %s: %s", conversation_id, e)
+
+    if can_close == "yes, close it" and resolved != "not resolved":
         try:
-            add_comment(self.conversation_id, self.author_id, "\n".join(note_lines))
-            logging.info("Comment added to conversation %s.", self.conversation_id)
+            update_conversation_status(conversation_id, "archived")
+            logging.info("Conversation %s archived.", conversation_id)
         except Exception as e:
-            logging.error("Failed to add comment to conversation %s: %s", self.conversation_id, e)
+            logging.error("Failed to archive conversation %s: %s", conversation_id, e)
 
-        if can_close == "yes, close it" and resolved != "not resolved":
-            try:
-                update_conversation_status(self.conversation_id, "archived")
-                logging.info("Conversation %s archived.", self.conversation_id)
-            except Exception as e:
-                logging.error("Failed to archive conversation %s: %s", self.conversation_id, e)
-
-        if resolved == "yes, resolved":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for confirming everything is resolved. "
-                    "Let them know the conversation has been closed and to reach out anytime. "
-                    "Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for the update. Let them know the outstanding "
-                    f"item has been noted and the team will follow up. "
-                    + (f"Specifically acknowledge: {remaining}. " if remaining else "")
-                    + "Wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for follow-up on conversation %s.", self.contact_name, self.conversation_id)
-        try:
-            add_comment(
-                self.conversation_id,
-                self.author_id,
-                f"Follow-up call attempted — {self.contact_name} unavailable, voicemail left. "
-                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            )
-        except Exception as e:
-            logging.error("Failed to add voicemail comment: %s", e)
-
-        self.hangup(
+    if resolved == "yes, resolved":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.contact_name} from Relay Agency. "
-                f"Mention you're following up on {self.conv_subject} and ask them to reply "
-                "to the email thread or call back at their convenience. Keep it short."
+                f"Thank {contact_name} for confirming everything is resolved. "
+                "Let them know the conversation has been closed and to reach out anytime. "
+                "Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for the update. Let them know the outstanding "
+                f"item has been noted and the team will follow up. "
+                + (f"Specifically acknowledge: {remaining}. " if remaining else "")
+                + "Wish them a great day."
             )
         )
 
@@ -212,12 +225,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.conversation_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=OutboundFollowupController(
-            contact_name=args.name,
-            conversation_id=args.conversation_id,
-            author_id=args.author_id,
-        ),
+        variables={
+            "contact_name": args.name,
+            "conversation_id": args.conversation_id,
+            "author_id": args.author_id,
+        },
     )

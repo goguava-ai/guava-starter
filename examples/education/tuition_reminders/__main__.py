@@ -8,32 +8,49 @@ from datetime import datetime
 
 
 
-class TuitionReminderController(guava.CallController):
-    def __init__(self, name, student_id, amount_due, due_date):
-        super().__init__()
-        self.name = name
-        self.student_id = student_id
-        self.amount_due = amount_due
-        self.due_date = due_date
-        self.set_persona(
-            organization_name="Westfield University - Student Accounts",
-            agent_name="Riley",
-            agent_purpose=(
-                "proactively remind students and guardians of upcoming tuition payment "
-                "deadlines and assist with arranging payment plans if needed"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_tuition_reminder,
-            on_failure=self.recipient_unavailable,
-        )
+agent = guava.Agent(
+    name="Riley",
+    organization="Westfield University - Student Accounts",
+    purpose=(
+        "proactively remind students and guardians of upcoming tuition payment "
+        "deadlines and assist with arranging payment plans if needed"
+    ),
+)
 
-    def begin_tuition_reminder(self):
-        self.set_task(
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Could not reach %s for tuition reminder (student ID: %s).",
+            call.get_variable("name"),
+            call.get_variable("student_id"),
+        )
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "student_name": call.get_variable("name"),
+            "student_id": call.get_variable("student_id"),
+            "amount_due": call.get_variable("amount_due"),
+            "due_date": call.get_variable("due_date"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "The recipient could not be reached. End the call politely."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "reminder",
             objective=(
-                f"You are calling {self.name} (student ID: {self.student_id}) to remind them "
-                f"that a tuition balance of {self.amount_due} is due by {self.due_date}. "
+                f"You are calling {call.get_variable('name')} (student ID: {call.get_variable('student_id')}) to remind them "
+                f"that a tuition balance of {call.get_variable('amount_due')} is due by {call.get_variable('due_date')}. "
                 "Find out how they intend to handle the payment — whether they plan to pay in full, "
                 "set up a payment plan, are waiting on financial aid, or wish to dispute the balance. "
                 "If they want a payment plan, confirm the arrangement. "
@@ -42,9 +59,9 @@ class TuitionReminderController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.name}, this is Riley calling from Westfield University Student Accounts. "
-                    f"I'm reaching out because your student account has a balance of {self.amount_due} "
-                    f"that is due by {self.due_date}. I wanted to connect with you to make sure you have "
+                    f"Hello {call.get_variable('name')}, this is Riley calling from Westfield University Student Accounts. "
+                    f"I'm reaching out because your student account has a balance of {call.get_variable('amount_due')} "
+                    f"that is due by {call.get_variable('due_date')}. I wanted to connect with you to make sure you have "
                     "everything you need and discuss any payment options that might be helpful."
                 ),
                 guava.Field(
@@ -75,51 +92,31 @@ class TuitionReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "student_name": self.name,
-            "student_id": self.student_id,
-            "amount_due": self.amount_due,
-            "due_date": self.due_date,
-            "fields": {
-                "payment_intention": self.get_field("payment_intention"),
-                "payment_plan_confirmed": self.get_field("payment_plan_confirmed"),
-                "payment_date_commitment": self.get_field("payment_date_commitment"),
-                "financial_aid_questions": self.get_field("financial_aid_questions"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} for their time. Let them know that Student Accounts is available "
-                "if they have further questions and provide a warm, encouraging close to the conversation."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Could not reach %s for tuition reminder (student ID: %s).",
-            self.name,
-            self.student_id,
+@agent.on_task_complete("reminder")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "student_name": call.get_variable("name"),
+        "student_id": call.get_variable("student_id"),
+        "amount_due": call.get_variable("amount_due"),
+        "due_date": call.get_variable("due_date"),
+        "fields": {
+            "payment_intention": call.get_field("payment_intention"),
+            "payment_plan_confirmed": call.get_field("payment_plan_confirmed"),
+            "payment_date_commitment": call.get_field("payment_date_commitment"),
+            "financial_aid_questions": call.get_field("financial_aid_questions"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} for their time. Let them know that Student Accounts is available "
+            "if they have further questions and provide a warm, encouraging close to the conversation."
         )
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "student_name": self.name,
-            "student_id": self.student_id,
-            "amount_due": self.amount_due,
-            "due_date": self.due_date,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "The recipient could not be reached. End the call politely."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -142,13 +139,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=TuitionReminderController(
-            name=args.name,
-            student_id=args.student_id,
-            amount_due=args.amount_due,
-            due_date=args.due_date,
-        ),
+        variables={
+            "name": args.name,
+            "student_id": args.student_id,
+            "amount_due": args.amount_due,
+            "due_date": args.due_date,
+        },
     )

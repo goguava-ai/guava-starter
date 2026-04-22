@@ -7,44 +7,50 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="City of Springfield - Permitting Office",
+    purpose=(
+        "contact permit applicants regarding missing information required "
+        "to process their application"
+    ),
+)
 
-class PermitFollowupController(guava.CallController):
-    def __init__(self, applicant_name: str, permit_number: str, missing_items: str):
-        super().__init__()
-        self.applicant_name = applicant_name
-        self.permit_number = permit_number
-        self.missing_items = missing_items
-        self.set_persona(
-            organization_name="City of Springfield - Permitting Office",
-            agent_name="Riley",
-            agent_purpose=(
-                "contact permit applicants regarding missing information required "
-                "to process their application"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.applicant_name,
-            on_success=self.begin_followup,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_followup(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("applicant_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Applicant %s was unavailable for permit follow-up call regarding permit %s.",
+            call.get_variable("applicant_name"),
+            call.get_variable("permit_number"),
+        )
+    elif outcome == "available":
+        applicant_name = call.get_variable("applicant_name")
+        permit_number = call.get_variable("permit_number")
+        missing_items = call.get_variable("missing_items")
+        call.set_task(
+            "followup",
             objective=(
                 f"You are calling on behalf of the City of Springfield Permitting Office "
-                f"to inform {self.applicant_name} that their permit or license application "
-                f"(permit number {self.permit_number}) cannot be processed until additional "
-                f"information is provided. The missing items are: {self.missing_items}. "
+                f"to inform {applicant_name} that their permit or license application "
+                f"(permit number {permit_number}) cannot be processed until additional "
+                f"information is provided. The missing items are: {missing_items}. "
                 "Clearly explain what is needed, ask how they plan to submit the information, "
                 "and confirm a commitment date. Be professional, helpful, and neutral in tone."
             ),
             checklist=[
                 guava.Say(
                     f"Hello, I'm calling from the City of Springfield Permitting Office "
-                    f"regarding permit application number {self.permit_number}. We have "
+                    f"regarding permit application number {permit_number}. We have "
                     f"reviewed your application and found that we are unable to proceed "
                     f"without some additional information. The items we still need are: "
-                    f"{self.missing_items}. I have a few quick questions to help us get "
+                    f"{missing_items}. I have a few quick questions to help us get "
                     "your application moving forward."
                 ),
                 guava.Field(
@@ -93,40 +99,34 @@ class PermitFollowupController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "applicant_name": self.applicant_name,
-            "permit_number": self.permit_number,
-            "missing_items": self.missing_items,
-            "fields": {
-                "missing_info_acknowledged": self.get_field("missing_info_acknowledged"),
-                "info_submission_method": self.get_field("info_submission_method"),
-                "submission_date_commitment": self.get_field("submission_date_commitment"),
-                "cannot_provide_reason": self.get_field("cannot_provide_reason"),
-                "additional_questions": self.get_field("additional_questions"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Thank the applicant for their time. Remind them of the submission method "
-                "and date they committed to. Let them know that once all required information "
-                "is received, the Permitting Office will continue processing their application. "
-                "Provide the office phone number or website if they have further questions, "
-                "and end the call courteously."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Applicant %s was unavailable for permit follow-up call regarding permit %s.",
-            self.applicant_name,
-            self.permit_number,
+@agent.on_task_complete("followup")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "applicant_name": call.get_variable("applicant_name"),
+        "permit_number": call.get_variable("permit_number"),
+        "missing_items": call.get_variable("missing_items"),
+        "fields": {
+            "missing_info_acknowledged": call.get_field("missing_info_acknowledged"),
+            "info_submission_method": call.get_field("info_submission_method"),
+            "submission_date_commitment": call.get_field("submission_date_commitment"),
+            "cannot_provide_reason": call.get_field("cannot_provide_reason"),
+            "additional_questions": call.get_field("additional_questions"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            "Thank the applicant for their time. Remind them of the submission method "
+            "and date they committed to. Let them know that once all required information "
+            "is received, the Permitting Office will continue processing their application. "
+            "Provide the office phone number or website if they have further questions, "
+            "and end the call courteously."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -144,12 +144,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PermitFollowupController(
-            applicant_name=args.name,
-            permit_number=args.permit_number,
-            missing_items=args.missing_items,
-        ),
+        variables={
+            "applicant_name": args.name,
+            "permit_number": args.permit_number,
+            "missing_items": args.missing_items,
+        },
     )

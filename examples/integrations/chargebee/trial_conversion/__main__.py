@@ -40,39 +40,59 @@ def format_amount(cents: int, currency: str = "USD") -> str:
     return f"${cents / 100:,.2f} {currency.upper()}"
 
 
-class TrialConversionController(guava.CallController):
-    def __init__(self, customer_name: str, subscription_id: str, trial_end: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.subscription_id = subscription_id
-        self.trial_end = trial_end
-        self.subscription = None
+agent = guava.Agent(
+    name="Riley",
+    organization="Vault",
+    purpose=(
+        "to help Vault trial users understand the value of converting to a paid plan"
+    ),
+)
 
-        try:
-            self.subscription = get_subscription(subscription_id)
-        except Exception as e:
-            logging.error("Failed to load subscription %s: %s", subscription_id, e)
 
-        plan_name = ""
-        amount_str = ""
-        period = "month"
-        if self.subscription:
-            plan_name = self.subscription.get("plan_id", "")
-            plan_amount = self.subscription.get("plan_amount", 0)
-            currency = self.subscription.get("currency_code", "USD")
-            period = self.subscription.get("billing_period_unit", "month")
-            if plan_amount:
-                amount_str = format_amount(plan_amount, currency)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
+    trial_end = call.get_variable("trial_end")
 
-        self.set_persona(
-            organization_name="Vault",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help Vault trial users understand the value of converting to a paid plan"
-            ),
+    subscription = None
+    try:
+        subscription = get_subscription(subscription_id)
+    except Exception as e:
+        logging.error("Failed to load subscription %s: %s", subscription_id, e)
+
+    amount_str = ""
+    period = "month"
+    if subscription:
+        plan_amount = subscription.get("plan_amount", 0)
+        currency = subscription.get("currency_code", "USD")
+        period = subscription.get("billing_period_unit", "month")
+        if plan_amount:
+            amount_str = format_amount(plan_amount, currency)
+
+    call.data = {"amount_str": amount_str, "period": period}
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    trial_end = call.get_variable("trial_end")
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for trial conversion.", customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {customer_name} from Vault. "
+                f"Let them know their trial ends on {trial_end} and you wanted to check in. "
+                "Invite them to call back or log into their account to convert or ask any questions. "
+                "Keep it friendly — not pushy."
+            )
         )
-
-        self.set_task(
+    elif outcome == "available":
+        amount_str = call.data.get("amount_str", "")
+        period = call.data.get("period", "month")
+        call.set_task(
+            "handle_conversion",
             objective=(
                 f"Call {customer_name} whose trial ends on {trial_end}. "
                 "Understand their experience, address concerns, and offer to convert them to paid."
@@ -111,74 +131,61 @@ class TrialConversionController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_conversion,
         )
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=lambda: None,
-            on_failure=self.leave_voicemail,
-        )
 
-    def handle_conversion(self):
-        experience = self.get_field("experience") or ""
-        concern = self.get_field("main_concern") or ""
-        ready = self.get_field("ready_to_convert") or ""
+@agent.on_task_complete("handle_conversion")
+def on_handle_conversion(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
+    trial_end = call.get_variable("trial_end")
+    experience = call.get_field("experience") or ""
+    concern = call.get_field("main_concern") or ""
+    ready = call.get_field("ready_to_convert") or ""
 
-        logging.info(
-            "Trial conversion for %s — experience: %s, ready: %s",
-            self.subscription_id, experience, ready,
-        )
+    logging.info(
+        "Trial conversion for %s — experience: %s, ready: %s",
+        subscription_id, experience, ready,
+    )
 
-        if "yes" in ready or "convert" in ready:
-            converted = None
-            try:
-                converted = end_trial_now(self.subscription_id)
-                logging.info("Trial ended immediately for %s: %s", self.subscription_id, bool(converted))
-            except Exception as e:
-                logging.error("Trial conversion failed: %s", e)
+    if "yes" in ready or "convert" in ready:
+        converted = None
+        try:
+            converted = end_trial_now(subscription_id)
+            logging.info("Trial ended immediately for %s: %s", subscription_id, bool(converted))
+        except Exception as e:
+            logging.error("Trial conversion failed: %s", e)
 
-            if converted:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know their Vault subscription is now active — "
-                        "the trial has been converted and they have full access with no interruption. "
-                        "They'll receive a confirmation and first invoice by email. "
-                        "Thank them for choosing Vault and wish them a great day."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Apologize to {self.customer_name} — the conversion couldn't be processed automatically. "
-                        "Let them know our team will complete the activation by end of day "
-                        "and they'll receive a confirmation email. Thank them for their patience."
-                    )
-                )
-        elif "more time" in ready:
-            self.hangup(
+        if converted:
+            call.hangup(
                 final_instructions=(
-                    f"Thank {self.customer_name} for their time. Let them know their trial will "
-                    f"remain active until {self.trial_end}. They can convert anytime by logging "
-                    "into their Vault account or calling back. Wish them a great day."
+                    f"Let {customer_name} know their Vault subscription is now active — "
+                    "the trial has been converted and they have full access with no interruption. "
+                    "They'll receive a confirmation and first invoice by email. "
+                    "Thank them for choosing Vault and wish them a great day."
                 )
             )
         else:
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Respect {self.customer_name}'s decision. Let them know their access will end on {self.trial_end}. "
-                    "Invite them to come back and sign up anytime. Thank them for trying Vault."
+                    f"Apologize to {customer_name} — the conversion couldn't be processed automatically. "
+                    "Let them know our team will complete the activation by end of day "
+                    "and they'll receive a confirmation email. Thank them for their patience."
                 )
             )
-
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for trial conversion.", self.customer_name)
-        self.hangup(
+    elif "more time" in ready:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, warm voicemail for {self.customer_name} from Vault. "
-                f"Let them know their trial ends on {self.trial_end} and you wanted to check in. "
-                "Invite them to call back or log into their account to convert or ask any questions. "
-                "Keep it friendly — not pushy."
+                f"Thank {customer_name} for their time. Let them know their trial will "
+                f"remain active until {trial_end}. They can convert anytime by logging "
+                "into their Vault account or calling back. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Respect {customer_name}'s decision. Let them know their access will end on {trial_end}. "
+                "Invite them to come back and sign up anytime. Thank them for trying Vault."
             )
         )
 
@@ -192,12 +199,12 @@ if __name__ == "__main__":
     parser.add_argument("--trial-end", required=True, help="Trial end date (display string, e.g. 'March 30, 2026')")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=TrialConversionController(
-            customer_name=args.name,
-            subscription_id=args.subscription_id,
-            trial_end=args.trial_end,
-        ),
+        variables={
+            "customer_name": args.name,
+            "subscription_id": args.subscription_id,
+            "trial_end": args.trial_end,
+        },
     )

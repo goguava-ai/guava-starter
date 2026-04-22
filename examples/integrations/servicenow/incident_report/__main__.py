@@ -75,160 +75,161 @@ def create_incident(
     return resp.json().get("result", {})
 
 
-class IncidentReportController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Vertex Corp IT",
+    purpose=(
+        "to help Vertex Corp employees report IT incidents quickly and ensure they are "
+        "routed to the right resolver group based on impact and urgency"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Vertex Corp IT",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to help Vertex Corp employees report IT incidents quickly and ensure they are "
-                "routed to the right resolver group based on impact and urgency"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "file_incident",
+        objective=(
+            "An employee has called the IT help desk to report an incident. Collect the "
+            "details needed to open an ITIL incident record in ServiceNow, following the "
+            "impact and urgency framework."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling the Vertex Corp IT Help Desk. I'm Morgan. "
+                "I'll gather some details to open an incident ticket for you right away."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "An employee has called the IT help desk to report an incident. Collect the "
-                "details needed to open an ITIL incident record in ServiceNow, following the "
-                "impact and urgency framework."
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask for the caller's full name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling the Vertex Corp IT Help Desk. I'm Morgan. "
-                    "I'll gather some details to open an incident ticket for you right away."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for their corporate email address.",
+                required=True,
+            ),
+            guava.Field(
+                key="incident_category",
+                field_type="multiple_choice",
+                description="Ask what category of incident they're reporting.",
+                choices=[
+                    "software / application",
+                    "hardware",
+                    "network / connectivity",
+                    "email / communication",
+                    "security",
+                    "access / permissions",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="incident_summary",
+                field_type="text",
+                description="Ask for a brief description of what's happening.",
+                required=True,
+            ),
+            guava.Field(
+                key="incident_detail",
+                field_type="text",
+                description=(
+                    "Ask for more detail — when it started, any error messages, "
+                    "what they were doing when it happened, and steps they've already tried."
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask for the caller's full name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for their corporate email address.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="incident_category",
-                    field_type="multiple_choice",
-                    description="Ask what category of incident they're reporting.",
-                    choices=[
-                        "software / application",
-                        "hardware",
-                        "network / connectivity",
-                        "email / communication",
-                        "security",
-                        "access / permissions",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="incident_summary",
-                    field_type="text",
-                    description="Ask for a brief description of what's happening.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="incident_detail",
-                    field_type="text",
-                    description=(
-                        "Ask for more detail — when it started, any error messages, "
-                        "what they were doing when it happened, and steps they've already tried."
-                    ),
-                    required=False,
-                ),
-                guava.Field(
-                    key="impact",
-                    field_type="multiple_choice",
-                    description="Ask how many people are affected.",
-                    choices=["entire organization", "a department or team", "just me"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="urgency",
-                    field_type="multiple_choice",
-                    description="Ask how severely their ability to work is impacted.",
-                    choices=["cannot work at all", "can work with significant effort", "minor inconvenience"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.file_incident,
-        )
+                required=False,
+            ),
+            guava.Field(
+                key="impact",
+                field_type="multiple_choice",
+                description="Ask how many people are affected.",
+                choices=["entire organization", "a department or team", "just me"],
+                required=True,
+            ),
+            guava.Field(
+                key="urgency",
+                field_type="multiple_choice",
+                description="Ask how severely their ability to work is impacted.",
+                choices=["cannot work at all", "can work with significant effort", "minor inconvenience"],
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def file_incident(self):
-        name = self.get_field("caller_name") or "Unknown"
-        email = self.get_field("caller_email") or ""
-        category_label = self.get_field("incident_category") or "other"
-        summary = self.get_field("incident_summary") or "IT incident"
-        detail = self.get_field("incident_detail") or ""
-        impact_label = self.get_field("impact") or "just me"
-        urgency_label = self.get_field("urgency") or "minor inconvenience"
+@agent.on_task_complete("file_incident")
+def on_done(call: guava.Call) -> None:
+    name = call.get_field("caller_name") or "Unknown"
+    email = call.get_field("caller_email") or ""
+    category_label = call.get_field("incident_category") or "other"
+    summary = call.get_field("incident_summary") or "IT incident"
+    detail = call.get_field("incident_detail") or ""
+    impact_label = call.get_field("impact") or "just me"
+    urgency_label = call.get_field("urgency") or "minor inconvenience"
 
-        impact = IMPACT_MAP.get(impact_label, "3")
-        urgency = URGENCY_MAP.get(urgency_label, "3")
-        priority = PRIORITY_MATRIX.get((impact, urgency), "3")
+    impact = IMPACT_MAP.get(impact_label, "3")
+    urgency = URGENCY_MAP.get(urgency_label, "3")
+    priority = PRIORITY_MATRIX.get((impact, urgency), "3")
 
-        category_map = {
-            "software / application": "software",
-            "hardware": "hardware",
-            "network / connectivity": "network",
-            "email / communication": "email",
-            "security": "security",
-            "access / permissions": "access",
-            "other": "inquiry",
-        }
-        category = category_map.get(category_label, "inquiry")
+    category_map = {
+        "software / application": "software",
+        "hardware": "hardware",
+        "network / connectivity": "network",
+        "email / communication": "email",
+        "security": "security",
+        "access / permissions": "access",
+        "other": "inquiry",
+    }
+    category = category_map.get(category_label, "inquiry")
 
-        description = (
-            f"Reported by: {name} ({email})\n"
-            f"Summary: {summary}"
-            + (f"\n\nDetail:\n{detail}" if detail else "")
-        )
+    description = (
+        f"Reported by: {name} ({email})\n"
+        f"Summary: {summary}"
+        + (f"\n\nDetail:\n{detail}" if detail else "")
+    )
 
-        logging.info(
-            "Creating ServiceNow incident for %s — impact: %s, urgency: %s, priority: %s",
-            name, impact, urgency, priority,
-        )
-        try:
-            result = create_incident(name, email, summary, description, impact, urgency, priority, category)
-            incident_number = result.get("number") or result.get("sys_id", "")
-            logging.info("ServiceNow incident created: %s", incident_number)
+    logging.info(
+        "Creating ServiceNow incident for %s — impact: %s, urgency: %s, priority: %s",
+        name, impact, urgency, priority,
+    )
+    try:
+        result = create_incident(name, email, summary, description, impact, urgency, priority, category)
+        incident_number = result.get("number") or result.get("sys_id", "")
+        logging.info("ServiceNow incident created: %s", incident_number)
 
-            sla_note = {
-                "1": "A technician will respond within 15 minutes.",
-                "2": "A technician will respond within 1 hour.",
-                "3": "A technician will respond within 4 hours.",
-                "4": "A technician will follow up within one business day.",
-            }.get(priority, "A technician will be in touch shortly.")
+        sla_note = {
+            "1": "A technician will respond within 15 minutes.",
+            "2": "A technician will respond within 1 hour.",
+            "3": "A technician will respond within 4 hours.",
+            "4": "A technician will follow up within one business day.",
+        }.get(priority, "A technician will be in touch shortly.")
 
-            self.hangup(
-                final_instructions=(
-                    f"Let {name} know their incident has been logged. "
-                    + (f"The incident number is {incident_number}. " if incident_number else "")
-                    + f"{sla_note} "
-                    "Thank them for calling the Vertex Corp IT Help Desk."
-                )
+        call.hangup(
+            final_instructions=(
+                f"Let {name} know their incident has been logged. "
+                + (f"The incident number is {incident_number}. " if incident_number else "")
+                + f"{sla_note} "
+                "Thank them for calling the Vertex Corp IT Help Desk."
             )
-        except Exception as e:
-            logging.error("Failed to create ServiceNow incident: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {name} for a technical issue. Ask them to email "
-                    "helpdesk@vertexcorp.com with their issue details, or try calling back. "
-                    "Thank them for their patience."
-                )
+        )
+    except Exception as e:
+        logging.error("Failed to create ServiceNow incident: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {name} for a technical issue. Ask them to email "
+                "helpdesk@vertexcorp.com with their issue details, or try calling back. "
+                "Thank them for their patience."
             )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=IncidentReportController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

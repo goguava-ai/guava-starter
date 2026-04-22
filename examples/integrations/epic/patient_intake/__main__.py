@@ -8,97 +8,107 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Maya",
+    organization="Cedar Health",
+    purpose=(
+        "to complete pre-visit intake for patients before their upcoming appointment, "
+        "confirming or updating their medications and allergies on file and collecting "
+        "their chief complaint"
+    ),
+)
 
-class PatientIntakeController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, appointment: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.appointment = appointment
-        self.known_allergies = []
-        self.known_medications = []
 
-        # Pre-call: fetch the patient's current allergies and medications from Epic.
-        # Having these on hand lets the agent confirm existing records rather than
-        # making the patient recite everything from scratch — a much better experience.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
 
-            allergy_resp = requests.get(
-                f"{base_url}/AllergyIntolerance",
-                headers=headers,
-                params={"patient": patient_id, "clinical-status": "active"},
-                timeout=10,
-            )
-            allergy_resp.raise_for_status()
-            for entry in allergy_resp.json().get("entry", []):
-                resource = entry.get("resource", {})
-                substance = (
-                    resource.get("code", {}).get("text")
-                    or next((c.get("display") for c in resource.get("code", {}).get("coding", []) if c.get("display")), None)
-                )
-                if substance:
-                    self.known_allergies.append(substance)
-            logging.info("Fetched %d allergy record(s) from Epic for patient %s", len(self.known_allergies), patient_id)
-        except Exception as e:
-            logging.error("Failed to fetch Epic AllergyIntolerance: %s", e)
+    known_allergies = []
+    known_medications = []
 
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
+    # Pre-call: fetch the patient's current allergies and medications from Epic.
+    # Having these on hand lets the agent confirm existing records rather than
+    # making the patient recite everything from scratch — a much better experience.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
 
-            med_resp = requests.get(
-                f"{base_url}/MedicationStatement",
-                headers=headers,
-                params={"patient": patient_id, "status": "active"},
-                timeout=10,
-            )
-            med_resp.raise_for_status()
-            for entry in med_resp.json().get("entry", []):
-                resource = entry.get("resource", {})
-                med_name = (
-                    resource.get("medicationCodeableConcept", {}).get("text")
-                    or next(
-                        (c.get("display") for c in resource.get("medicationCodeableConcept", {}).get("coding", []) if c.get("display")),
-                        None,
-                    )
-                )
-                if med_name:
-                    self.known_medications.append(med_name)
-            logging.info("Fetched %d medication record(s) from Epic for patient %s", len(self.known_medications), patient_id)
-        except Exception as e:
-            logging.error("Failed to fetch Epic MedicationStatement: %s", e)
-
-        self.set_persona(
-            organization_name="Cedar Health",
-            agent_name="Maya",
-            agent_purpose=(
-                "to complete pre-visit intake for patients before their upcoming appointment, "
-                "confirming or updating their medications and allergies on file and collecting "
-                "their chief complaint"
-            ),
+        allergy_resp = requests.get(
+            f"{base_url}/AllergyIntolerance",
+            headers=headers,
+            params={"patient": patient_id, "clinical-status": "active"},
+            timeout=10,
         )
+        allergy_resp.raise_for_status()
+        for entry in allergy_resp.json().get("entry", []):
+            resource = entry.get("resource", {})
+            substance = (
+                resource.get("code", {}).get("text")
+                or next((c.get("display") for c in resource.get("code", {}).get("coding", []) if c.get("display")), None)
+            )
+            if substance:
+                known_allergies.append(substance)
+        logging.info("Fetched %d allergy record(s) from Epic for patient %s", len(known_allergies), patient_id)
+    except Exception as e:
+        logging.error("Failed to fetch Epic AllergyIntolerance: %s", e)
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_intake,
-            on_failure=self.recipient_unavailable,
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        med_resp = requests.get(
+            f"{base_url}/MedicationStatement",
+            headers=headers,
+            params={"patient": patient_id, "status": "active"},
+            timeout=10,
         )
+        med_resp.raise_for_status()
+        for entry in med_resp.json().get("entry", []):
+            resource = entry.get("resource", {})
+            med_name = (
+                resource.get("medicationCodeableConcept", {}).get("text")
+                or next(
+                    (c.get("display") for c in resource.get("medicationCodeableConcept", {}).get("coding", []) if c.get("display")),
+                    None,
+                )
+            )
+            if med_name:
+                known_medications.append(med_name)
+        logging.info("Fetched %d medication record(s) from Epic for patient %s", len(known_medications), patient_id)
+    except Exception as e:
+        logging.error("Failed to fetch Epic MedicationStatement: %s", e)
 
-    def begin_intake(self):
+    call.known_allergies = known_allergies
+    call.known_medications = known_medications
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment = call.get_variable("appointment")
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
+                "asking them to call back to complete their pre-visit intake before their upcoming appointment."
+            )
+        )
+    elif outcome == "available":
         # Dynamically build the question descriptions based on what Epic already has on file.
         # If records exist, the agent reads them back for confirmation; otherwise asks from scratch.
-        if self.known_medications:
-            med_list = ", ".join(self.known_medications)
+        if call.known_medications:
+            med_list = ", ".join(call.known_medications)
             medications_description = (
                 f"We currently have the following medications on file for this patient: {med_list}. "
                 "Read this list back to the patient and ask whether it is still accurate, or if "
@@ -112,8 +122,8 @@ class PatientIntakeController(guava.CallController):
                 "If none, capture 'none'."
             )
 
-        if self.known_allergies:
-            allergy_list = ", ".join(self.known_allergies)
+        if call.known_allergies:
+            allergy_list = ", ".join(call.known_allergies)
             allergies_description = (
                 f"We currently have the following allergies on file for this patient: {allergy_list}. "
                 "Read this list back to the patient and ask whether it is still accurate, or if "
@@ -125,17 +135,18 @@ class PatientIntakeController(guava.CallController):
                 "or environmental factors. If none, capture 'none'."
             )
 
-        self.set_task(
+        call.set_task(
+            "patient_intake",
             objective=(
-                f"Complete a pre-visit intake with {self.patient_name} before their appointment "
-                f"at Cedar Health on {self.appointment}. Collect their chief complaint, confirm or "
+                f"Complete a pre-visit intake with {patient_name} before their appointment "
+                f"at Cedar Health on {appointment}. Collect their chief complaint, confirm or "
                 "update medications and allergies on file, and note any recent health changes."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Maya calling from Cedar Health. "
+                    f"Hi {patient_name}, this is Maya calling from Cedar Health. "
                     f"I'm calling to complete a quick pre-visit intake before your appointment "
-                    f"on {self.appointment}. This will help your care team prepare for your visit."
+                    f"on {appointment}. This will help your care team prepare for your visit."
                 ),
                 guava.Field(
                     key="chief_complaint",
@@ -169,99 +180,96 @@ class PatientIntakeController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Maya",
-            "organization": "Cedar Health",
-            "use_case": "patient_intake",
-            "patient_name": self.patient_name,
-            "patient_id": self.patient_id,
-            "prior_record": {
-                "medications_on_file": self.known_medications,
-                "allergies_on_file": self.known_allergies,
-            },
-            "fields": {
-                "chief_complaint": self.get_field("chief_complaint"),
-                "current_medications": self.get_field("current_medications"),
-                "allergies": self.get_field("allergies"),
-                "recent_health_changes": self.get_field("recent_health_changes"),
-            },
+
+@agent.on_task_complete("patient_intake")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    appointment = call.get_variable("appointment")
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Maya",
+        "organization": "Cedar Health",
+        "use_case": "patient_intake",
+        "patient_name": patient_name,
+        "patient_id": patient_id,
+        "prior_record": {
+            "medications_on_file": call.known_medications,
+            "allergies_on_file": call.known_allergies,
+        },
+        "fields": {
+            "chief_complaint": call.get_field("chief_complaint"),
+            "current_medications": call.get_field("current_medications"),
+            "allergies": call.get_field("allergies"),
+            "recent_health_changes": call.get_field("recent_health_changes"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Patient intake results saved locally.")
+
+    # Post-call: upload the full intake summary to Epic as a DocumentReference
+    # (LOINC 34117-2: History and Physical Note) so the care team can review it
+    # in the patient's chart before the appointment.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
         }
-        print(json.dumps(results, indent=2))
-        logging.info("Patient intake results saved locally.")
 
-        # Post-call: upload the full intake summary to Epic as a DocumentReference
-        # (LOINC 34117-2: History and Physical Note) so the care team can review it
-        # in the patient's chart before the appointment.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
+        note_text = (
+            f"Pre-visit intake for {patient_name} — {appointment}\n"
+            f"Chief complaint: {call.get_field('chief_complaint')}\n"
+            f"Medications (patient-confirmed): {call.get_field('current_medications')}\n"
+            f"Allergies (patient-confirmed): {call.get_field('allergies')}\n"
+            f"Recent changes: {call.get_field('recent_health_changes') or 'None reported'}"
+        )
+        import base64
+        encoded_note = base64.b64encode(note_text.encode()).decode()
 
-            note_text = (
-                f"Pre-visit intake for {self.patient_name} — {self.appointment}\n"
-                f"Chief complaint: {self.get_field('chief_complaint')}\n"
-                f"Medications (patient-confirmed): {self.get_field('current_medications')}\n"
-                f"Allergies (patient-confirmed): {self.get_field('allergies')}\n"
-                f"Recent changes: {self.get_field('recent_health_changes') or 'None reported'}"
-            )
-            import base64
-            encoded_note = base64.b64encode(note_text.encode()).decode()
-
-            doc_payload = {
-                "resourceType": "DocumentReference",
-                "status": "current",
-                "type": {
-                    "coding": [{"system": "http://loinc.org", "code": "34117-2", "display": "History and physical note"}]
-                },
-                "subject": {"reference": f"Patient/{self.patient_id}"},
-                "date": datetime.now(timezone.utc).isoformat(),
-                "content": [
-                    {
-                        "attachment": {
-                            "contentType": "text/plain",
-                            "data": encoded_note,
-                            "title": f"Pre-visit intake — {self.patient_name}",
-                        }
+        doc_payload = {
+            "resourceType": "DocumentReference",
+            "status": "current",
+            "type": {
+                "coding": [{"system": "http://loinc.org", "code": "34117-2", "display": "History and physical note"}]
+            },
+            "subject": {"reference": f"Patient/{patient_id}"},
+            "date": datetime.now(timezone.utc).isoformat(),
+            "content": [
+                {
+                    "attachment": {
+                        "contentType": "text/plain",
+                        "data": encoded_note,
+                        "title": f"Pre-visit intake — {patient_name}",
                     }
-                ],
-            }
+                }
+            ],
+        }
 
-            resp = requests.post(
-                f"{base_url}/DocumentReference",
-                headers=headers,
-                json=doc_payload,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            doc_id = resp.json().get("id", "")
-            logging.info("Epic DocumentReference created: %s", doc_id)
-        except Exception as e:
-            logging.error("Failed to create Epic DocumentReference: %s", e)
-
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.patient_name} for completing the pre-visit intake. Let them know "
-                "their responses have been shared with their care team at Cedar Health and will be "
-                f"reviewed before their appointment on {self.appointment}. Remind them to arrive "
-                "10 minutes early and wish them a great day."
-            )
+        resp = requests.post(
+            f"{base_url}/DocumentReference",
+            headers=headers,
+            json=doc_payload,
+            timeout=10,
         )
+        resp.raise_for_status()
+        doc_id = resp.json().get("id", "")
+        logging.info("Epic DocumentReference created: %s", doc_id)
+    except Exception as e:
+        logging.error("Failed to create Epic DocumentReference: %s", e)
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
-                "asking them to call back to complete their pre-visit intake before their upcoming appointment."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Thank {patient_name} for completing the pre-visit intake. Let them know "
+            "their responses have been shared with their care team at Cedar Health and will be "
+            f"reviewed before their appointment on {appointment}. Remind them to arrive "
+            "10 minutes early and wish them a great day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -286,12 +294,12 @@ if __name__ == "__main__":
         args.patient_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PatientIntakeController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            appointment=args.appointment,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "appointment": args.appointment,
+        },
     )

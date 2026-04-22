@@ -8,31 +8,48 @@ from datetime import datetime
 
 
 
-class AlumniFundraisingController(guava.CallController):
-    def __init__(self, name, graduation_year, major):
-        super().__init__()
-        self.name = name
-        self.graduation_year = graduation_year
-        self.major = major
-        self.set_persona(
-            organization_name="Westfield University - Alumni Relations",
-            agent_name="Morgan",
-            agent_purpose=(
-                "engage alumni in meaningful conversation about giving back to the university "
-                "and capture gift pledges and preferences to support future students"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_fundraising_call,
-            on_failure=self.recipient_unavailable,
-        )
+agent = guava.Agent(
+    name="Morgan",
+    organization="Westfield University - Alumni Relations",
+    purpose=(
+        "engage alumni in meaningful conversation about giving back to the university "
+        "and capture gift pledges and preferences to support future students"
+    ),
+)
 
-    def begin_fundraising_call(self):
-        self.set_task(
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Could not reach alumnus %s (class of %s) for fundraising call.",
+            call.get_variable("name"),
+            call.get_variable("graduation_year"),
+        )
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "alumni_name": call.get_variable("name"),
+            "graduation_year": call.get_variable("graduation_year"),
+            "major": call.get_variable("major"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "The alumnus could not be reached. End the call politely."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "outreach",
             objective=(
-                f"You are calling {self.name}, a Westfield University alumnus who graduated in "
-                f"{self.graduation_year} from {self.major}. "
+                f"You are calling {call.get_variable('name')}, a Westfield University alumnus who graduated in "
+                f"{call.get_variable('graduation_year')} from {call.get_variable('major')}. "
                 "Your goal is to reconnect warmly, share the impact of alumni giving, and invite them "
                 "to make a gift. Capture whether they are open to giving, and if so, gather the gift "
                 "amount, gift type, any designation preference, and a pledge date. "
@@ -41,9 +58,9 @@ class AlumniFundraisingController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.name}! This is Morgan calling from Westfield University Alumni Relations. "
+                    f"Hello {call.get_variable('name')}! This is Morgan calling from Westfield University Alumni Relations. "
                     f"I hope you're doing well. I'm reaching out to connect with fellow Westfield alumni "
-                    f"like yourself — class of {self.graduation_year} from {self.major} — and share some "
+                    f"like yourself — class of {call.get_variable('graduation_year')} from {call.get_variable('major')} — and share some "
                     "exciting things happening on campus. Do you have just a few minutes to chat?"
                 ),
                 guava.Field(
@@ -89,53 +106,34 @@ class AlumniFundraisingController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "alumni_name": self.name,
-            "graduation_year": self.graduation_year,
-            "major": self.major,
-            "fields": {
-                "open_to_giving": self.get_field("open_to_giving"),
-                "gift_amount": self.get_field("gift_amount"),
-                "gift_type": self.get_field("gift_type"),
-                "designation_preference": self.get_field("designation_preference"),
-                "pledge_date": self.get_field("pledge_date"),
-                "decline_reason": self.get_field("decline_reason"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} sincerely for their time and, if they made a pledge, for their "
-                "generous support of Westfield University. Let them know they will receive a follow-up "
-                "by email. If they were not interested, thank them warmly and invite them to stay "
-                "connected with the alumni community. Close the call on a positive note."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Could not reach alumnus %s (class of %s) for fundraising call.",
-            self.name,
-            self.graduation_year,
+@agent.on_task_complete("outreach")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "alumni_name": call.get_variable("name"),
+        "graduation_year": call.get_variable("graduation_year"),
+        "major": call.get_variable("major"),
+        "fields": {
+            "open_to_giving": call.get_field("open_to_giving"),
+            "gift_amount": call.get_field("gift_amount"),
+            "gift_type": call.get_field("gift_type"),
+            "designation_preference": call.get_field("designation_preference"),
+            "pledge_date": call.get_field("pledge_date"),
+            "decline_reason": call.get_field("decline_reason"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} sincerely for their time and, if they made a pledge, for their "
+            "generous support of Westfield University. Let them know they will receive a follow-up "
+            "by email. If they were not interested, thank them warmly and invite them to stay "
+            "connected with the alumni community. Close the call on a positive note."
         )
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "alumni_name": self.name,
-            "graduation_year": self.graduation_year,
-            "major": self.major,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "The alumnus could not be reached. End the call politely."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -157,12 +155,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AlumniFundraisingController(
-            name=args.name,
-            graduation_year=args.graduation_year,
-            major=args.major,
-        ),
+        variables={
+            "name": args.name,
+            "graduation_year": args.graduation_year,
+            "major": args.major,
+        },
     )

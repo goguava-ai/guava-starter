@@ -92,161 +92,159 @@ def create_dispute_note(billing_doc_id: str, note_text: str) -> None:
     )
 
 
-class InvoiceInquiryController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self._billing_doc = None
+agent = guava.Agent(
+    name="Riley",
+    organization="Apex Industrial Supply",
+    purpose="to help customers with questions or disputes about their invoices",
+)
 
-        self.set_persona(
-            organization_name="Apex Industrial Supply",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help customers with questions or disputes about their invoices"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_invoice",
+        objective=(
+            "A customer is calling with a question or dispute about an invoice. "
+            "Collect their account or invoice details, look up the invoice in SAP, "
+            "and gather information about their concern."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Apex Industrial Supply accounts receivable. "
+                "I'm Riley. I can help you with an invoice question."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer is calling with a question or dispute about an invoice. "
-                "Collect their account or invoice details, look up the invoice in SAP, "
-                "and gather information about their concern."
+            guava.Field(
+                key="invoice_number",
+                field_type="text",
+                description=(
+                    "Ask for the invoice number they're calling about. "
+                    "It's typically a 10-digit number printed at the top of the invoice."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Apex Industrial Supply accounts receivable. "
-                    "I'm Riley. I can help you with an invoice question."
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask for the caller's full name.",
+                required=True,
+            ),
+            guava.Field(
+                key="concern_type",
+                field_type="multiple_choice",
+                description=(
+                    "Ask what type of concern they have about the invoice."
                 ),
-                guava.Field(
-                    key="invoice_number",
-                    field_type="text",
-                    description=(
-                        "Ask for the invoice number they're calling about. "
-                        "It's typically a 10-digit number printed at the top of the invoice."
-                    ),
-                    required=True,
+                choices=[
+                    "incorrect amount",
+                    "already paid but still receiving invoice",
+                    "missing item or service",
+                    "need a copy of the invoice",
+                    "other question",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="concern_detail",
+                field_type="text",
+                description=(
+                    "Ask them to briefly describe the issue in more detail."
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask for the caller's full name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="concern_type",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask what type of concern they have about the invoice."
-                    ),
-                    choices=[
-                        "incorrect amount",
-                        "already paid but still receiving invoice",
-                        "missing item or service",
-                        "need a copy of the invoice",
-                        "other question",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="concern_detail",
-                    field_type="text",
-                    description=(
-                        "Ask them to briefly describe the issue in more detail."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.look_up_invoice,
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("look_up_invoice")
+def on_done(call: guava.Call) -> None:
+    invoice_number = (call.get_field("invoice_number") or "").strip()
+    caller_name = call.get_field("caller_name")
+    concern_type = call.get_field("concern_type")
+    concern_detail = call.get_field("concern_detail") or ""
+
+    logging.info(
+        "Invoice inquiry from %s for invoice %s — concern: %s",
+        caller_name, invoice_number, concern_type,
+    )
+
+    try:
+        doc = get_billing_document(invoice_number)
+    except Exception as e:
+        logging.error("SAP billing document lookup failed: %s", e)
+        doc = None
+
+    if not doc:
+        call.hangup(
+            final_instructions=(
+                f"Let {caller_name} know that we could not find invoice number "
+                f"{invoice_number} in our system. Ask them to double-check the invoice "
+                "number and call back, or offer to transfer them to an accounts receivable "
+                "specialist. Apologize for the inconvenience."
+            )
         )
+        return
 
-        self.accept_call()
+    net_amount = doc.get("TotalNetAmount", "")
+    currency = doc.get("TransactionCurrency", "")
+    billing_date = doc.get("BillingDocumentDate", "")
+    due_date = doc.get("PaymentTerms", "")
+    status = doc.get("OverallBillingStatus", "")
 
-    def look_up_invoice(self):
-        invoice_number = (self.get_field("invoice_number") or "").strip()
-        caller_name = self.get_field("caller_name")
-        concern_type = self.get_field("concern_type")
-        concern_detail = self.get_field("concern_detail") or ""
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Riley",
+        "use_case": "invoice_inquiry",
+        "invoice_number": invoice_number,
+        "caller": caller_name,
+        "concern_type": concern_type,
+        "concern_detail": concern_detail,
+        "invoice": {
+            "net_amount": net_amount,
+            "currency": currency,
+            "billing_date": billing_date,
+            "overall_status": status,
+        },
+    }
+    print(json.dumps(result, indent=2))
 
-        logging.info(
-            "Invoice inquiry from %s for invoice %s — concern: %s",
-            caller_name, invoice_number, concern_type,
-        )
-
+    # Log the dispute note against the billing document
+    if concern_type not in ("need a copy of the invoice", "other question"):
+        note = f"Caller dispute [{concern_type}]: {concern_detail or 'no detail provided'}"
         try:
-            doc = get_billing_document(invoice_number)
+            create_dispute_note(invoice_number, note)
+            logging.info("Dispute note added to invoice %s", invoice_number)
         except Exception as e:
-            logging.error("SAP billing document lookup failed: %s", e)
-            doc = None
+            logging.warning("Failed to add dispute note: %s", e)
 
-        if not doc:
-            self.hangup(
-                final_instructions=(
-                    f"Let {caller_name} know that we could not find invoice number "
-                    f"{invoice_number} in our system. Ask them to double-check the invoice "
-                    "number and call back, or offer to transfer them to an accounts receivable "
-                    "specialist. Apologize for the inconvenience."
-                )
+    amount_note = f"${net_amount} {currency}" if net_amount else "the amount on file"
+    date_note = f" dated {billing_date}" if billing_date else ""
+
+    if concern_type == "need a copy of the invoice":
+        call.hangup(
+            final_instructions=(
+                f"Let {caller_name} know that invoice {invoice_number}{date_note} "
+                f"for {amount_note} is on file. Let them know a copy will be emailed to "
+                "the address on their account within one business day. "
+                "Thank them for calling Apex Industrial Supply."
             )
-            return
-
-        net_amount = doc.get("TotalNetAmount", "")
-        currency = doc.get("TransactionCurrency", "")
-        billing_date = doc.get("BillingDocumentDate", "")
-        due_date = doc.get("PaymentTerms", "")
-        status = doc.get("OverallBillingStatus", "")
-
-        result = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Riley",
-            "use_case": "invoice_inquiry",
-            "invoice_number": invoice_number,
-            "caller": caller_name,
-            "concern_type": concern_type,
-            "concern_detail": concern_detail,
-            "invoice": {
-                "net_amount": net_amount,
-                "currency": currency,
-                "billing_date": billing_date,
-                "overall_status": status,
-            },
-        }
-        print(json.dumps(result, indent=2))
-
-        # Log the dispute note against the billing document
-        if concern_type not in ("need a copy of the invoice", "other question"):
-            note = f"Caller dispute [{concern_type}]: {concern_detail or 'no detail provided'}"
-            try:
-                create_dispute_note(invoice_number, note)
-                logging.info("Dispute note added to invoice %s", invoice_number)
-            except Exception as e:
-                logging.warning("Failed to add dispute note: %s", e)
-
-        amount_note = f"${net_amount} {currency}" if net_amount else "the amount on file"
-        date_note = f" dated {billing_date}" if billing_date else ""
-
-        if concern_type == "need a copy of the invoice":
-            self.hangup(
-                final_instructions=(
-                    f"Let {caller_name} know that invoice {invoice_number}{date_note} "
-                    f"for {amount_note} is on file. Let them know a copy will be emailed to "
-                    "the address on their account within one business day. "
-                    "Thank them for calling Apex Industrial Supply."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Acknowledge {caller_name}'s concern about invoice {invoice_number}{date_note} "
+                f"for {amount_note}. Let them know that their concern regarding "
+                f"'{concern_type}' has been logged and our accounts receivable team will "
+                "investigate and follow up within two business days. "
+                "Thank them for calling and for their patience."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge {caller_name}'s concern about invoice {invoice_number}{date_note} "
-                    f"for {amount_note}. Let them know that their concern regarding "
-                    f"'{concern_type}' has been logged and our accounts receivable team will "
-                    "investigate and follow up within two business days. "
-                    "Thank them for calling and for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=InvoiceInquiryController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

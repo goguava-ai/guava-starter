@@ -49,65 +49,81 @@ def log_usage_alert_outcome(account_id: int, outcome: str, intent: str) -> None:
             )
 
 
-class UsageAlertController(guava.CallController):
-    def __init__(self, account_id: int, contact_name: str):
-        super().__init__()
-        self.account_id = account_id
-        self.contact_name = contact_name
-        self.account_name = ""
-        self.usage_pct = 0
-        self.calls_used = 0
-        self.calls_limit = 0
-        self.plan = "current"
-        self.renewal_str = ""
+agent = guava.Agent(
+    name="Casey",
+    organization="Nexus Cloud",
+    purpose=(
+        "to proactively alert Nexus Cloud customers when their account is approaching "
+        "its monthly API usage limit"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = int(call.get_variable("account_id"))
+
+    call.contact_name = contact_name
+    call.account_id = account_id
+    call.account_name = ""
+    call.usage_pct = 0
+    call.calls_used = 0
+    call.calls_limit = 0
+    call.plan = "current"
+    call.renewal_str = ""
+
+    try:
+        usage = get_account_usage(account_id)
+        if usage:
+            call.account_name = usage.get("name") or ""
+            call.plan = usage.get("plan") or "current"
+            calls_used = int(usage.get("api_calls_this_month") or 0)
+            calls_limit = int(usage.get("api_call_limit") or 1)
+            call.calls_used = calls_used
+            call.calls_limit = calls_limit
+            call.usage_pct = round((calls_used / calls_limit) * 100)
+            renewal = usage.get("renewal_date")
+            if renewal:
+                call.renewal_str = renewal.strftime("%B %d")
+    except Exception as e:
+        logging.error("Failed to fetch usage for account %d: %s", account_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for usage alert on account %d", call.contact_name, call.account_id)
         try:
-            usage = get_account_usage(account_id)
-            if usage:
-                self.account_name = usage.get("name") or ""
-                self.plan = usage.get("plan") or "current"
-                calls_used = int(usage.get("api_calls_this_month") or 0)
-                calls_limit = int(usage.get("api_call_limit") or 1)
-                self.calls_used = calls_used
-                self.calls_limit = calls_limit
-                self.usage_pct = round((calls_used / calls_limit) * 100)
-                renewal = usage.get("renewal_date")
-                if renewal:
-                    self.renewal_str = renewal.strftime("%B %d")
+            log_usage_alert_outcome(call.account_id, "voicemail", "unknown")
         except Exception as e:
-            logging.error("Failed to fetch usage for account %d: %s", account_id, e)
-
-        self.set_persona(
-            organization_name="Nexus Cloud",
-            agent_name="Casey",
-            agent_purpose=(
-                "to proactively alert Nexus Cloud customers when their account is approaching "
-                "its monthly API usage limit"
-            ),
+            logging.error("Failed to log outcome: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {call.contact_name} on behalf of Nexus Cloud. "
+                f"Let them know their account has used {call.usage_pct}% of its monthly API quota "
+                "and ask them to log in or call back if they have questions. Keep it brief."
+            )
         )
+    elif outcome == "available":
+        calls_remaining = max(0, call.calls_limit - call.calls_used)
+        renewal_note = f" Your limit resets on {call.renewal_str}." if call.renewal_str else ""
 
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.deliver_alert,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_alert(self):
-        calls_remaining = max(0, self.calls_limit - self.calls_used)
-        renewal_note = f" Your limit resets on {self.renewal_str}." if self.renewal_str else ""
-
-        self.set_task(
+        call.set_task(
+            "handle_response",
             objective=(
-                f"Alert {self.contact_name} at {self.account_name or 'their company'} that their "
-                f"Nexus Cloud account has used {self.usage_pct}% of its monthly API quota "
-                f"({self.calls_used:,} of {self.calls_limit:,} calls). "
+                f"Alert {call.contact_name} at {call.account_name or 'their company'} that their "
+                f"Nexus Cloud account has used {call.usage_pct}% of its monthly API quota "
+                f"({call.calls_used:,} of {call.calls_limit:,} calls). "
                 "Understand if they're concerned and whether they'd like to upgrade their plan."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Casey from Nexus Cloud. "
-                    f"I'm calling with a quick heads-up: your account has used {self.usage_pct}% "
-                    f"of your monthly API call limit — {self.calls_used:,} of {self.calls_limit:,} calls. "
+                    f"Hi {call.contact_name}, this is Casey from Nexus Cloud. "
+                    f"I'm calling with a quick heads-up: your account has used {call.usage_pct}% "
+                    f"of your monthly API call limit — {call.calls_used:,} of {call.calls_limit:,} calls. "
                     f"You have {calls_remaining:,} calls remaining this month.{renewal_note} "
                     "I wanted to make sure you're aware before you hit the limit."
                 ),
@@ -136,7 +152,7 @@ class UsageAlertController(guava.CallController):
                     field_type="multiple_choice",
                     description=(
                         "If they're concerned, ask if they'd like to discuss upgrading their plan "
-                        f"for a higher limit. Their current plan is {self.plan}."
+                        f"for a higher limit. Their current plan is {call.plan}."
                     ),
                     choices=[
                         "yes/interested in upgrading",
@@ -146,65 +162,52 @@ class UsageAlertController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        concern = self.get_field("concern_level") or "not concerned"
-        intent = self.get_field("upgrade_interest") or "no"
 
-        logging.info(
-            "Usage alert handled for account %d — concern: %s, upgrade intent: %s",
-            self.account_id, concern, intent,
-        )
+@agent.on_task_complete("handle_response")
+def on_done(call: guava.Call) -> None:
+    concern = call.get_field("concern_level") or "not concerned"
+    intent = call.get_field("upgrade_interest") or "no"
 
-        try:
-            outcome = "reached" if "concerned" in concern else "not_concerned"
-            log_usage_alert_outcome(self.account_id, outcome, intent)
-        except Exception as e:
-            logging.error("Failed to log usage alert outcome for account %d: %s", self.account_id, e)
+    logging.info(
+        "Usage alert handled for account %d — concern: %s, upgrade intent: %s",
+        call.account_id, concern, intent,
+    )
 
-        if "upgrading" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their interest in upgrading. "
-                    "Let them know an account manager will reach out by email within a few hours "
-                    "with plan options and pricing. "
-                    "Assure them that upgrading takes effect immediately so they won't lose service. "
-                    "Thank them for being a Nexus Cloud customer."
-                )
-            )
-        elif "send me info" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know you'll have the team send over information "
-                    "about higher-tier plans by email today. "
-                    "Remind them of their remaining calls and reset date. "
-                    "Thank them for their time."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. "
-                    "Let them know we'll keep an eye on their usage and reach out again "
-                    "if they get within 5% of the limit. "
-                    "Remind them they can always upgrade through the dashboard or by calling us. "
-                    "Wish them a great day."
-                )
-            )
+    try:
+        outcome = "reached" if "concerned" in concern else "not_concerned"
+        log_usage_alert_outcome(call.account_id, outcome, intent)
+    except Exception as e:
+        logging.error("Failed to log usage alert outcome for account %d: %s", call.account_id, e)
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for usage alert on account %d", self.contact_name, self.account_id)
-        try:
-            log_usage_alert_outcome(self.account_id, "voicemail", "unknown")
-        except Exception as e:
-            logging.error("Failed to log outcome: %s", e)
-        self.hangup(
+    if "upgrading" in intent:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} on behalf of Nexus Cloud. "
-                f"Let them know their account has used {self.usage_pct}% of its monthly API quota "
-                "and ask them to log in or call back if they have questions. Keep it brief."
+                f"Thank {call.contact_name} for their interest in upgrading. "
+                "Let them know an account manager will reach out by email within a few hours "
+                "with plan options and pricing. "
+                "Assure them that upgrading takes effect immediately so they won't lose service. "
+                "Thank them for being a Nexus Cloud customer."
+            )
+        )
+    elif "send me info" in intent:
+        call.hangup(
+            final_instructions=(
+                f"Let {call.contact_name} know you'll have the team send over information "
+                "about higher-tier plans by email today. "
+                "Remind them of their remaining calls and reset date. "
+                "Thank them for their time."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {call.contact_name} for their time. "
+                "Let them know we'll keep an eye on their usage and reach out again "
+                "if they get within 5% of the limit. "
+                "Remind them they can always upgrade through the dashboard or by calling us. "
+                "Wish them a great day."
             )
         )
 
@@ -224,11 +227,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.account_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=UsageAlertController(
-            account_id=args.account_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "contact_name": args.name,
+            "account_id": str(args.account_id),
+        },
     )

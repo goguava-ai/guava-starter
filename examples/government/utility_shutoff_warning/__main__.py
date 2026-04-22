@@ -7,42 +7,42 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Casey",
+    organization="Springfield Municipal Utilities",
+    purpose=(
+        "notify residents of impending utility service shutoffs, explain available "
+        "options including payment plans and hardship programs, and collect "
+        "structured payment commitments"
+    ),
+)
 
-class UtilityShutoffWarningController(guava.CallController):
-    def __init__(
-        self,
-        resident_name: str,
-        account_number: str,
-        amount_owed: str,
-        shutoff_date: str,
-    ):
-        super().__init__()
-        self.resident_name = resident_name
-        self.account_number = account_number
-        self.amount_owed = amount_owed
-        self.shutoff_date = shutoff_date
-        self.set_persona(
-            organization_name="Springfield Municipal Utilities",
-            agent_name="Casey",
-            agent_purpose=(
-                "notify residents of impending utility service shutoffs, explain available "
-                "options including payment plans and hardship programs, and collect "
-                "structured payment commitments"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.resident_name,
-            on_success=self.begin_notification,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def begin_notification(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("resident_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Resident %s was unavailable for utility shutoff warning call on account %s.",
+            call.get_variable("resident_name"),
+            call.get_variable("account_number"),
+        )
+    elif outcome == "available":
+        resident_name = call.get_variable("resident_name")
+        account_number = call.get_variable("account_number")
+        amount_owed = call.get_variable("amount_owed")
+        shutoff_date = call.get_variable("shutoff_date")
+        call.set_task(
+            "notification",
             objective=(
                 f"You are calling on behalf of Springfield Municipal Utilities to notify "
-                f"{self.resident_name} that their utility account (account number "
-                f"{self.account_number}) has a past-due balance of {self.amount_owed} and is "
-                f"scheduled for service shutoff on {self.shutoff_date}. Clearly communicate "
+                f"{resident_name} that their utility account (account number "
+                f"{account_number}) has a past-due balance of {amount_owed} and is "
+                f"scheduled for service shutoff on {shutoff_date}. Clearly communicate "
                 "the urgency of the situation while maintaining a respectful and neutral tone. "
                 "Explain that options are available including full payment, a payment plan, "
                 "disputing the balance, or applying for a hardship assistance program. "
@@ -51,10 +51,10 @@ class UtilityShutoffWarningController(guava.CallController):
             checklist=[
                 guava.Say(
                     f"Hello, this is Casey calling from Springfield Municipal Utilities. "
-                    f"I'm reaching out regarding account number {self.account_number}. "
-                    f"Our records show a past-due balance of {self.amount_owed} on this account. "
+                    f"I'm reaching out regarding account number {account_number}. "
+                    f"Our records show a past-due balance of {amount_owed} on this account. "
                     f"If this balance is not resolved, service is currently scheduled to be "
-                    f"shut off on {self.shutoff_date}. We want to make sure you are aware of "
+                    f"shut off on {shutoff_date}. We want to make sure you are aware of "
                     "this and that you know about the options available to you, including "
                     "payment plans and hardship assistance programs."
                 ),
@@ -106,42 +106,36 @@ class UtilityShutoffWarningController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "resident_name": self.resident_name,
-            "account_number": self.account_number,
-            "amount_owed": self.amount_owed,
-            "shutoff_date": self.shutoff_date,
-            "fields": {
-                "shutoff_date_acknowledged": self.get_field("shutoff_date_acknowledged"),
-                "payment_intention": self.get_field("payment_intention"),
-                "payment_amount_commitment": self.get_field("payment_amount_commitment"),
-                "payment_date_commitment": self.get_field("payment_date_commitment"),
-                "hardship_program_interest": self.get_field("hardship_program_interest"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Thank the resident for their time and for speaking with you. Based on their "
-                "stated intention, summarize the next steps clearly — for example, confirm the "
-                "payment amount and date if applicable, or let them know a representative will "
-                "follow up about a payment plan or hardship application. Remind them that "
-                "Springfield Municipal Utilities customer service is available to assist them "
-                "further. End the call respectfully."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Resident %s was unavailable for utility shutoff warning call on account %s.",
-            self.resident_name,
-            self.account_number,
+@agent.on_task_complete("notification")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "resident_name": call.get_variable("resident_name"),
+        "account_number": call.get_variable("account_number"),
+        "amount_owed": call.get_variable("amount_owed"),
+        "shutoff_date": call.get_variable("shutoff_date"),
+        "fields": {
+            "shutoff_date_acknowledged": call.get_field("shutoff_date_acknowledged"),
+            "payment_intention": call.get_field("payment_intention"),
+            "payment_amount_commitment": call.get_field("payment_amount_commitment"),
+            "payment_date_commitment": call.get_field("payment_date_commitment"),
+            "hardship_program_interest": call.get_field("hardship_program_interest"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            "Thank the resident for their time and for speaking with you. Based on their "
+            "stated intention, summarize the next steps clearly — for example, confirm the "
+            "payment amount and date if applicable, or let them know a representative will "
+            "follow up about a payment plan or hardship application. Remind them that "
+            "Springfield Municipal Utilities customer service is available to assist them "
+            "further. End the call respectfully."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -164,13 +158,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=UtilityShutoffWarningController(
-            resident_name=args.name,
-            account_number=args.account_number,
-            amount_owed=args.amount_owed,
-            shutoff_date=args.shutoff_date,
-        ),
+        variables={
+            "resident_name": args.name,
+            "account_number": args.account_number,
+            "amount_owed": args.amount_owed,
+            "shutoff_date": args.shutoff_date,
+        },
     )

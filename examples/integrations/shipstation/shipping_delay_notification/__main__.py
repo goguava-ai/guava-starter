@@ -60,58 +60,65 @@ def add_order_note(order_id: int, existing_notes: str, note: str) -> None:
     resp.raise_for_status()
 
 
-class ShippingDelayController(guava.CallController):
-    def __init__(
-        self,
-        customer_name: str,
-        order_number: str,
-        delay_reason: str,
-        original_delivery_date: str,
-        updated_delivery_date: str,
-    ):
-        super().__init__()
-        self.customer_name = customer_name
-        self.order_number = order_number
-        self.delay_reason = delay_reason
-        self.original_delivery_date = original_delivery_date
-        self.updated_delivery_date = updated_delivery_date
+agent = guava.Agent(
+    name="Morgan",
+    organization="Pacific Home Goods",
+    purpose="to keep customers informed about their orders and help resolve shipping delays",
+)
 
-        try:
-            self.order = fetch_order(order_number)
-        except Exception as e:
-            logging.error("Pre-fetch order failed: %s", e)
-            self.order = None
 
-        self.set_persona(
-            organization_name="Pacific Home Goods",
-            agent_name="Morgan",
-            agent_purpose="to keep customers informed about their orders and help resolve shipping delays",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+
+    try:
+        call.order = fetch_order(order_number)
+    except Exception as e:
+        logging.error("Pre-fetch order failed: %s", e)
+        call.order = None
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+    updated_delivery_date = call.get_variable("updated_delivery_date")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a concise voicemail for {customer_name}. "
+                f"Mention you are calling from Pacific Home Goods about order #{order_number}. "
+                f"Let them know there is a shipping delay and the new estimated delivery "
+                f"is {updated_delivery_date}. "
+                "Ask them to call 1-800-555-0214 or visit pacifichomegoods.com/orders "
+                "if they have questions or want to make changes. Keep it under 30 seconds."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        self.set_task(
+    elif outcome == "available":
+        delay_reason = call.get_variable("delay_reason")
+        original_delivery_date = call.get_variable("original_delivery_date")
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Inform {self.customer_name} that their order #{self.order_number} is delayed, "
+                f"Inform {customer_name} that their order #{order_number} is delayed, "
                 "explain the reason, provide an updated estimated delivery date, "
                 "and offer resolution options."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, is this {self.customer_name}? "
+                    f"Hi, is this {customer_name}? "
                     "This is Morgan calling from Pacific Home Goods. "
                     "I'm reaching out with an update about your order — do you have just a moment?"
                 ),
                 guava.Say(
-                    f"I'm sorry to let you know that order #{self.order_number} is experiencing "
-                    f"a shipping delay due to {self.delay_reason}. "
-                    f"Your original estimated delivery was {self.original_delivery_date}, "
-                    f"and the updated estimate is now {self.updated_delivery_date}. "
+                    f"I'm sorry to let you know that order #{order_number} is experiencing "
+                    f"a shipping delay due to {delay_reason}. "
+                    f"Your original estimated delivery was {original_delivery_date}, "
+                    f"and the updated estimate is now {updated_delivery_date}. "
                     "We sincerely apologize for the inconvenience."
                 ),
                 guava.Field(
@@ -132,86 +139,81 @@ class ShippingDelayController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        customer_option = self.get_field("customer_option")
-        additional_concerns = self.get_field("additional_concerns") or "None"
 
-        order_id = self.order.get("orderId") if self.order else None
-        existing_notes = (self.order.get("internalNotes", "") or "") if self.order else ""
+@agent.on_task_complete("handle_outcome")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+    delay_reason = call.get_variable("delay_reason")
+    original_delivery_date = call.get_variable("original_delivery_date")
+    updated_delivery_date = call.get_variable("updated_delivery_date")
 
-        note = (
-            f"[DELAY NOTIFICATION] Reason: {self.delay_reason}. "
-            f"Original delivery: {self.original_delivery_date}. "
-            f"Updated delivery: {self.updated_delivery_date}. "
-            f"Customer choice: {customer_option}. "
-            f"Additional concerns: {additional_concerns}."
-        )
+    customer_option = call.get_field("customer_option")
+    additional_concerns = call.get_field("additional_concerns") or "None"
 
-        if order_id:
-            if customer_option == "cancel for refund":
-                try:
-                    cancel_order(order_id)
-                    logging.info("Cancelled order %s per customer request", self.order_number)
-                except Exception as e:
-                    logging.error("Failed to cancel order %s: %s", self.order_number, e)
-            elif customer_option == "expedite shipping":
-                try:
-                    # Place on hold so the fulfillment team can upgrade the service
-                    hold_order(order_id)
-                    logging.info("Placed order %s on hold for expedite processing", self.order_number)
-                except Exception as e:
-                    logging.error("Failed to hold order %s: %s", self.order_number, e)
+    order_id = call.order.get("orderId") if call.order else None
+    existing_notes = (call.order.get("internalNotes", "") or "") if call.order else ""
 
-            try:
-                add_order_note(order_id, existing_notes, note)
-                logging.info("Updated internal notes on order %s", self.order_number)
-            except Exception as e:
-                logging.error("Failed to update order notes: %s", e)
+    note = (
+        f"[DELAY NOTIFICATION] Reason: {delay_reason}. "
+        f"Original delivery: {original_delivery_date}. "
+        f"Updated delivery: {updated_delivery_date}. "
+        f"Customer choice: {customer_option}. "
+        f"Additional concerns: {additional_concerns}."
+    )
 
+    if order_id:
         if customer_option == "cancel for refund":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their understanding. "
-                    f"Confirm that order #{self.order_number} has been cancelled and a full refund "
-                    "will be issued to their original payment method within 3-5 business days. "
-                    "Apologize again for the delay and invite them to shop with Pacific Home Goods again. "
-                    "Offer the support line (1-800-555-0214) for any follow-up questions."
-                )
-            )
+            try:
+                cancel_order(order_id)
+                logging.info("Cancelled order %s per customer request", order_number)
+            except Exception as e:
+                logging.error("Failed to cancel order %s: %s", order_number, e)
         elif customer_option == "expedite shipping":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their patience. "
-                    f"Confirm that order #{self.order_number} has been flagged for expedited shipping "
-                    "at no additional cost to them. "
-                    f"Let them know they can expect delivery by {self.updated_delivery_date} or sooner, "
-                    "and they'll receive a new tracking email once the label is updated. "
-                    "Apologize again for the inconvenience."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their patience. "
-                    f"Confirm that order #{self.order_number} is on its way and the updated "
-                    f"estimated delivery date is {self.updated_delivery_date}. "
-                    "Let them know they'll receive a tracking update via email. "
-                    "Apologize once more for the delay and thank them for choosing Pacific Home Goods."
-                )
-            )
+            try:
+                # Place on hold so the fulfillment team can upgrade the service
+                hold_order(order_id)
+                logging.info("Placed order %s on hold for expedite processing", order_number)
+            except Exception as e:
+                logging.error("Failed to hold order %s: %s", order_number, e)
 
-    def recipient_unavailable(self):
-        self.hangup(
+        try:
+            add_order_note(order_id, existing_notes, note)
+            logging.info("Updated internal notes on order %s", order_number)
+        except Exception as e:
+            logging.error("Failed to update order notes: %s", e)
+
+    if customer_option == "cancel for refund":
+        call.hangup(
             final_instructions=(
-                f"Leave a concise voicemail for {self.customer_name}. "
-                f"Mention you are calling from Pacific Home Goods about order #{self.order_number}. "
-                f"Let them know there is a shipping delay and the new estimated delivery "
-                f"is {self.updated_delivery_date}. "
-                "Ask them to call 1-800-555-0214 or visit pacifichomegoods.com/orders "
-                "if they have questions or want to make changes. Keep it under 30 seconds."
+                f"Thank {customer_name} for their understanding. "
+                f"Confirm that order #{order_number} has been cancelled and a full refund "
+                "will be issued to their original payment method within 3-5 business days. "
+                "Apologize again for the delay and invite them to shop with Pacific Home Goods again. "
+                "Offer the support line (1-800-555-0214) for any follow-up questions."
+            )
+        )
+    elif customer_option == "expedite shipping":
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their patience. "
+                f"Confirm that order #{order_number} has been flagged for expedited shipping "
+                "at no additional cost to them. "
+                f"Let them know they can expect delivery by {updated_delivery_date} or sooner, "
+                "and they'll receive a new tracking email once the label is updated. "
+                "Apologize again for the inconvenience."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their patience. "
+                f"Confirm that order #{order_number} is on its way and the updated "
+                f"estimated delivery date is {updated_delivery_date}. "
+                "Let them know they'll receive a tracking update via email. "
+                "Apologize once more for the delay and thank them for choosing Pacific Home Goods."
             )
         )
 
@@ -241,14 +243,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ShippingDelayController(
-            customer_name=args.name,
-            order_number=args.order_number,
-            delay_reason=args.delay_reason,
-            original_delivery_date=args.original_delivery_date,
-            updated_delivery_date=args.updated_delivery_date,
-        ),
+        variables={
+            "customer_name": args.name,
+            "order_number": args.order_number,
+            "delay_reason": args.delay_reason,
+            "original_delivery_date": args.original_delivery_date,
+            "updated_delivery_date": args.updated_delivery_date,
+        },
     )

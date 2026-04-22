@@ -74,110 +74,111 @@ def format_order(order: dict) -> str:
     return f"Order #{order_num}{items_note} {status_label}"
 
 
-class OrderStatusCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Crestline Commerce",
+    purpose=(
+        "to help Crestline Commerce customers check the status of their orders"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Crestline Commerce",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help Crestline Commerce customers check the status of their orders"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_order",
+        objective=(
+            "A customer is calling to check on an order. Look up their order in Firestore "
+            "and share the current status."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Crestline Commerce. This is Sam. "
+                "I can look up your order right away."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer is calling to check on an order. Look up their order in Firestore "
-                "and share the current status."
+            guava.Field(
+                key="lookup_method",
+                field_type="multiple_choice",
+                description=(
+                    "Ask if they have their order number, or if they'd prefer to "
+                    "look up by email address."
+                ),
+                choices=["order number", "email address"],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Crestline Commerce. This is Sam. "
-                    "I can look up your order right away."
+            guava.Field(
+                key="lookup_value",
+                field_type="text",
+                description=(
+                    "Ask for their order number or email address, depending on their choice."
                 ),
-                guava.Field(
-                    key="lookup_method",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask if they have their order number, or if they'd prefer to "
-                        "look up by email address."
-                    ),
-                    choices=["order number", "email address"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="lookup_value",
-                    field_type="text",
-                    description=(
-                        "Ask for their order number or email address, depending on their choice."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_order,
-        )
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def look_up_order(self):
-        method = self.get_field("lookup_method") or "order number"
-        value = (self.get_field("lookup_value") or "").strip()
+@agent.on_task_complete("look_up_order")
+def on_done(call: guava.Call) -> None:
+    method = call.get_field("lookup_method") or "order number"
+    value = (call.get_field("lookup_value") or "").strip()
 
-        logging.info("Looking up order by %s: %s", method, value)
+    logging.info("Looking up order by %s: %s", method, value)
 
-        try:
-            if "email" in method:
-                orders = lookup_orders_by_email(value)
-            else:
-                order = lookup_order_by_id(value)
-                orders = [order] if order else []
-        except Exception as e:
-            logging.error("Firestore order lookup failed: %s", e)
-            orders = []
-
-        if not orders:
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know you couldn't find an order matching their information. "
-                    "Suggest they double-check their order number from their confirmation email, "
-                    "or offer to transfer them to a support agent. Be apologetic and helpful."
-                )
-            )
-            return
-
-        if len(orders) == 1:
-            order_summary = format_order(orders[0])
-            tracking = orders[0].get("tracking_number") or ""
-            tracking_note = (
-                f" Their tracking number is {tracking}." if tracking else ""
-            )
-            logging.info("Order found: %s", orders[0].get("_id"))
-            self.hangup(
-                final_instructions=(
-                    f"Let the customer know: {order_summary}.{tracking_note} "
-                    "Be clear and friendly. If the order is delayed or on hold, "
-                    "empathize and offer to have a specialist follow up. "
-                    "Thank them for calling Crestline Commerce."
-                )
-            )
+    try:
+        if "email" in method:
+            orders = lookup_orders_by_email(value)
         else:
-            summaries = "; ".join(format_order(o) for o in orders)
-            logging.info("Found %d orders for %s", len(orders), value)
-            self.hangup(
-                final_instructions=(
-                    f"Let the customer know you found {len(orders)} recent orders on their account. "
-                    f"Read them the status of each: {summaries}. "
-                    "If they have questions about a specific order, encourage them to call back "
-                    "with the order number for faster lookup. "
-                    "Thank them for calling Crestline Commerce."
-                )
+            order = lookup_order_by_id(value)
+            orders = [order] if order else []
+    except Exception as e:
+        logging.error("Firestore order lookup failed: %s", e)
+        orders = []
+
+    if not orders:
+        call.hangup(
+            final_instructions=(
+                "Let the customer know you couldn't find an order matching their information. "
+                "Suggest they double-check their order number from their confirmation email, "
+                "or offer to transfer them to a support agent. Be apologetic and helpful."
             )
+        )
+        return
+
+    if len(orders) == 1:
+        order_summary = format_order(orders[0])
+        tracking = orders[0].get("tracking_number") or ""
+        tracking_note = (
+            f" Their tracking number is {tracking}." if tracking else ""
+        )
+        logging.info("Order found: %s", orders[0].get("_id"))
+        call.hangup(
+            final_instructions=(
+                f"Let the customer know: {order_summary}.{tracking_note} "
+                "Be clear and friendly. If the order is delayed or on hold, "
+                "empathize and offer to have a specialist follow up. "
+                "Thank them for calling Crestline Commerce."
+            )
+        )
+    else:
+        summaries = "; ".join(format_order(o) for o in orders)
+        logging.info("Found %d orders for %s", len(orders), value)
+        call.hangup(
+            final_instructions=(
+                f"Let the customer know you found {len(orders)} recent orders on their account. "
+                f"Read them the status of each: {summaries}. "
+                "If they have questions about a specific order, encourage them to call back "
+                "with the order number for faster lookup. "
+                "Thank them for calling Crestline Commerce."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=OrderStatusCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

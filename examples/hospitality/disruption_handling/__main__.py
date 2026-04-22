@@ -7,38 +7,43 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Alex",
+    organization="Meridian Travel Services",
+    purpose=(
+        "proactively contact a traveler affected by a flight or itinerary disruption, "
+        "explain the situation clearly and calmly, understand their rebooking preferences, "
+        "and confirm the best available alternative arrangements on their behalf"
+    ),
+)
 
-class DisruptionHandlingController(guava.CallController):
-    def __init__(self, name, booking_reference, original_flight, disruption_reason):
-        super().__init__()
-        self.name = name
-        self.booking_reference = booking_reference
-        self.original_flight = original_flight
-        self.disruption_reason = disruption_reason
 
-        self.set_persona(
-            organization_name="Meridian Travel Services",
-            agent_name="Alex",
-            agent_purpose=(
-                "proactively contact a traveler affected by a flight or itinerary disruption, "
-                "explain the situation clearly and calmly, understand their rebooking preferences, "
-                "and confirm the best available alternative arrangements on their behalf"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for disruption handling call.", call.get_variable("name"))
+        call.hangup(
+            final_instructions=(
+                "Leave an urgent but calm voicemail as Alex from Meridian Travel Services, "
+                "informing the traveler of the disruption to their upcoming flight and asking them "
+                "to call back as soon as possible so the team can arrange an alternative. "
+                "Provide a sense of urgency without causing alarm, and assure them that the team "
+                "is standing by to assist."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_disruption_handling,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_disruption_handling(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "disruption_handling",
             objective=(
-                f"You are calling {self.name} regarding a disruption to their itinerary. "
-                f"Booking reference: {self.booking_reference}. "
-                f"Affected flight: {self.original_flight}. "
-                f"Reason for disruption: {self.disruption_reason}. "
+                f"You are calling {call.get_variable('name')} regarding a disruption to their itinerary. "
+                f"Booking reference: {call.get_variable('booking_reference')}. "
+                f"Affected flight: {call.get_variable('original_flight')}. "
+                f"Reason for disruption: {call.get_variable('disruption_reason')}. "
                 "Begin by acknowledging the inconvenience with sincere empathy. Clearly explain "
                 "the disruption, then work collaboratively with the traveler to understand their "
                 "rebooking preferences — whether they want the next available option, a specific "
@@ -48,9 +53,9 @@ class DisruptionHandlingController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Greet {self.name} and acknowledge the disruption to their upcoming travel. "
-                    f"Briefly explain that flight {self.original_flight} has been affected by "
-                    f"{self.disruption_reason}, and express genuine apology for the inconvenience. "
+                    f"Greet {call.get_variable('name')} and acknowledge the disruption to their upcoming travel. "
+                    f"Briefly explain that flight {call.get_variable('original_flight')} has been affected by "
+                    f"{call.get_variable('disruption_reason')}, and express genuine apology for the inconvenience. "
                     "Reassure them that you are here to resolve this as smoothly as possible."
                 ),
                 guava.Field(
@@ -108,50 +113,39 @@ class DisruptionHandlingController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "disruption_handling",
-            "traveler_name": self.name,
-            "booking_reference": self.booking_reference,
-            "original_flight": self.original_flight,
-            "disruption_reason": self.disruption_reason,
-            "fields": {
-                "disruption_acknowledged": self.get_field("disruption_acknowledged"),
-                "rebooking_preference": self.get_field("rebooking_preference"),
-                "preferred_departure_date": self.get_field("preferred_departure_date"),
-                "seat_preference": self.get_field("seat_preference"),
-                "meal_preference": self.get_field("meal_preference"),
-                "contact_email_for_confirmation": self.get_field("contact_email_for_confirmation"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Disruption handling results saved for %s", self.name)
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} for their patience and understanding during what is clearly "
-                "an inconvenient situation. Confirm that a member of the Meridian Travel Services "
-                "team will process their preferred resolution and send full confirmation details "
-                "to the email provided. If they requested rebooking, let them know the new itinerary "
-                "will be issued as quickly as possible. Close with warmth and confidence, reassuring "
-                "them they are in good hands."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for disruption handling call.", self.name)
-        self.hangup(
-            final_instructions=(
-                "Leave an urgent but calm voicemail as Alex from Meridian Travel Services, "
-                "informing the traveler of the disruption to their upcoming flight and asking them "
-                "to call back as soon as possible so the team can arrange an alternative. "
-                "Provide a sense of urgency without causing alarm, and assure them that the team "
-                "is standing by to assist."
-            )
+@agent.on_task_complete("disruption_handling")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "disruption_handling",
+        "traveler_name": call.get_variable("name"),
+        "booking_reference": call.get_variable("booking_reference"),
+        "original_flight": call.get_variable("original_flight"),
+        "disruption_reason": call.get_variable("disruption_reason"),
+        "fields": {
+            "disruption_acknowledged": call.get_field("disruption_acknowledged"),
+            "rebooking_preference": call.get_field("rebooking_preference"),
+            "preferred_departure_date": call.get_field("preferred_departure_date"),
+            "seat_preference": call.get_field("seat_preference"),
+            "meal_preference": call.get_field("meal_preference"),
+            "contact_email_for_confirmation": call.get_field("contact_email_for_confirmation"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Disruption handling results saved for %s", call.get_variable("name"))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} for their patience and understanding during what is clearly "
+            "an inconvenient situation. Confirm that a member of the Meridian Travel Services "
+            "team will process their preferred resolution and send full confirmation details "
+            "to the email provided. If they requested rebooking, let them know the new itinerary "
+            "will be issued as quickly as possible. Close with warmth and confidence, reassuring "
+            "them they are in good hands."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -170,13 +164,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DisruptionHandlingController(
-            name=args.name,
-            booking_reference=args.booking_reference,
-            original_flight=args.original_flight,
-            disruption_reason=args.disruption_reason,
-        ),
+        variables={
+            "name": args.name,
+            "booking_reference": args.booking_reference,
+            "original_flight": args.original_flight,
+            "disruption_reason": args.disruption_reason,
+        },
     )

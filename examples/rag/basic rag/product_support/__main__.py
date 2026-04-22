@@ -22,32 +22,33 @@ DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]
 
 DOCUMENT_QA = DocumentQA(documents=DOCUMENTS)
 
+agent = guava.Agent(
+    name="Casey",
+    organization="Apex Home Appliances",
+    purpose=(
+        "to help customers with setup, operation, and troubleshooting questions "
+        "for the Apex BrewMaster Pro coffee maker"
+    ),
+)
 
-class ProductSupportController(guava.CallController):
-    """Answers customer questions using the product manual and troubleshooting guide."""
 
-    def __init__(self):
-        super().__init__()
-        self.set_persona(
-            organization_name="Apex Home Appliances",
-            agent_name="Casey",
-            agent_purpose=(
-                "to help customers with setup, operation, and troubleshooting questions "
-                "for the Apex BrewMaster Pro coffee maker"
-            ),
-        )
-        self.read_script(
-            "Thank you for calling Apex Home Appliances support. How can I help you today?"
-        )
-        self.accept_call()
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-    def on_question(self, question: str) -> str:
-        return DOCUMENT_QA.ask(question)
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.read_script(
+        "Thank you for calling Apex Home Appliances support. How can I help you today?"
+    )
+
+
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    return DOCUMENT_QA.ask(question)
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ProductSupportController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

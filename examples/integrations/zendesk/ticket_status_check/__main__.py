@@ -68,146 +68,147 @@ def get_user_tickets(user_id: int) -> list[dict]:
     return resp.json().get("tickets", [])
 
 
-class TicketStatusCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self.caller_email = None
+agent = guava.Agent(
+    name="Jordan",
+    organization="Horizon Software",
+    purpose="to help customers check the status of their open support tickets",
+)
 
-        self.set_persona(
-            organization_name="Horizon Software",
-            agent_name="Jordan",
-            agent_purpose="to help customers check the status of their open support tickets",
-        )
 
-        self.set_task(
-            objective=(
-                "A customer has called to check on a support ticket. Collect their email "
-                "and ticket ID (if they have it) so we can look up their case."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "lookup_ticket",
+        objective=(
+            "A customer has called to check on a support ticket. Collect their email "
+            "and ticket ID (if they have it) so we can look up their case."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Horizon Software support. My name is Jordan. "
+                "I can help you check the status of a support ticket."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Horizon Software support. My name is Jordan. "
-                    "I can help you check the status of a support ticket."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for the email address associated with their support account.",
+                required=True,
+            ),
+            guava.Field(
+                key="ticket_id",
+                field_type="text",
+                description=(
+                    "Ask if they have a ticket number. If yes, capture it as digits only. "
+                    "If they don't have one, that's okay — capture 'none'."
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for the email address associated with their support account.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="ticket_id",
-                    field_type="text",
-                    description=(
-                        "Ask if they have a ticket number. If yes, capture it as digits only. "
-                        "If they don't have one, that's okay — capture 'none'."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.lookup_ticket,
-        )
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def lookup_ticket(self):
-        self.caller_email = self.get_field("caller_email") or ""
-        ticket_id_raw = self.get_field("ticket_id") or ""
-        ticket_id = ticket_id_raw.strip().lower().replace("none", "").replace("#", "").strip()
+def _read_ticket_status(call: guava.Call, ticket: dict) -> None:
+    ticket_id = ticket["id"]
+    status = ticket.get("status", "unknown")
+    subject = ticket.get("subject", "your issue")
+    priority = ticket.get("priority", "normal")
 
-        # Path A: caller provided a ticket ID — fetch it directly
-        if ticket_id.isdigit():
-            logging.info("Looking up ticket #%s", ticket_id)
-            try:
-                ticket = get_ticket(ticket_id)
-            except Exception as e:
-                logging.error("Failed to fetch ticket #%s: %s", ticket_id, e)
-                ticket = None
+    status_desc = STATUS_DESCRIPTIONS.get(status, status)
+    priority_desc = PRIORITY_DESCRIPTIONS.get(priority, priority)
 
-            if ticket:
-                self._read_ticket_status(ticket)
-                return
+    logging.info(
+        "Ticket #%s — status: %s, priority: %s, subject: %s",
+        ticket_id, status, priority, subject,
+    )
 
-            # Ticket not found — fall through to email lookup
-            logging.warning("Ticket #%s not found, falling back to email lookup", ticket_id)
-
-        # Path B: look up by email and surface recent tickets
-        logging.info("Searching for user by email: %s", self.caller_email)
-        try:
-            user = find_user_by_email(self.caller_email)
-            if not user:
-                self.hangup(
-                    final_instructions=(
-                        "Let the caller know we were unable to find an account matching that email. "
-                        "Suggest they double-check the address or contact support@horizonsoftware.com "
-                        "directly. Thank them for calling."
-                    )
-                )
-                return
-
-            tickets = get_user_tickets(user["id"])
-            active = [t for t in tickets if t["status"] not in ("solved", "closed")]
-
-            if not active:
-                self.hangup(
-                    final_instructions=(
-                        "Let the caller know there are no open or pending tickets associated with "
-                        "their account. If they have a new issue to report, they can stay on the line "
-                        "or call back and our team will open a new ticket. Thank them for calling."
-                    )
-                )
-                return
-
-            # Surface the most recently updated open ticket
-            ticket = active[0]
-            self._read_ticket_status(ticket)
-
-        except Exception as e:
-            logging.error("Failed to look up tickets by email: %s", e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize for a technical issue and let the caller know they can check their "
-                    "ticket status at support.horizonsoftware.com or email support@horizonsoftware.com. "
-                    "Thank them for their patience."
+    call.hangup(
+        final_instructions=(
+            f"Tell the caller that ticket #{ticket_id} regarding '{subject}' is currently {status_desc}. "
+            f"Its priority is {priority_desc}. "
+            + (
+                "Let them know our team will reach out by email once there is an update. "
+                if status in ("new", "open", "hold")
+                else (
+                    "Since the ticket is pending, ask them to reply to the email our team sent "
+                    "with the requested information so we can continue working on it. "
+                    if status == "pending"
+                    else "Let them know they can open a new ticket if the issue recurs. "
                 )
             )
-
-    def _read_ticket_status(self, ticket: dict):
-        ticket_id = ticket["id"]
-        status = ticket.get("status", "unknown")
-        subject = ticket.get("subject", "your issue")
-        priority = ticket.get("priority", "normal")
-
-        status_desc = STATUS_DESCRIPTIONS.get(status, status)
-        priority_desc = PRIORITY_DESCRIPTIONS.get(priority, priority)
-
-        logging.info(
-            "Ticket #%s — status: %s, priority: %s, subject: %s",
-            ticket_id, status, priority, subject,
+            + "Thank them for calling Horizon Software."
         )
+    )
 
-        self.hangup(
-            final_instructions=(
-                f"Tell the caller that ticket #{ticket_id} regarding '{subject}' is currently {status_desc}. "
-                f"Its priority is {priority_desc}. "
-                + (
-                    "Let them know our team will reach out by email once there is an update. "
-                    if status in ("new", "open", "hold")
-                    else (
-                        "Since the ticket is pending, ask them to reply to the email our team sent "
-                        "with the requested information so we can continue working on it. "
-                        if status == "pending"
-                        else "Let them know they can open a new ticket if the issue recurs. "
-                    )
+
+@agent.on_task_complete("lookup_ticket")
+def on_done(call: guava.Call) -> None:
+    caller_email = call.get_field("caller_email") or ""
+    ticket_id_raw = call.get_field("ticket_id") or ""
+    ticket_id = ticket_id_raw.strip().lower().replace("none", "").replace("#", "").strip()
+
+    # Path A: caller provided a ticket ID — fetch it directly
+    if ticket_id.isdigit():
+        logging.info("Looking up ticket #%s", ticket_id)
+        try:
+            ticket = get_ticket(ticket_id)
+        except Exception as e:
+            logging.error("Failed to fetch ticket #%s: %s", ticket_id, e)
+            ticket = None
+
+        if ticket:
+            _read_ticket_status(call, ticket)
+            return
+
+        # Ticket not found — fall through to email lookup
+        logging.warning("Ticket #%s not found, falling back to email lookup", ticket_id)
+
+    # Path B: look up by email and surface recent tickets
+    logging.info("Searching for user by email: %s", caller_email)
+    try:
+        user = find_user_by_email(caller_email)
+        if not user:
+            call.hangup(
+                final_instructions=(
+                    "Let the caller know we were unable to find an account matching that email. "
+                    "Suggest they double-check the address or contact support@horizonsoftware.com "
+                    "directly. Thank them for calling."
                 )
-                + "Thank them for calling Horizon Software."
+            )
+            return
+
+        tickets = get_user_tickets(user["id"])
+        active = [t for t in tickets if t["status"] not in ("solved", "closed")]
+
+        if not active:
+            call.hangup(
+                final_instructions=(
+                    "Let the caller know there are no open or pending tickets associated with "
+                    "their account. If they have a new issue to report, they can stay on the line "
+                    "or call back and our team will open a new ticket. Thank them for calling."
+                )
+            )
+            return
+
+        # Surface the most recently updated open ticket
+        ticket = active[0]
+        _read_ticket_status(call, ticket)
+
+    except Exception as e:
+        logging.error("Failed to look up tickets by email: %s", e)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know they can check their "
+                "ticket status at support.horizonsoftware.com or email support@horizonsoftware.com. "
+                "Thank them for their patience."
             )
         )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=TicketStatusCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -7,32 +7,46 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Jordan",
+    organization="Metro Power & Light",
+    purpose=(
+        "explain the benefits of the smart meter upgrade program to eligible customers "
+        "and schedule a convenient installation appointment for those who wish to enroll"
+    ),
+)
 
-class SmartMeterEnrollmentController(guava.CallController):
-    def __init__(self, contact_name, account_number):
-        super().__init__()
-        self.contact_name = contact_name
-        self.account_number = account_number
 
-        self.set_persona(
-            organization_name="Metro Power & Light",
-            agent_name="Jordan",
-            agent_purpose=(
-                "explain the benefits of the smart meter upgrade program to eligible customers "
-                "and schedule a convenient installation appointment for those who wish to enroll"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "contact_name": call.get_variable("contact_name"),
+            "account_number": call.get_variable("account_number"),
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "Leave a brief, friendly voicemail letting the customer know that Metro Power & Light "
+                "called regarding their eligibility for a free smart meter upgrade. Ask them to call "
+                "back at their convenience or visit metropowerandlight.com to learn more and schedule "
+                "online. Keep the message under 30 seconds."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_enrollment,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_enrollment(self):
-        self.set_task(
+    elif outcome == "available":
+        contact_name = call.get_variable("contact_name")
+        account_number = call.get_variable("account_number")
+        call.set_task(
+            "smart_meter_enrollment",
             objective=(
-                f"Speak with {self.contact_name} (account {self.account_number}) about enrolling "
+                f"Speak with {contact_name} (account {account_number}) about enrolling "
                 "in the Metro Power & Light smart meter upgrade program. Explain that smart meters "
                 "provide real-time usage data, eliminate estimated bills, enable remote meter reading "
                 "so no one needs to enter the property, and unlock access to energy usage tools "
@@ -41,7 +55,7 @@ class SmartMeterEnrollmentController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name.split()[0]}, I'm calling from Metro Power & Light about "
+                    f"Hi {contact_name.split()[0]}, I'm calling from Metro Power & Light about "
                     f"an exciting upgrade available for your account. Your home is eligible for our "
                     f"free smart meter installation. Smart meters give you real-time visibility into "
                     f"your energy usage, eliminate estimated bills, and mean our technicians no longer "
@@ -79,48 +93,32 @@ class SmartMeterEnrollmentController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def recipient_unavailable(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Leave a brief, friendly voicemail letting the customer know that Metro Power & Light "
-                "called regarding their eligibility for a free smart meter upgrade. Ask them to call "
-                "back at their convenience or visit metropowerandlight.com to learn more and schedule "
-                "online. Keep the message under 30 seconds."
-            )
-        )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "account_number": self.account_number,
-            "fields": {
-                "enrollment_accepted": self.get_field("enrollment_accepted"),
-                "installation_date_preference": self.get_field("installation_date_preference"),
-                "installation_window_preference": self.get_field("installation_window_preference"),
-                "pets_to_secure": self.get_field("pets_to_secure"),
-                "gate_code_or_access_notes": self.get_field("gate_code_or_access_notes"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Confirm the appointment details back to the customer, including the date and time window. "
-                "Let them know they will receive a confirmation email or text, and that a technician will "
-                "call 30 minutes before arriving. Thank them for choosing to upgrade and for being a "
-                "Metro Power & Light customer."
-            )
+@agent.on_task_complete("smart_meter_enrollment")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "fields": {
+            "enrollment_accepted": call.get_field("enrollment_accepted"),
+            "installation_date_preference": call.get_field("installation_date_preference"),
+            "installation_window_preference": call.get_field("installation_window_preference"),
+            "pets_to_secure": call.get_field("pets_to_secure"),
+            "gate_code_or_access_notes": call.get_field("gate_code_or_access_notes"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            "Confirm the appointment details back to the customer, including the date and time window. "
+            "Let them know they will receive a confirmation email or text, and that a technician will "
+            "call 30 minutes before arriving. Thank them for choosing to upgrade and for being a "
+            "Metro Power & Light customer."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -133,13 +131,11 @@ if __name__ == "__main__":
     parser.add_argument("--account-number", required=True, help="Customer account number")
     args = parser.parse_args()
 
-    controller = SmartMeterEnrollmentController(
-        contact_name=args.name,
-        account_number=args.account_number,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "account_number": args.account_number,
+        },
     )

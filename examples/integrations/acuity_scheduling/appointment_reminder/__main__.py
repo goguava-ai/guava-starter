@@ -28,53 +28,63 @@ def cancel_appointment(appointment_id: str) -> bool:
     return resp.ok
 
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, client_name: str, appointment_id: str):
-        super().__init__()
-        self.client_name = client_name
-        self.appointment_id = appointment_id
-        self.appointment = None
+agent = guava.Agent(
+    name="Jordan",
+    organization="Wellspring Wellness",
+    purpose="to remind clients of upcoming appointments and confirm their attendance",
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("client_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        client_name = call.get_variable("client_name")
+        logging.info("Unable to reach %s for appointment reminder.", client_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a friendly voicemail for {client_name} from Wellspring Wellness. "
+                "Remind them about their upcoming appointment and ask them to call back "
+                "or check their email confirmation if they need to cancel or reschedule. "
+                "Keep it brief."
+            )
+        )
+    elif outcome == "available":
+        client_name = call.get_variable("client_name")
+        appointment_id = call.get_variable("appointment_id")
+
+        appointment = None
         try:
-            self.appointment = get_appointment(appointment_id)
+            appointment = get_appointment(appointment_id)
             logging.info(
                 "Appointment %s loaded: %s %s",
                 appointment_id,
-                self.appointment.get("date", "") if self.appointment else "",
-                self.appointment.get("time", "") if self.appointment else "",
+                appointment.get("date", "") if appointment else "",
+                appointment.get("time", "") if appointment else "",
             )
         except Exception as e:
             logging.error("Failed to load appointment %s: %s", appointment_id, e)
 
-        self.set_persona(
-            organization_name="Wellspring Wellness",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to remind clients of upcoming appointments and confirm their attendance"
-            ),
-        )
+        call.data = {"appointment": appointment, "appointment_id": appointment_id}
 
-        self.reach_person(
-            contact_full_name=self.client_name,
-            on_success=self.send_reminder,
-            on_failure=self.leave_voicemail,
-        )
-
-    def send_reminder(self):
-        if not self.appointment:
-            self.hangup(
+        if not appointment:
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.client_name} know you're calling from Wellspring Wellness "
+                    f"Let {client_name} know you're calling from Wellspring Wellness "
                     "about their upcoming appointment, but couldn't retrieve the details. "
                     "Ask them to check their confirmation email. Be friendly and apologetic."
                 )
             )
             return
 
-        appt_type = self.appointment.get("type", "appointment")
-        appt_date = self.appointment.get("date", "")
-        appt_time = self.appointment.get("time", "")
-        provider = self.appointment.get("calendarName", "your provider")
+        appt_type = appointment.get("type", "appointment")
+        appt_date = appointment.get("date", "")
+        appt_time = appointment.get("time", "")
+        provider = appointment.get("calendarName", "your provider")
 
         try:
             dt = datetime.fromisoformat(f"{appt_date}T{appt_time}")
@@ -82,14 +92,15 @@ class AppointmentReminderController(guava.CallController):
         except (ValueError, AttributeError):
             display_time = f"{appt_date} at {appt_time}"
 
-        self.set_task(
+        call.set_task(
+            "send_reminder",
             objective=(
-                f"Remind {self.client_name} of their upcoming {appt_type} appointment "
+                f"Remind {client_name} of their upcoming {appt_type} appointment "
                 f"with {provider} on {display_time}. Confirm they plan to attend."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.client_name}, this is Jordan calling from Wellspring Wellness. "
+                    f"Hi {client_name}, this is Jordan calling from Wellspring Wellness. "
                     f"I'm reaching out to remind you about your {appt_type} appointment "
                     f"with {provider} on {display_time}."
                 ),
@@ -101,59 +112,52 @@ class AppointmentReminderController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        attendance = self.get_field("attendance") or ""
-        appt_type = self.appointment.get("type", "appointment") if self.appointment else "appointment"
 
-        if "cancel" in attendance:
-            cancelled = False
-            try:
-                cancelled = cancel_appointment(self.appointment_id)
-                logging.info("Appointment %s cancelled: %s", self.appointment_id, cancelled)
-            except Exception as e:
-                logging.error("Failed to cancel appointment %s: %s", self.appointment_id, e)
+@agent.on_task_complete("send_reminder")
+def handle_response(call: guava.Call) -> None:
+    attendance = call.get_field("attendance") or ""
+    client_name = call.get_variable("client_name")
+    appointment = call.data["appointment"]
+    appointment_id = call.data["appointment_id"]
+    appt_type = appointment.get("type", "appointment") if appointment else "appointment"
 
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.client_name} know their {appt_type} has been cancelled. "
-                    "Invite them to rebook anytime via our website or by calling us. "
-                    "Thank them for letting us know and wish them a great day."
-                )
-            )
+    if "cancel" in attendance:
+        cancelled = False
+        try:
+            cancelled = cancel_appointment(appointment_id)
+            logging.info("Appointment %s cancelled: %s", appointment_id, cancelled)
+        except Exception as e:
+            logging.error("Failed to cancel appointment %s: %s", appointment_id, e)
 
-        elif "reschedule" in attendance:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.client_name} know you've noted they'd like to reschedule. "
-                    "Ask them to visit the website or call back during business hours to pick a new time. "
-                    "Thank them for calling."
-                )
-            )
-
-        else:
-            logging.info("Client %s confirmed attendance for appointment %s.", self.client_name, self.appointment_id)
-            appt_date = self.appointment.get("date", "") if self.appointment else ""
-            appt_time = self.appointment.get("time", "") if self.appointment else ""
-            location = self.appointment.get("location", "our office") if self.appointment else "our office"
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.client_name} for confirming. "
-                    f"Remind them to arrive a few minutes early at {location}. "
-                    "Wish them a great day."
-                )
-            )
-
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for appointment reminder.", self.client_name)
-        self.hangup(
+        call.hangup(
             final_instructions=(
-                f"Leave a friendly voicemail for {self.client_name} from Wellspring Wellness. "
-                "Remind them about their upcoming appointment and ask them to call back "
-                "or check their email confirmation if they need to cancel or reschedule. "
-                "Keep it brief."
+                f"Let {client_name} know their {appt_type} has been cancelled. "
+                "Invite them to rebook anytime via our website or by calling us. "
+                "Thank them for letting us know and wish them a great day."
+            )
+        )
+
+    elif "reschedule" in attendance:
+        call.hangup(
+            final_instructions=(
+                f"Let {client_name} know you've noted they'd like to reschedule. "
+                "Ask them to visit the website or call back during business hours to pick a new time. "
+                "Thank them for calling."
+            )
+        )
+
+    else:
+        logging.info("Client %s confirmed attendance for appointment %s.", client_name, appointment_id)
+        appt_date = appointment.get("date", "") if appointment else ""
+        appt_time = appointment.get("time", "") if appointment else ""
+        location = appointment.get("location", "our office") if appointment else "our office"
+        call.hangup(
+            final_instructions=(
+                f"Thank {client_name} for confirming. "
+                f"Remind them to arrive a few minutes early at {location}. "
+                "Wish them a great day."
             )
         )
 
@@ -173,11 +177,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.appointment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            client_name=args.name,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "client_name": args.name,
+            "appointment_id": args.appointment_id,
+        },
     )

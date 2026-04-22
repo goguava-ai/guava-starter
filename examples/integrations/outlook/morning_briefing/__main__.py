@@ -79,54 +79,70 @@ def format_event_spoken(event: dict) -> str:
     return result
 
 
-class MorningBriefingController(guava.CallController):
-    def __init__(self, person_name: str, user_id: str):
-        super().__init__()
-        self.person_name = person_name
-        self.user_id = user_id
-        self.events: list[dict] = []
-        self.unread_important = 0
+agent = guava.Agent(
+    name="Riley",
+    organization="Meridian Partners",
+    purpose=(
+        "to give Meridian Partners employees a quick voice briefing on their day — "
+        "meetings, important emails, and anything they need to know before the day begins"
+    ),
+)
 
-        # Fetch today's calendar and inbox counts before the call
-        try:
-            self.events = get_todays_events(user_id)
-            logging.info(
-                "Today's events for %s: %d meeting(s)", user_id, len(self.events)
-            )
-        except Exception as e:
-            logging.error("Failed to fetch events for %s: %s", user_id, e)
 
-        try:
-            self.unread_important = get_unread_important_count(user_id)
-            logging.info(
-                "Unread high-importance messages for %s: %d", user_id, self.unread_important
-            )
-        except Exception as e:
-            logging.warning("Failed to fetch unread count for %s: %s", user_id, e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    person_name = call.get_variable("person_name")
+    user_id = call.get_variable("user_id")
 
-        self.set_persona(
-            organization_name="Meridian Partners",
-            agent_name="Riley",
-            agent_purpose=(
-                "to give Meridian Partners employees a quick voice briefing on their day — "
-                "meetings, important emails, and anything they need to know before the day begins"
-            ),
+    call.person_name = person_name
+    call.events = []
+    call.unread_important = 0
+
+    # Fetch today's calendar and inbox counts before reaching the person
+    try:
+        call.events = get_todays_events(user_id)
+        logging.info(
+            "Today's events for %s: %d meeting(s)", user_id, len(call.events)
         )
+    except Exception as e:
+        logging.error("Failed to fetch events for %s: %s", user_id, e)
 
-        self.reach_person(
-            contact_full_name=person_name,
-            on_success=self.deliver_briefing,
-            on_failure=self.recipient_unavailable,
+    try:
+        call.unread_important = get_unread_important_count(user_id)
+        logging.info(
+            "Unread high-importance messages for %s: %d", user_id, call.unread_important
         )
+    except Exception as e:
+        logging.warning("Failed to fetch unread count for %s: %s", user_id, e)
 
-    def deliver_briefing(self):
+    call.reach_person(contact_full_name=person_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for morning briefing", call.person_name)
+        event_count = len(call.events)
+        meeting_note = (
+            f"a quick note: you have {event_count} meeting{'s' if event_count != 1 else ''} today"
+            if event_count > 0
+            else "your calendar looks clear today"
+        )
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, upbeat voicemail for {call.person_name} from Meridian Partners. "
+                f"Let them know you called with their morning briefing — {meeting_note}. "
+                "Tell them to check their Outlook calendar for details. Keep it very brief."
+            )
+        )
+    elif outcome == "available":
         today_label = date.today().strftime("%A, %B %-d")
-        event_count = len(self.events)
+        event_count = len(call.events)
 
-        if event_count == 0 and self.unread_important == 0:
-            self.hangup(
+        if event_count == 0 and call.unread_important == 0:
+            call.hangup(
                 final_instructions=(
-                    f"Greet {self.person_name} and let them know today, {today_label}, "
+                    f"Greet {call.person_name} and let them know today, {today_label}, "
                     "is clear — no meetings scheduled and no urgent emails. "
                     "Wish them a productive day."
                 )
@@ -136,7 +152,7 @@ class MorningBriefingController(guava.CallController):
         # Build the meeting briefing
         meeting_lines = ""
         if event_count > 0:
-            formatted = "; ".join(format_event_spoken(e) for e in self.events)
+            formatted = "; ".join(format_event_spoken(e) for e in call.events)
             meeting_lines = (
                 f"You have {event_count} meeting{'s' if event_count != 1 else ''} today: "
                 f"{formatted}."
@@ -144,20 +160,21 @@ class MorningBriefingController(guava.CallController):
 
         # Build the email note
         email_note = ""
-        if self.unread_important > 0:
+        if call.unread_important > 0:
             email_note = (
-                f"You also have {self.unread_important} unread high-priority "
-                f"email{'s' if self.unread_important != 1 else ''} in your inbox."
+                f"You also have {call.unread_important} unread high-priority "
+                f"email{'s' if call.unread_important != 1 else ''} in your inbox."
             )
 
-        self.set_task(
+        call.set_task(
+            "wrap_up",
             objective=(
-                f"Brief {self.person_name} on their day: meetings and any important emails. "
+                f"Brief {call.person_name} on their day: meetings and any important emails. "
                 "Ask if they have questions about any item."
             ),
             checklist=[
                 guava.Say(
-                    f"Good morning, {self.person_name}! This is Riley from Meridian Partners "
+                    f"Good morning, {call.person_name}! This is Riley from Meridian Partners "
                     f"with your daily briefing for {today_label}. "
                     + (f"{meeting_lines} " if meeting_lines else "No meetings today. ")
                     + (email_note if email_note else "")
@@ -173,47 +190,32 @@ class MorningBriefingController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.wrap_up,
         )
 
-    def wrap_up(self):
-        questions = self.get_field("questions") or ""
-        has_questions = questions.strip().lower() not in ("none", "no", "nope", "all good", "")
 
-        logging.info(
-            "Morning briefing wrap-up for %s — questions: %s", self.person_name, questions
-        )
+@agent.on_task_complete("wrap_up")
+def on_done(call: guava.Call) -> None:
+    questions = call.get_field("questions") or ""
+    has_questions = questions.strip().lower() not in ("none", "no", "nope", "all good", "")
 
-        if has_questions:
-            self.hangup(
-                final_instructions=(
-                    f"Address {self.person_name}'s question or request: '{questions}'. "
-                    "Answer using only the calendar context you've already shared. "
-                    "If it requires further research, let them know their EA or team can follow up. "
-                    "Wish them a productive day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Wish {self.person_name} a great and productive {date.today().strftime('%A')}. "
-                    "Keep it warm and brief."
-                )
-            )
+    logging.info(
+        "Morning briefing wrap-up for %s — questions: %s", call.person_name, questions
+    )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for morning briefing", self.person_name)
-        event_count = len(self.events)
-        meeting_note = (
-            f"a quick note: you have {event_count} meeting{'s' if event_count != 1 else ''} today"
-            if event_count > 0
-            else "your calendar looks clear today"
-        )
-        self.hangup(
+    if has_questions:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, upbeat voicemail for {self.person_name} from Meridian Partners. "
-                f"Let them know you called with their morning briefing — {meeting_note}. "
-                "Tell them to check their Outlook calendar for details. Keep it very brief."
+                f"Address {call.person_name}'s question or request: '{questions}'. "
+                "Answer using only the calendar context you've already shared. "
+                "If it requires further research, let them know their EA or team can follow up. "
+                "Wish them a productive day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Wish {call.person_name} a great and productive {date.today().strftime('%A')}. "
+                "Keep it warm and brief."
             )
         )
 
@@ -236,11 +238,11 @@ if __name__ == "__main__":
         "Initiating morning briefing call to %s (%s)", args.name, args.phone
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=MorningBriefingController(
-            person_name=args.name,
-            user_id=args.user_id,
-        ),
+        variables={
+            "person_name": args.name,
+            "user_id": args.user_id,
+        },
     )

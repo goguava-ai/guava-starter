@@ -12,46 +12,49 @@ from google.cloud import bigquery
 BIGQUERY_TABLE = os.environ["BIGQUERY_TABLE"]
 
 
-class WinLossSurveyController(guava.CallController):
-    def __init__(self, contact_name: str, company_name: str, deal_outcome: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.company_name = company_name
-        self.deal_outcome = deal_outcome  # 'won' or 'lost'
+agent = guava.Agent(
+    name="Blake",
+    organization="Acme Corp",
+    purpose=(
+        "to understand the factors behind a recently closed deal "
+        "and share that insight with the sales and product teams"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Acme Corp",
-            agent_name="Blake",
-            agent_purpose=(
-                "to understand the factors behind a recently closed deal "
-                "and share that insight with the sales and product teams"
-            ),
-        )
 
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.hangup,
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.reach_person(contact_full_name=contact_name)
 
-    def begin_survey(self):
-        if self.deal_outcome == "won":
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    company_name = call.get_variable("company_name")
+    deal_outcome = call.get_variable("deal_outcome")
+
+    if outcome == "unavailable":
+        call.hangup()
+    elif outcome == "available":
+        if deal_outcome == "won":
             intro = (
-                f"Hi {self.contact_name}, this is Blake from Acme Corp. "
+                f"Hi {contact_name}, this is Blake from Acme Corp. "
                 "I'm so glad you chose to work with us. "
                 "I have just a couple of quick questions about what made the difference in your decision — "
                 "it helps us understand what's working well."
             )
-            objective = f"Understand why {self.contact_name} at {self.company_name} chose Acme Corp."
+            objective = f"Understand why {contact_name} at {company_name} chose Acme Corp."
         else:
             intro = (
-                f"Hi {self.contact_name}, this is Blake from Acme Corp. "
+                f"Hi {contact_name}, this is Blake from Acme Corp. "
                 "I know you recently evaluated us and decided to go in a different direction. "
                 "I completely respect that — I just wanted to ask two quick questions so we can keep improving."
             )
-            objective = f"Understand why {self.contact_name} at {self.company_name} did not choose Acme Corp."
+            objective = f"Understand why {contact_name} at {company_name} did not choose Acme Corp."
 
-        self.set_task(
+        call.set_task(
+            "save_to_bigquery",
             objective=objective,
             checklist=[
                 guava.Say(intro),
@@ -60,7 +63,7 @@ class WinLossSurveyController(guava.CallController):
                     field_type="multiple_choice",
                     description=(
                         "Ask what the most important factor was in their decision. "
-                        + ("Frame positively since this is a won deal." if self.deal_outcome == "won" else "")
+                        + ("Frame positively since this is a won deal." if deal_outcome == "won" else "")
                     ),
                     choices=[
                         "price and value",
@@ -92,39 +95,44 @@ class WinLossSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_to_bigquery,
         )
 
-    def save_to_bigquery(self):
-        row = {
-            "call_timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "company_name": self.company_name,
-            "deal_outcome": self.deal_outcome,
-            "main_reason": self.get_field("main_reason"),
-            "runner_up": self.get_field("runner_up"),
-            "feedback": self.get_field("feedback"),
-        }
 
-        client = bigquery.Client()
-        errors = client.insert_rows_json(BIGQUERY_TABLE, [row])
-        if errors:
-            logging.error("BigQuery insert failed: %s", errors)
-        else:
-            logging.info("Row written to BigQuery: %s", row)
+@agent.on_task_complete("save_to_bigquery")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    company_name = call.get_variable("company_name")
+    deal_outcome = call.get_variable("deal_outcome")
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.contact_name} for sharing their perspective. "
-                + (
-                    "Let them know you're excited to work together and their account team will be in touch soon. "
-                    if self.deal_outcome == "won"
-                    else "Let them know you appreciate the candid feedback and wish them all the best. "
-                    "Mention they're always welcome to reach out if things change. "
-                )
-                + "Wish them a great day."
+    row = {
+        "call_timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": contact_name,
+        "company_name": company_name,
+        "deal_outcome": deal_outcome,
+        "main_reason": call.get_field("main_reason"),
+        "runner_up": call.get_field("runner_up"),
+        "feedback": call.get_field("feedback"),
+    }
+
+    client = bigquery.Client()
+    errors = client.insert_rows_json(BIGQUERY_TABLE, [row])
+    if errors:
+        logging.error("BigQuery insert failed: %s", errors)
+    else:
+        logging.info("Row written to BigQuery: %s", row)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} for sharing their perspective. "
+            + (
+                "Let them know you're excited to work together and their account team will be in touch soon. "
+                if deal_outcome == "won"
+                else "Let them know you appreciate the candid feedback and wish them all the best. "
+                "Mention they're always welcome to reach out if things change. "
             )
+            + "Wish them a great day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -141,12 +149,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=WinLossSurveyController(
-            contact_name=args.name,
-            company_name=args.company,
-            deal_outcome=args.outcome,
-        ),
+        variables={
+            "contact_name": args.name,
+            "company_name": args.company,
+            "deal_outcome": args.outcome,
+        },
     )

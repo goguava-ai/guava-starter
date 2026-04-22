@@ -31,131 +31,132 @@ def publish_session_event(session_id: str, event: str, data: dict) -> None:
     r.publish(channel, message)
 
 
-class SessionStoreController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Casey",
+    organization="Skyline Financial",
+    purpose=(
+        "to assist Skyline Financial customers and securely capture their collected data "
+        "so downstream systems can process it in real time"
+    ),
+)
 
-        # Use the inbound call's caller number + timestamp as the session ID.
-        caller_phone = self.get_caller_number() or "unknown"
-        self.session_id = f"{caller_phone.lstrip('+')}-{int(datetime.now(timezone.utc).timestamp())}"
 
-        logging.info("Call session started: %s", self.session_id)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        # Publish a session-started event so real-time subscribers can react.
-        try:
-            publish_session_event(self.session_id, "call_started", {"phone": caller_phone})
-        except Exception as e:
-            logging.warning("Could not publish call_started event: %s", e)
 
-        self.set_persona(
-            organization_name="Skyline Financial",
-            agent_name="Casey",
-            agent_purpose=(
-                "to assist Skyline Financial customers and securely capture their collected data "
-                "so downstream systems can process it in real time"
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    # Use the inbound call's caller number + timestamp as the session ID.
+    caller_phone = call.get_caller_number() or "unknown"
+    call.session_id = f"{caller_phone.lstrip('+')}-{int(datetime.now(timezone.utc).timestamp())}"
+
+    logging.info("Call session started: %s", call.session_id)
+
+    # Publish a session-started event so real-time subscribers can react.
+    try:
+        publish_session_event(call.session_id, "call_started", {"phone": caller_phone})
+    except Exception as e:
+        logging.warning("Could not publish call_started event: %s", e)
+
+    call.set_task(
+        "persist_and_close",
+        objective=(
+            "Assist the caller with their financial account inquiry. Store all collected data "
+            "in Redis so it can be picked up immediately by the processing pipeline."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Skyline Financial. I'm Casey. "
+                "I'll ask you a few questions and get you sorted right away."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "Assist the caller with their financial account inquiry. Store all collected data "
-                "in Redis so it can be picked up immediately by the processing pipeline."
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask for the caller's full name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Skyline Financial. I'm Casey. "
-                    "I'll ask you a few questions and get you sorted right away."
+            guava.Field(
+                key="account_number",
+                field_type="text",
+                description="Ask for their account number. Repeat it back to confirm.",
+                required=True,
+            ),
+            guava.Field(
+                key="request_type",
+                field_type="multiple_choice",
+                description="Ask what they'd like help with.",
+                choices=[
+                    "account balance inquiry",
+                    "transaction dispute",
+                    "statement request",
+                    "transfer request",
+                    "account update",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="request_detail",
+                field_type="text",
+                description=(
+                    "Ask them to describe their request in detail. "
+                    "Capture everything relevant."
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask for the caller's full name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="account_number",
-                    field_type="text",
-                    description="Ask for their account number. Repeat it back to confirm.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="request_type",
-                    field_type="multiple_choice",
-                    description="Ask what they'd like help with.",
-                    choices=[
-                        "account balance inquiry",
-                        "transaction dispute",
-                        "statement request",
-                        "transfer request",
-                        "account update",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="request_detail",
-                    field_type="text",
-                    description=(
-                        "Ask them to describe their request in detail. "
-                        "Capture everything relevant."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_followup",
-                    field_type="multiple_choice",
-                    description="Ask how they'd like to be followed up with if needed.",
-                    choices=["email", "phone call", "secure message in app"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.persist_and_close,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_followup",
+                field_type="multiple_choice",
+                description="Ask how they'd like to be followed up with if needed.",
+                choices=["email", "phone call", "secure message in app"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("persist_and_close")
+def on_done(call: guava.Call) -> None:
+    name = call.get_field("caller_name") or "Unknown"
+    account_number = call.get_field("account_number") or ""
+    request_type = call.get_field("request_type") or ""
+    detail = call.get_field("request_detail") or ""
+    followup = call.get_field("preferred_followup") or "email"
+
+    session_data = {
+        "session_id": call.session_id,
+        "caller_name": name,
+        "account_number": account_number,
+        "request_type": request_type,
+        "request_detail": detail,
+        "preferred_followup": followup,
+        "call_started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    logging.info("Saving session %s to Redis for account %s.", call.session_id, account_number)
+    try:
+        save_session(call.session_id, session_data)
+        logging.info("Session %s saved (TTL: %ds).", call.session_id, SESSION_TTL_SECONDS)
+    except Exception as e:
+        logging.error("Failed to save session to Redis: %s", e)
+
+    try:
+        publish_session_event(call.session_id, "call_completed", session_data)
+        logging.info("call_completed event published for session %s.", call.session_id)
+    except Exception as e:
+        logging.warning("Could not publish call_completed event: %s", e)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {name} for calling Skyline Financial. Let them know their request has been "
+            f"captured and will be processed. They'll be followed up with via {followup}. "
+            "Wish them a great day."
         )
-
-        self.accept_call()
-
-    def persist_and_close(self):
-        name = self.get_field("caller_name") or "Unknown"
-        account_number = self.get_field("account_number") or ""
-        request_type = self.get_field("request_type") or ""
-        detail = self.get_field("request_detail") or ""
-        followup = self.get_field("preferred_followup") or "email"
-
-        session_data = {
-            "session_id": self.session_id,
-            "caller_name": name,
-            "account_number": account_number,
-            "request_type": request_type,
-            "request_detail": detail,
-            "preferred_followup": followup,
-            "call_started_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-        logging.info("Saving session %s to Redis for account %s.", self.session_id, account_number)
-        try:
-            save_session(self.session_id, session_data)
-            logging.info("Session %s saved (TTL: %ds).", self.session_id, SESSION_TTL_SECONDS)
-        except Exception as e:
-            logging.error("Failed to save session to Redis: %s", e)
-
-        try:
-            publish_session_event(self.session_id, "call_completed", session_data)
-            logging.info("call_completed event published for session %s.", self.session_id)
-        except Exception as e:
-            logging.warning("Could not publish call_completed event: %s", e)
-
-        self.hangup(
-            final_instructions=(
-                f"Thank {name} for calling Skyline Financial. Let them know their request has been "
-                f"captured and will be processed. They'll be followed up with via {followup}. "
-                "Wish them a great day."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=SessionStoreController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

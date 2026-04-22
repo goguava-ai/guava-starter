@@ -52,85 +52,86 @@ def format_kb_results(articles: list[dict]) -> str:
     return " | ".join(parts)
 
 
-class KnowledgeBaseSearchController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Quinn",
+    organization="Novus Technologies",
+    purpose=(
+        "to answer customer questions about Novus Technologies products and services "
+        "by searching our knowledge base"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Novus Technologies",
-            agent_name="Quinn",
-            agent_purpose=(
-                "to answer customer questions about Novus Technologies products and services "
-                "by searching our knowledge base"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "search_and_answer",
+        objective=(
+            "A customer has called with a question. Understand their question, search "
+            "the knowledge base, and answer using the results. If the KB doesn't have "
+            "a relevant answer, offer to escalate."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Novus Technologies. This is Quinn. "
+                "I'm here to help — what's your question today?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called with a question. Understand their question, search "
-                "the knowledge base, and answer using the results. If the KB doesn't have "
-                "a relevant answer, offer to escalate."
+            guava.Field(
+                key="customer_question",
+                field_type="text",
+                description=(
+                    "Listen carefully to the customer's question. Ask any clarifying "
+                    "questions needed to understand exactly what they're looking for. "
+                    "Capture a clear, complete version of their question."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Novus Technologies. This is Quinn. "
-                    "I'm here to help — what's your question today?"
-                ),
-                guava.Field(
-                    key="customer_question",
-                    field_type="text",
-                    description=(
-                        "Listen carefully to the customer's question. Ask any clarifying "
-                        "questions needed to understand exactly what they're looking for. "
-                        "Capture a clear, complete version of their question."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.search_and_answer,
-        )
+        ],
+    )
 
-        self.accept_call()
 
-    def search_and_answer(self):
-        question = self.get_field("customer_question") or ""
-        logging.info("Searching knowledge base for: %s", question)
+@agent.on_task_complete("search_and_answer")
+def on_done(call: guava.Call) -> None:
+    question = call.get_field("customer_question") or ""
+    logging.info("Searching knowledge base for: %s", question)
 
-        try:
-            articles = search_knowledge_base(question)
-        except Exception as e:
-            logging.error("Knowledge base search failed: %s", e)
-            articles = []
+    try:
+        articles = search_knowledge_base(question)
+    except Exception as e:
+        logging.error("Knowledge base search failed: %s", e)
+        articles = []
 
-        if not articles:
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know you weren't able to find a specific answer in "
-                    "your knowledge base for their question. Apologize and offer to connect "
-                    "them with a specialist who can help, or suggest they check the support "
-                    "portal at novustech.com/support. Be empathetic and helpful."
-                )
-            )
-            return
-
-        kb_summary = format_kb_results(articles)
-        logging.info("Found %d KB articles for query: %s", len(articles), question)
-
-        self.hangup(
+    if not articles:
+        call.hangup(
             final_instructions=(
-                f"Using the following knowledge base results, answer the customer's question: "
-                f"'{question}'. Knowledge base content: {kb_summary}. "
-                "Summarize the answer conversationally — do not read the raw text verbatim. "
-                "If only partially relevant results were found, answer as best you can and "
-                "offer to escalate or direct them to the support portal for more detail. "
-                "Thank them for calling Novus Technologies."
+                "Let the customer know you weren't able to find a specific answer in "
+                "your knowledge base for their question. Apologize and offer to connect "
+                "them with a specialist who can help, or suggest they check the support "
+                "portal at novustech.com/support. Be empathetic and helpful."
             )
         )
+        return
+
+    kb_summary = format_kb_results(articles)
+    logging.info("Found %d KB articles for query: %s", len(articles), question)
+
+    call.hangup(
+        final_instructions=(
+            f"Using the following knowledge base results, answer the customer's question: "
+            f"'{question}'. Knowledge base content: {kb_summary}. "
+            "Summarize the answer conversationally — do not read the raw text verbatim. "
+            "If only partially relevant results were found, answer as best you can and "
+            "offer to escalate or direct them to the support portal for more detail. "
+            "Thank them for calling Novus Technologies."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=KnowledgeBaseSearchController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -70,46 +70,72 @@ RISK_MAP = {
 }
 
 
-class ChurnPreventionController(guava.CallController):
-    def __init__(self, account_id: str, contact_name: str):
-        super().__init__()
-        self.account_id = account_id
-        self.contact_name = contact_name
-        self.account_name = ""
+agent = guava.Agent(
+    name="Jordan",
+    organization="Crestview Technologies",
+    purpose=(
+        "to proactively reach out to at-risk customers, understand their concerns, "
+        "and help Crestview Technologies retain their business"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+
+    call.account_name = ""
+    try:
+        account = get_account(account_id)
+        if account:
+            call.account_name = account.get("Name", "")
+    except Exception as e:
+        logging.error("Failed to fetch Account %s pre-call: %s", account_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for churn prevention call on account %s.",
+                     contact_name, account_id)
         try:
-            account = get_account(account_id)
-            if account:
-                self.account_name = account.get("Name", "")
+            log_task(
+                account_id,
+                subject="Churn prevention call — contact unavailable",
+                description=(
+                    f"Attempted outreach to {contact_name} — contact unavailable, voicemail left.\n"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+                ),
+                priority="High",
+            )
         except Exception as e:
-            logging.error("Failed to fetch Account %s pre-call: %s", account_id, e)
+            logging.error("Failed to log missed-call Task: %s", e)
 
-        self.set_persona(
-            organization_name="Crestview Technologies",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to proactively reach out to at-risk customers, understand their concerns, "
-                "and help Crestview Technologies retain their business"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a warm, concise voicemail for {contact_name} on behalf of Crestview "
+                "Technologies. Let them know you're calling to check in and make sure everything "
+                "is going well. Ask them to call back at their convenience. Keep it brief."
+            )
         )
+    elif outcome == "available":
+        account_note = f" at {call.account_name}" if call.account_name else ""
 
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_retention_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_retention_call(self):
-        account_note = f" at {self.account_name}" if self.account_name else ""
-
-        self.set_task(
+        call.set_task(
+            "log_outcome",
             objective=(
-                f"Check in with {self.contact_name}{account_note} to understand their "
+                f"Check in with {contact_name}{account_note} to understand their "
                 "experience and address any concerns that may be putting the relationship at risk."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Jordan calling from Crestview Technologies. "
+                    f"Hi {contact_name}, this is Jordan calling from Crestview Technologies. "
                     "I'm reaching out personally because we value your partnership and want to "
                     "make sure everything is going well on your end."
                 ),
@@ -159,98 +185,78 @@ class ChurnPreventionController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.log_outcome,
         )
 
-    def log_outcome(self):
-        satisfaction = self.get_field("satisfaction") or "unknown"
-        concern = self.get_field("primary_concern") or ""
-        likelihood = self.get_field("likelihood_to_renew") or "unknown"
-        action = self.get_field("requested_action") or "no action needed"
 
-        risk_level = RISK_MAP.get(satisfaction, "Medium")
-        logging.info(
-            "Churn prevention call complete for account %s — satisfaction: %s, risk: %s",
-            self.account_id, satisfaction, risk_level,
+@agent.on_task_complete("log_outcome")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+
+    satisfaction = call.get_field("satisfaction") or "unknown"
+    concern = call.get_field("primary_concern") or ""
+    likelihood = call.get_field("likelihood_to_renew") or "unknown"
+    action = call.get_field("requested_action") or "no action needed"
+
+    risk_level = RISK_MAP.get(satisfaction, "Medium")
+    logging.info(
+        "Churn prevention call complete for account %s — satisfaction: %s, risk: %s",
+        account_id, satisfaction, risk_level,
+    )
+
+    description_lines = [
+        f"Churn prevention outreach — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Contact: {contact_name}",
+        f"Satisfaction: {satisfaction}",
+        f"Renewal likelihood: {likelihood}",
+        f"Requested action: {action}",
+    ]
+    if concern:
+        description_lines.append(f"Primary concern: {concern}")
+
+    try:
+        log_task(
+            account_id,
+            subject=f"Churn prevention call — {satisfaction}",
+            description="\n".join(description_lines),
+            priority="High" if risk_level == "High" else "Normal",
+        )
+        logging.info("Task logged for account %s.", account_id)
+    except Exception as e:
+        logging.error("Failed to log Task for account %s: %s", account_id, e)
+
+    try:
+        update_account_churn_risk(account_id, risk_level)
+        logging.info("Updated Churn_Risk__c to %s for account %s.", risk_level, account_id)
+    except Exception as e:
+        logging.warning(
+            "Could not update Churn_Risk__c (field may not exist in this org): %s", e
         )
 
-        description_lines = [
-            f"Churn prevention outreach — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Contact: {self.contact_name}",
-            f"Satisfaction: {satisfaction}",
-            f"Renewal likelihood: {likelihood}",
-            f"Requested action: {action}",
-        ]
-        if concern:
-            description_lines.append(f"Primary concern: {concern}")
-
-        try:
-            log_task(
-                self.account_id,
-                subject=f"Churn prevention call — {satisfaction}",
-                description="\n".join(description_lines),
-                priority="High" if risk_level == "High" else "Normal",
-            )
-            logging.info("Task logged for account %s.", self.account_id)
-        except Exception as e:
-            logging.error("Failed to log Task for account %s: %s", self.account_id, e)
-
-        try:
-            update_account_churn_risk(self.account_id, risk_level)
-            logging.info("Updated Churn_Risk__c to %s for account %s.", risk_level, self.account_id)
-        except Exception as e:
-            logging.warning(
-                "Could not update Churn_Risk__c (field may not exist in this org): %s", e
-            )
-
-        if likelihood in ("unlikely", "not renewing"):
-            self.hangup(
-                final_instructions=(
-                    f"Express genuine concern and gratitude to {self.contact_name}. "
-                    "Let them know their feedback is important and a customer success manager will "
-                    "follow up personally within one business day to address their concerns. "
-                    "Thank them sincerely for their time."
-                )
-            )
-        elif action != "no action needed":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their candid feedback. "
-                    f"Confirm that you've noted their request for '{action}' and that the right "
-                    "person from the team will be in touch. Express confidence that we can make "
-                    "things right. Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time and for sharing their experience. "
-                    "Let them know Crestview Technologies appreciates their business and is always "
-                    "here if they need anything. Wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for churn prevention call on account %s.",
-                     self.contact_name, self.account_id)
-        try:
-            log_task(
-                self.account_id,
-                subject="Churn prevention call — contact unavailable",
-                description=(
-                    f"Attempted outreach to {self.contact_name} — contact unavailable, voicemail left.\n"
-                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-                ),
-                priority="High",
-            )
-        except Exception as e:
-            logging.error("Failed to log missed-call Task: %s", e)
-
-        self.hangup(
+    if likelihood in ("unlikely", "not renewing"):
+        call.hangup(
             final_instructions=(
-                f"Leave a warm, concise voicemail for {self.contact_name} on behalf of Crestview "
-                "Technologies. Let them know you're calling to check in and make sure everything "
-                "is going well. Ask them to call back at their convenience. Keep it brief."
+                f"Express genuine concern and gratitude to {contact_name}. "
+                "Let them know their feedback is important and a customer success manager will "
+                "follow up personally within one business day to address their concerns. "
+                "Thank them sincerely for their time."
+            )
+        )
+    elif action != "no action needed":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their candid feedback. "
+                f"Confirm that you've noted their request for '{action}' and that the right "
+                "person from the team will be in touch. Express confidence that we can make "
+                "things right. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time and for sharing their experience. "
+                "Let them know Crestview Technologies appreciates their business and is always "
+                "here if they need anything. Wish them a great day."
             )
         )
 
@@ -270,11 +276,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.account_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ChurnPreventionController(
-            account_id=args.account_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "account_id": args.account_id,
+            "contact_name": args.name,
+        },
     )

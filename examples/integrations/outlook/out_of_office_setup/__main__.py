@@ -68,156 +68,157 @@ def disable_automatic_replies() -> None:
     resp.raise_for_status()
 
 
-class OutOfOfficeSetupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Jordan",
+    organization="Meridian Partners",
+    purpose=(
+        "to help Meridian Partners employees set up or disable their Outlook "
+        "out-of-office automatic reply over the phone"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Meridian Partners",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to help Meridian Partners employees set up or disable their Outlook "
-                "out-of-office automatic reply over the phone"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "configure_ooo",
+        objective=(
+            "A team member has called to configure their Outlook out-of-office auto-reply. "
+            "Collect the dates, backup contact, and any custom message, then activate it."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Meridian Partners IT support. I'm Jordan. "
+                "I can set up your Outlook out-of-office reply right now."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A team member has called to configure their Outlook out-of-office auto-reply. "
-                "Collect the dates, backup contact, and any custom message, then activate it."
+            guava.Field(
+                key="action",
+                field_type="multiple_choice",
+                description=(
+                    "Ask whether they want to set up a new out-of-office reply "
+                    "or turn off an existing one."
+                ),
+                choices=["set up out-of-office", "turn off out-of-office"],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Meridian Partners IT support. I'm Jordan. "
-                    "I can set up your Outlook out-of-office reply right now."
+            guava.Field(
+                key="start_date",
+                field_type="date",
+                description=(
+                    "If setting up, ask for the first day they'll be out of office. "
+                    "Skip if turning off."
                 ),
-                guava.Field(
-                    key="action",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask whether they want to set up a new out-of-office reply "
-                        "or turn off an existing one."
-                    ),
-                    choices=["set up out-of-office", "turn off out-of-office"],
-                    required=True,
+                required=False,
+            ),
+            guava.Field(
+                key="end_date",
+                field_type="date",
+                description="Ask for their last day out.",
+                required=False,
+            ),
+            guava.Field(
+                key="backup_contact",
+                field_type="text",
+                description=(
+                    "Ask who should be contacted for urgent matters while they're away. "
+                    "Capture their name or email address."
                 ),
-                guava.Field(
-                    key="start_date",
-                    field_type="date",
-                    description=(
-                        "If setting up, ask for the first day they'll be out of office. "
-                        "Skip if turning off."
-                    ),
-                    required=False,
+                required=False,
+            ),
+            guava.Field(
+                key="custom_message",
+                field_type="text",
+                description=(
+                    "Ask if they'd like a custom message, or if the standard Meridian Partners "
+                    "template is fine. Capture their custom message if they have one."
                 ),
-                guava.Field(
-                    key="end_date",
-                    field_type="date",
-                    description="Ask for their last day out.",
-                    required=False,
-                ),
-                guava.Field(
-                    key="backup_contact",
-                    field_type="text",
-                    description=(
-                        "Ask who should be contacted for urgent matters while they're away. "
-                        "Capture their name or email address."
-                    ),
-                    required=False,
-                ),
-                guava.Field(
-                    key="custom_message",
-                    field_type="text",
-                    description=(
-                        "Ask if they'd like a custom message, or if the standard Meridian Partners "
-                        "template is fine. Capture their custom message if they have one."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.configure_ooo,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def configure_ooo(self):
-        action = self.get_field("action") or "set up out-of-office"
-        start_date = self.get_field("start_date") or ""
-        end_date = self.get_field("end_date") or ""
-        backup_contact = self.get_field("backup_contact") or "your manager"
-        custom_message = self.get_field("custom_message") or ""
+@agent.on_task_complete("configure_ooo")
+def on_done(call: guava.Call) -> None:
+    action = call.get_field("action") or "set up out-of-office"
+    start_date = call.get_field("start_date") or ""
+    end_date = call.get_field("end_date") or ""
+    backup_contact = call.get_field("backup_contact") or "your manager"
+    custom_message = call.get_field("custom_message") or ""
 
-        if "turn off" in action:
-            logging.info("Disabling automatic replies")
-            try:
-                disable_automatic_replies()
-                self.hangup(
-                    final_instructions=(
-                        "Let the caller know their out-of-office auto-reply has been turned off. "
-                        "All incoming emails will now go to their inbox normally. "
-                        "Thank them for calling Meridian Partners."
-                    )
-                )
-            except Exception as e:
-                logging.error("Failed to disable automatic replies: %s", e)
-                self.hangup(
-                    final_instructions=(
-                        "Apologize — there was an issue turning off the auto-reply. "
-                        "Ask them to disable it directly in Outlook settings. Thank them."
-                    )
-                )
-            return
-
-        if not start_date or not end_date:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know we need both a start and end date to set up the auto-reply. "
-                    "Ask them to call back with both dates. Thank them for calling."
-                )
-            )
-            return
-
-        # Build the messages — use custom if provided, otherwise fill the template
-        if custom_message:
-            internal_message = custom_message
-            external_message = custom_message
-        else:
-            internal_message = DEFAULT_INTERNAL_TEMPLATE.format(
-                return_date=end_date, backup_contact=backup_contact
-            )
-            external_message = DEFAULT_EXTERNAL_TEMPLATE.format(
-                return_date=end_date, backup_contact=backup_contact
-            )
-
-        logging.info(
-            "Setting OOO from %s to %s, backup: %s", start_date, end_date, backup_contact
-        )
-
+    if "turn off" in action:
+        logging.info("Disabling automatic replies")
         try:
-            set_automatic_replies(start_date, end_date, internal_message, external_message)
-        except Exception as e:
-            logging.error("Failed to set automatic replies: %s", e)
-            self.hangup(
+            disable_automatic_replies()
+            call.hangup(
                 final_instructions=(
-                    "Apologize — there was a technical issue setting up the auto-reply. "
-                    "Ask them to configure it directly in Outlook or call back. Thank them."
+                    "Let the caller know their out-of-office auto-reply has been turned off. "
+                    "All incoming emails will now go to their inbox normally. "
+                    "Thank them for calling Meridian Partners."
                 )
             )
-            return
+        except Exception as e:
+            logging.error("Failed to disable automatic replies: %s", e)
+            call.hangup(
+                final_instructions=(
+                    "Apologize — there was an issue turning off the auto-reply. "
+                    "Ask them to disable it directly in Outlook settings. Thank them."
+                )
+            )
+        return
 
-        self.hangup(
+    if not start_date or not end_date:
+        call.hangup(
             final_instructions=(
-                f"Let the caller know their out-of-office auto-reply has been set up successfully. "
-                f"It will be active from {start_date} through {end_date}. "
-                f"Anyone who emails them will be told to contact {backup_contact} for urgent matters. "
-                "Wish them a great time away and thank them for calling Meridian Partners."
+                "Let the caller know we need both a start and end date to set up the auto-reply. "
+                "Ask them to call back with both dates. Thank them for calling."
             )
         )
+        return
+
+    # Build the messages — use custom if provided, otherwise fill the template
+    if custom_message:
+        internal_message = custom_message
+        external_message = custom_message
+    else:
+        internal_message = DEFAULT_INTERNAL_TEMPLATE.format(
+            return_date=end_date, backup_contact=backup_contact
+        )
+        external_message = DEFAULT_EXTERNAL_TEMPLATE.format(
+            return_date=end_date, backup_contact=backup_contact
+        )
+
+    logging.info(
+        "Setting OOO from %s to %s, backup: %s", start_date, end_date, backup_contact
+    )
+
+    try:
+        set_automatic_replies(start_date, end_date, internal_message, external_message)
+    except Exception as e:
+        logging.error("Failed to set automatic replies: %s", e)
+        call.hangup(
+            final_instructions=(
+                "Apologize — there was a technical issue setting up the auto-reply. "
+                "Ask them to configure it directly in Outlook or call back. Thank them."
+            )
+        )
+        return
+
+    call.hangup(
+        final_instructions=(
+            f"Let the caller know their out-of-office auto-reply has been set up successfully. "
+            f"It will be active from {start_date} through {end_date}. "
+            f"Anyone who emails them will be told to contact {backup_contact} for urgent matters. "
+            "Wish them a great time away and thank them for calling Meridian Partners."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=OutOfOfficeSetupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

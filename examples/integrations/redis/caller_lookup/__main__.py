@@ -29,40 +29,40 @@ def save_caller_profile(phone: str, profile: dict) -> None:
     r.setex(key, CALLER_TTL_SECONDS, json.dumps(profile))
 
 
-class CallerLookupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Casey",
+    organization="Crestwood Support",
+    purpose=(
+        "to provide fast, personalized support to Crestwood customers "
+        "by recognizing returning callers and picking up where they left off"
+    ),
+)
 
-        # Look up the caller's phone number from the inbound call metadata.
-        caller_phone = self.get_caller_number() or ""
-        self.caller_phone = caller_phone
-        self.profile = get_caller_profile(caller_phone) if caller_phone else None
 
-        if self.profile:
-            logging.info("Returning caller recognized: %s (%s)", self.profile.get("name"), caller_phone)
-        else:
-            logging.info("New caller from %s — no cached profile found.", caller_phone)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        self.set_persona(
-            organization_name="Crestwood Support",
-            agent_name="Casey",
-            agent_purpose=(
-                "to provide fast, personalized support to Crestwood customers "
-                "by recognizing returning callers and picking up where they left off"
-            ),
-        )
 
-        if self.profile:
-            self._start_returning_caller_flow()
-        else:
-            self._start_new_caller_flow()
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    # Look up the caller's phone number from the inbound call metadata.
+    caller_phone = call.get_caller_number() or ""
+    call.caller_phone = caller_phone
+    call.profile = get_caller_profile(caller_phone) if caller_phone else None
 
-    def _start_returning_caller_flow(self):
-        name = self.profile.get("name", "there")
-        last_topic = self.profile.get("last_topic", "")
+    if call.profile:
+        logging.info("Returning caller recognized: %s (%s)", call.profile.get("name"), caller_phone)
+    else:
+        logging.info("New caller from %s — no cached profile found.", caller_phone)
+
+    if call.profile:
+        name = call.profile.get("name", "there")
+        last_topic = call.profile.get("last_topic", "")
         topic_mention = f" Last time you called about {last_topic}." if last_topic else ""
 
-        self.set_task(
+        call.set_task(
+            "wrap_up",
             objective=(
                 f"Welcome back {name} as a returning caller. Acknowledge their history "
                 "and quickly understand how to help them today."
@@ -88,13 +88,10 @@ class CallerLookupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.wrap_up,
         )
-
-        self.accept_call()
-
-    def _start_new_caller_flow(self):
-        self.set_task(
+    else:
+        call.set_task(
+            "wrap_up",
             objective=(
                 "A new caller has reached Crestwood Support. Greet them, collect their name "
                 "and reason for calling, assist them, and save their profile for future calls."
@@ -125,49 +122,45 @@ class CallerLookupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.wrap_up,
         )
 
-        self.accept_call()
 
-    def wrap_up(self):
-        today_request = self.get_field("today_request") or ""
-        resolution = self.get_field("resolution") or ""
+@agent.on_task_complete("wrap_up")
+def on_done(call: guava.Call) -> None:
+    today_request = call.get_field("today_request") or ""
+    resolution = call.get_field("resolution") or ""
 
-        if self.profile:
-            name = self.profile.get("name", "")
-            updated_profile = {
-                **self.profile,
-                "last_topic": today_request[:120],
-                "call_count": self.profile.get("call_count", 1) + 1,
-            }
-        else:
-            name = self.get_field("caller_name") or ""
-            updated_profile = {
-                "name": name,
-                "phone": self.caller_phone,
-                "last_topic": today_request[:120],
-                "call_count": 1,
-            }
+    if call.profile:
+        name = call.profile.get("name", "")
+        updated_profile = {
+            **call.profile,
+            "last_topic": today_request[:120],
+            "call_count": call.profile.get("call_count", 1) + 1,
+        }
+    else:
+        name = call.get_field("caller_name") or ""
+        updated_profile = {
+            "name": name,
+            "phone": call.caller_phone,
+            "last_topic": today_request[:120],
+            "call_count": 1,
+        }
 
-        if self.caller_phone:
-            try:
-                save_caller_profile(self.caller_phone, updated_profile)
-                logging.info("Caller profile saved/updated for %s.", self.caller_phone)
-            except Exception as e:
-                logging.error("Failed to save caller profile to Redis: %s", e)
+    if call.caller_phone:
+        try:
+            save_caller_profile(call.caller_phone, updated_profile)
+            logging.info("Caller profile saved/updated for %s.", call.caller_phone)
+        except Exception as e:
+            logging.error("Failed to save caller profile to Redis: %s", e)
 
-        self.hangup(
-            final_instructions=(
-                f"Confirm the resolution with {name or 'the caller'}: {resolution}. "
-                "Thank them for calling Crestwood Support and wish them a great day."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Confirm the resolution with {name or 'the caller'}: {resolution}. "
+            "Thank them for calling Crestwood Support and wish them a great day."
         )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=CallerLookupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

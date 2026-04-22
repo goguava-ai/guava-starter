@@ -7,36 +7,40 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sophie",
+    organization="The Grand Meridian Hotel",
+    purpose=(
+        "reach out to a guest who recently cancelled their reservation, understand the "
+        "reason behind the decision with empathy, explore whether alternative arrangements "
+        "might better suit their needs, and warmly invite them to rebook"
+    ),
+)
 
-class CancellationWinbackController(guava.CallController):
-    def __init__(self, name, reservation_number, original_dates, room_type):
-        super().__init__()
-        self.name = name
-        self.reservation_number = reservation_number
-        self.original_dates = original_dates
-        self.room_type = room_type
 
-        self.set_persona(
-            organization_name="The Grand Meridian Hotel",
-            agent_name="Sophie",
-            agent_purpose=(
-                "reach out to a guest who recently cancelled their reservation, understand the "
-                "reason behind the decision with empathy, explore whether alternative arrangements "
-                "might better suit their needs, and warmly invite them to rebook"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for cancellation winback call.", call.get_variable("name"))
+        call.hangup(
+            final_instructions=(
+                "Leave a thoughtful voicemail as Sophie from The Grand Meridian Hotel, acknowledging "
+                "the recent cancellation and expressing that the hotel would love to understand if there "
+                "is anything they can do to help. Invite the guest to call back at their convenience and "
+                "mention that the reservations team would be happy to explore flexible options."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_winback,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_winback(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "winback",
             objective=(
-                f"You are calling {self.name} regarding the recent cancellation of reservation "
-                f"{self.reservation_number} for {self.room_type}, originally booked for {self.original_dates}. "
+                f"You are calling {call.get_variable('name')} regarding the recent cancellation of reservation "
+                f"{call.get_variable('reservation_number')} for {call.get_variable('room_type')}, originally booked for {call.get_variable('original_dates')}. "
                 "Approach the conversation with genuine care and zero pressure. Begin by acknowledging "
                 "the cancellation and expressing that the hotel would love to understand what happened. "
                 "Listen to the guest's reason with empathy, then thoughtfully explore whether alternative "
@@ -45,8 +49,8 @@ class CancellationWinbackController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Greet {self.name} warmly and acknowledge the cancellation of their reservation "
-                    f"for {self.original_dates}. Express genuine regret that the plans changed and let "
+                    f"Greet {call.get_variable('name')} warmly and acknowledge the cancellation of their reservation "
+                    f"for {call.get_variable('original_dates')}. Express genuine regret that the plans changed and let "
                     "them know you are calling simply to understand if there is anything the hotel can do."
                 ),
                 guava.Field(
@@ -95,46 +99,36 @@ class CancellationWinbackController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "cancellation_winback",
-            "guest_name": self.name,
-            "reservation_number": self.reservation_number,
-            "original_dates": self.original_dates,
-            "room_type": self.room_type,
-            "fields": {
-                "cancellation_reason": self.get_field("cancellation_reason"),
-                "open_to_alternative_dates": self.get_field("open_to_alternative_dates"),
-                "alternative_date_preference": self.get_field("alternative_date_preference"),
-                "discount_or_upgrade_motivating": self.get_field("discount_or_upgrade_motivating"),
-                "rebooking_decision": self.get_field("rebooking_decision"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Cancellation winback results saved for %s", self.name)
-        self.hangup(
-            final_instructions=(
-                f"Close the call warmly and graciously, regardless of the guest's rebooking decision. "
-                f"Thank {self.name} for their time and for speaking openly. If they expressed interest "
-                "in rebooking, let them know a reservations team member will follow up with tailored options. "
-                "If they declined, wish them well and leave the door open for a future stay. Never push or pressure."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for cancellation winback call.", self.name)
-        self.hangup(
-            final_instructions=(
-                "Leave a thoughtful voicemail as Sophie from The Grand Meridian Hotel, acknowledging "
-                "the recent cancellation and expressing that the hotel would love to understand if there "
-                "is anything they can do to help. Invite the guest to call back at their convenience and "
-                "mention that the reservations team would be happy to explore flexible options."
-            )
+@agent.on_task_complete("winback")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "cancellation_winback",
+        "guest_name": call.get_variable("name"),
+        "reservation_number": call.get_variable("reservation_number"),
+        "original_dates": call.get_variable("original_dates"),
+        "room_type": call.get_variable("room_type"),
+        "fields": {
+            "cancellation_reason": call.get_field("cancellation_reason"),
+            "open_to_alternative_dates": call.get_field("open_to_alternative_dates"),
+            "alternative_date_preference": call.get_field("alternative_date_preference"),
+            "discount_or_upgrade_motivating": call.get_field("discount_or_upgrade_motivating"),
+            "rebooking_decision": call.get_field("rebooking_decision"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Cancellation winback results saved for %s", call.get_variable("name"))
+    call.hangup(
+        final_instructions=(
+            f"Close the call warmly and graciously, regardless of the guest's rebooking decision. "
+            f"Thank {call.get_variable('name')} for their time and for speaking openly. If they expressed interest "
+            "in rebooking, let them know a reservations team member will follow up with tailored options. "
+            "If they declined, wish them well and leave the door open for a future stay. Never push or pressure."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -151,13 +145,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CancellationWinbackController(
-            name=args.name,
-            reservation_number=args.reservation_number,
-            original_dates=args.original_dates,
-            room_type=args.room_type,
-        ),
+        variables={
+            "name": args.name,
+            "reservation_number": args.reservation_number,
+            "original_dates": args.original_dates,
+            "room_type": args.room_type,
+        },
     )

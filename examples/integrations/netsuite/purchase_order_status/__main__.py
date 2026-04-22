@@ -77,130 +77,131 @@ def format_po_summary(po: dict) -> str:
     return f"PO {tran_id}: {status}, ${total} {currency}, expected {expected_date}"
 
 
-class PurchaseOrderStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Meridian Solutions",
+    purpose=(
+        "to help vendors and internal procurement staff check the status of "
+        "purchase orders in our NetSuite system"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Meridian Solutions",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to help vendors and internal procurement staff check the status of "
-                "purchase orders in our NetSuite system"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "purchase_order_status",
+        objective=(
+            "A caller wants to check purchase order status. Collect the PO number or "
+            "vendor name and look it up in NetSuite."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Meridian Solutions procurement. I'm Morgan. "
+                "I can look up purchase order status for you."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A caller wants to check purchase order status. Collect the PO number or "
-                "vendor name and look it up in NetSuite."
+            guava.Field(
+                key="lookup_type",
+                field_type="multiple_choice",
+                description=(
+                    "Ask whether they have a specific PO number or would like to search "
+                    "by vendor name."
+                ),
+                choices=["PO number", "vendor name"],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Meridian Solutions procurement. I'm Morgan. "
-                    "I can look up purchase order status for you."
-                ),
-                guava.Field(
-                    key="lookup_type",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask whether they have a specific PO number or would like to search "
-                        "by vendor name."
-                    ),
-                    choices=["PO number", "vendor name"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="identifier",
-                    field_type="text",
-                    description="Ask for the PO number or vendor name.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_po,
-        )
+            guava.Field(
+                key="identifier",
+                field_type="text",
+                description="Ask for the PO number or vendor name.",
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def look_up_po(self):
-        lookup_type = self.get_field("lookup_type")
-        identifier = (self.get_field("identifier") or "").strip()
-        by_po = lookup_type == "PO number"
+@agent.on_task_complete("purchase_order_status")
+def on_purchase_order_status_done(call: guava.Call) -> None:
+    lookup_type = call.get_field("lookup_type")
+    identifier = (call.get_field("identifier") or "").strip()
+    by_po = lookup_type == "PO number"
 
-        logging.info("NetSuite PO lookup — type: %s, id: %s", lookup_type, identifier)
+    logging.info("NetSuite PO lookup — type: %s, id: %s", lookup_type, identifier)
 
-        try:
-            if by_po:
-                po = find_po_by_number(identifier)
-                pos = [po] if po else []
-            else:
-                pos = find_pos_by_vendor(identifier)
+    try:
+        if by_po:
+            po = find_po_by_number(identifier)
+            pos = [po] if po else []
+        else:
+            pos = find_pos_by_vendor(identifier)
 
-            result = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Morgan",
-                "use_case": "purchase_order_status",
-                "lookup_type": lookup_type,
-                "identifier": identifier,
-                "pos_found": len(pos),
-            }
-            print(json.dumps(result, indent=2))
+        result = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Morgan",
+            "use_case": "purchase_order_status",
+            "lookup_type": lookup_type,
+            "identifier": identifier,
+            "pos_found": len(pos),
+        }
+        print(json.dumps(result, indent=2))
 
-            if not pos:
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know we couldn't find any purchase orders for "
-                        f"{'PO number' if by_po else 'vendor'} {identifier}. "
-                        "Ask them to verify and call back, or offer to transfer them to "
-                        "a procurement specialist. Thank them for calling."
-                    )
-                )
-                return
-
-            if by_po:
-                po = pos[0]
-                summary = format_po_summary(po)
-                # Check if items have been received
-                items = po.get("item", {}).get("items", []) if isinstance(po.get("item"), dict) else []
-                received_items = [i for i in items if i.get("quantityreceived", 0) > 0]
-                receipt_note = ""
-                if received_items:
-                    receipt_note = (
-                        f" {len(received_items)} of {len(items)} line item(s) have been received."
-                    )
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know the purchase order status: {summary}.{receipt_note} "
-                        "If they have questions about specific line items or need to update the PO, "
-                        "offer to connect them with a procurement specialist. "
-                        "Thank them for calling Meridian Solutions."
-                    )
-                )
-            else:
-                summaries = [format_po_summary(p) for p in pos[:3]]
-                summary_text = "; ".join(summaries)
-                self.hangup(
-                    final_instructions=(
-                        f"Let the caller know we found {len(pos)} open purchase order(s) for "
-                        f"vendor '{identifier}'. The most recent: {summary_text}. "
-                        "If they need details on a specific PO, offer to look it up by PO number. "
-                        "Thank them for calling Meridian Solutions."
-                    )
-                )
-        except Exception as e:
-            logging.error("NetSuite PO lookup failed: %s", e)
-            self.hangup(
+        if not pos:
+            call.hangup(
                 final_instructions=(
-                    "Apologize for a technical issue and let the caller know we were unable to "
-                    "retrieve purchase order information right now. A procurement specialist "
-                    "will follow up shortly. Thank them for their patience."
+                    f"Let the caller know we couldn't find any purchase orders for "
+                    f"{'PO number' if by_po else 'vendor'} {identifier}. "
+                    "Ask them to verify and call back, or offer to transfer them to "
+                    "a procurement specialist. Thank them for calling."
                 )
             )
+            return
+
+        if by_po:
+            po = pos[0]
+            summary = format_po_summary(po)
+            # Check if items have been received
+            items = po.get("item", {}).get("items", []) if isinstance(po.get("item"), dict) else []
+            received_items = [i for i in items if i.get("quantityreceived", 0) > 0]
+            receipt_note = ""
+            if received_items:
+                receipt_note = (
+                    f" {len(received_items)} of {len(items)} line item(s) have been received."
+                )
+            call.hangup(
+                final_instructions=(
+                    f"Let the caller know the purchase order status: {summary}.{receipt_note} "
+                    "If they have questions about specific line items or need to update the PO, "
+                    "offer to connect them with a procurement specialist. "
+                    "Thank them for calling Meridian Solutions."
+                )
+            )
+        else:
+            summaries = [format_po_summary(p) for p in pos[:3]]
+            summary_text = "; ".join(summaries)
+            call.hangup(
+                final_instructions=(
+                    f"Let the caller know we found {len(pos)} open purchase order(s) for "
+                    f"vendor '{identifier}'. The most recent: {summary_text}. "
+                    "If they need details on a specific PO, offer to look it up by PO number. "
+                    "Thank them for calling Meridian Solutions."
+                )
+            )
+    except Exception as e:
+        logging.error("NetSuite PO lookup failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know we were unable to "
+                "retrieve purchase order information right now. A procurement specialist "
+                "will follow up shortly. Thank them for their patience."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=PurchaseOrderStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

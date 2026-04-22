@@ -33,27 +33,42 @@ def post_medication_request(patient_id: str, medication: str, pharmacy: str, hea
     return resp.ok
 
 
-class PrescriptionRefillController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, medication: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.medication = medication
-        self.headers = {}
+agent = guava.Agent(
+    name="Sam",
+    organization="Sunrise Family Practice",
+    purpose="to process prescription refill requests for patients",
+)
 
-        try:
-            token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        except Exception as e:
-            logging.error("Token error: %s", e)
 
-        self.set_persona(
-            organization_name="Sunrise Family Practice",
-            agent_name="Sam",
-            agent_purpose="to process prescription refill requests for patients",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    headers = {}
+    try:
+        token = get_access_token()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    except Exception as e:
+        logging.error("Token error: %s", e)
+    call.headers = headers
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    medication = call.get_variable("medication")
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a voicemail for {patient_name} from Sunrise Family Practice "
+                f"about their {medication} refill. Ask them to call back to confirm their pharmacy. "
+                "Keep it brief."
+            )
         )
-
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "prescription_refill",
             objective=(
                 f"Call {patient_name} regarding a refill request for {medication}. "
                 "Confirm they still need it, check for new symptoms, and collect their pharmacy."
@@ -90,65 +105,54 @@ class PrescriptionRefillController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.submit_refill,
         )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=lambda: None,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def submit_refill(self):
-        still_needs = self.get_field("still_needs_refill") or ""
-        pharmacy = self.get_field("pharmacy") or "preferred pharmacy"
-        symptoms = self.get_field("symptom_details") or ""
+@agent.on_task_complete("prescription_refill")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    medication = call.get_variable("medication")
+    still_needs = call.get_field("still_needs_refill") or ""
+    pharmacy = call.get_field("pharmacy") or "preferred pharmacy"
+    symptoms = call.get_field("symptom_details") or ""
 
-        if "no" in still_needs:
-            logging.info("Patient %s no longer needs refill.", self.patient_id)
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge that {self.patient_name} no longer needs the refill. "
-                    "Thank them for letting us know and wish them a great day."
-                )
-            )
-            return
-
-        success = False
-        try:
-            success = post_medication_request(self.patient_id, self.medication, pharmacy, self.headers)
-            logging.info("MedicationRequest posted: %s", success)
-        except Exception as e:
-            logging.error("Failed to post MedicationRequest: %s", e)
-
-        symptom_note = (
-            f" Note: patient reported new symptoms — '{symptoms}'. Care team should review before approving."
-            if symptoms else ""
-        )
-
-        if success:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their refill request for {self.medication} "
-                    f"has been submitted to the care team and will be sent to {pharmacy}. "
-                    f"Expect it within 1–2 business days.{symptom_note} "
-                    "Thank them and wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {self.patient_name} — the refill request couldn't be submitted. "
-                    "Let them know a team member will follow up shortly. Thank them for their patience."
-                )
-            )
-
-    def recipient_unavailable(self):
-        self.hangup(
+    if "no" in still_needs:
+        logging.info("Patient %s no longer needs refill.", patient_id)
+        call.hangup(
             final_instructions=(
-                f"Leave a voicemail for {self.patient_name} from Sunrise Family Practice "
-                f"about their {self.medication} refill. Ask them to call back to confirm their pharmacy. "
-                "Keep it brief."
+                f"Acknowledge that {patient_name} no longer needs the refill. "
+                "Thank them for letting us know and wish them a great day."
+            )
+        )
+        return
+
+    success = False
+    try:
+        success = post_medication_request(patient_id, medication, pharmacy, call.headers)
+        logging.info("MedicationRequest posted: %s", success)
+    except Exception as e:
+        logging.error("Failed to post MedicationRequest: %s", e)
+
+    symptom_note = (
+        f" Note: patient reported new symptoms — '{symptoms}'. Care team should review before approving."
+        if symptoms else ""
+    )
+
+    if success:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their refill request for {medication} "
+                f"has been submitted to the care team and will be sent to {pharmacy}. "
+                f"Expect it within 1–2 business days.{symptom_note} "
+                "Thank them and wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {patient_name} — the refill request couldn't be submitted. "
+                "Let them know a team member will follow up shortly. Thank them for their patience."
             )
         )
 
@@ -162,12 +166,12 @@ if __name__ == "__main__":
     parser.add_argument("--medication", required=True)
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PrescriptionRefillController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            medication=args.medication,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "medication": args.medication,
+        },
     )

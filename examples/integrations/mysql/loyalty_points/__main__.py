@@ -59,112 +59,113 @@ def get_customer_by_phone(phone: str) -> dict | None:
             return cursor.fetchone()
 
 
-class LoyaltyPointsController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Peak Outdoors",
+    purpose=(
+        "to help Peak Outdoors loyalty members check their points balance and tier status"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Peak Outdoors",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help Peak Outdoors loyalty members check their points balance and tier status"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "loyalty_points_lookup",
+        objective=(
+            "A loyalty member has called to check their points balance. "
+            "Look them up by email or phone, then share their current points, "
+            "tier, perks, and how many points they need for the next tier."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Peak Outdoors. I'm Sam. "
+                "I can pull up your loyalty account right now."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A loyalty member has called to check their points balance. "
-                "Look them up by email or phone, then share their current points, "
-                "tier, perks, and how many points they need for the next tier."
+            guava.Field(
+                key="lookup_method",
+                field_type="multiple_choice",
+                description="Ask if they'd prefer to look up their account by email or phone number.",
+                choices=["email", "phone number"],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Peak Outdoors. I'm Sam. "
-                    "I can pull up your loyalty account right now."
-                ),
-                guava.Field(
-                    key="lookup_method",
-                    field_type="multiple_choice",
-                    description="Ask if they'd prefer to look up their account by email or phone number.",
-                    choices=["email", "phone number"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="lookup_value",
-                    field_type="text",
-                    description="Ask for their email address or phone number, based on their choice.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_loyalty,
+            guava.Field(
+                key="lookup_value",
+                field_type="text",
+                description="Ask for their email address or phone number, based on their choice.",
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("loyalty_points_lookup")
+def on_loyalty_points_lookup_done(call: guava.Call) -> None:
+    method = call.get_field("lookup_method") or "email"
+    value = (call.get_field("lookup_value") or "").strip()
+
+    logging.info("Looking up loyalty account by %s: %s", method, value)
+
+    try:
+        customer = (
+            get_customer_by_email(value)
+            if "email" in method
+            else get_customer_by_phone(value)
         )
+    except Exception as e:
+        logging.error("Database error looking up customer: %s", e)
+        customer = None
 
-        self.accept_call()
-
-    def look_up_loyalty(self):
-        method = self.get_field("lookup_method") or "email"
-        value = (self.get_field("lookup_value") or "").strip()
-
-        logging.info("Looking up loyalty account by %s: %s", method, value)
-
-        try:
-            customer = (
-                get_customer_by_email(value)
-                if "email" in method
-                else get_customer_by_phone(value)
-            )
-        except Exception as e:
-            logging.error("Database error looking up customer: %s", e)
-            customer = None
-
-        if not customer:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know you couldn't find a loyalty account matching "
-                    f"the {method} they provided. Ask them to double-check or offer to connect "
-                    "them with a team member who can look it up in-store."
-                )
-            )
-            return
-
-        name = customer.get("name") or "there"
-        points = int(customer.get("loyalty_points") or 0)
-        tier = (customer.get("loyalty_tier") or "bronze").lower()
-
-        tier_info = TIERS.get(tier, TIERS["bronze"])
-        perk = tier_info["perk"]
-        next_tier = tier_info["next_name"]
-        points_to_next = (
-            tier_info["next"] - points
-            if tier_info["next"] is not None and points < tier_info["next"]
-            else 0
-        )
-
-        logging.info(
-            "Loyalty account found: %s, tier=%s, points=%d", name, tier, points
-        )
-
-        next_tier_note = (
-            f"They need {points_to_next:,} more points to reach {next_tier} status. "
-            if next_tier and points_to_next > 0
-            else "They are at the highest tier — Platinum. "
-        )
-
-        self.hangup(
+    if not customer:
+        call.hangup(
             final_instructions=(
-                f"Greet {name} by name. "
-                f"Their current loyalty points balance is {points:,} points. "
-                f"They are a {tier.title()} member, which comes with: {perk}. "
-                + next_tier_note
-                + "Let them know they earn 1 point for every dollar spent. "
-                "Thank them for being a Peak Outdoors member."
+                f"Let the caller know you couldn't find a loyalty account matching "
+                f"the {method} they provided. Ask them to double-check or offer to connect "
+                "them with a team member who can look it up in-store."
             )
         )
+        return
+
+    name = customer.get("name") or "there"
+    points = int(customer.get("loyalty_points") or 0)
+    tier = (customer.get("loyalty_tier") or "bronze").lower()
+
+    tier_info = TIERS.get(tier, TIERS["bronze"])
+    perk = tier_info["perk"]
+    next_tier = tier_info["next_name"]
+    points_to_next = (
+        tier_info["next"] - points
+        if tier_info["next"] is not None and points < tier_info["next"]
+        else 0
+    )
+
+    logging.info(
+        "Loyalty account found: %s, tier=%s, points=%d", name, tier, points
+    )
+
+    next_tier_note = (
+        f"They need {points_to_next:,} more points to reach {next_tier} status. "
+        if next_tier and points_to_next > 0
+        else "They are at the highest tier — Platinum. "
+    )
+
+    call.hangup(
+        final_instructions=(
+            f"Greet {name} by name. "
+            f"Their current loyalty points balance is {points:,} points. "
+            f"They are a {tier.title()} member, which comes with: {perk}. "
+            + next_tier_note
+            + "Let them know they earn 1 point for every dollar spent. "
+            "Thank them for being a Peak Outdoors member."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=LoyaltyPointsController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

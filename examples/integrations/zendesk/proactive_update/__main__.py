@@ -75,66 +75,89 @@ def add_call_log_note(ticket_id: str, customer_name: str, outcome: str) -> None:
     resp.raise_for_status()
 
 
-class ProactiveUpdateController(guava.CallController):
-    def __init__(self, ticket_id: str, customer_name: str, update_summary: str):
-        super().__init__()
-        self.ticket_id = ticket_id
-        self.customer_name = customer_name
-        self.update_summary = update_summary
-        self.ticket_subject = "your support request"
-        self.ticket_status = "open"
-        self.latest_agent_comment = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Horizon Software",
+    purpose=(
+        "to proactively notify customers of important updates on their support tickets "
+        "on behalf of Horizon Software"
+    ),
+)
 
-        # Pre-call: fetch the ticket and its most recent public comment.
-        # This gives the agent enough context to relay a specific update rather than
-        # a generic "we're working on it" message.
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    ticket_id = call.get_variable("ticket_id")
+    customer_name = call.get_variable("customer_name")
+
+    call.ticket_subject = "your support request"
+    call.ticket_status = "open"
+    call.latest_agent_comment = ""
+
+    # Pre-call: fetch the ticket and its most recent public comment.
+    # This gives the agent enough context to relay a specific update rather than
+    # a generic "we're working on it" message.
+    try:
+        ticket, public_comments = get_ticket_with_comments(ticket_id)
+        if ticket:
+            call.ticket_status = ticket.get("status", "open")
+            if ticket.get("subject"):
+                call.ticket_subject = f"'{ticket['subject']}'"
+
+        # Find the most recent comment not authored by the requester (i.e., from an agent).
+        requester_id = ticket.get("requester_id") if ticket else None
+        for comment in public_comments:
+            if comment.get("author_id") != requester_id:
+                call.latest_agent_comment = comment.get("body", "")
+                break
+    except Exception as e:
+        logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = call.get_variable("ticket_id")
+    update_summary = call.get_variable("update_summary")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for proactive update on ticket #%s",
+            customer_name, ticket_id,
+        )
         try:
-            ticket, public_comments = get_ticket_with_comments(ticket_id)
-            if ticket:
-                self.ticket_status = ticket.get("status", "open")
-                if ticket.get("subject"):
-                    self.ticket_subject = f"'{ticket['subject']}'"
-
-            # Find the most recent comment not authored by the requester (i.e., from an agent).
-            requester_id = ticket.get("requester_id") if ticket else None
-            for comment in public_comments:
-                if comment.get("author_id") != requester_id:
-                    self.latest_agent_comment = comment.get("body", "")
-                    break
+            add_call_log_note(
+                ticket_id,
+                customer_name,
+                "Proactive update call attempted — customer not available, voicemail left.",
+            )
         except Exception as e:
-            logging.error("Failed to fetch ticket #%s pre-call: %s", ticket_id, e)
+            logging.error("Failed to add call log note: %s", e)
 
-        self.set_persona(
-            organization_name="Horizon Software",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to proactively notify customers of important updates on their support tickets "
-                "on behalf of Horizon Software"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {customer_name} on behalf of Horizon Software. "
+                f"Let them know you're calling with an update on {call.ticket_subject} and ask "
+                "them to check their email for full details. Provide a callback number and "
+                "let them know our team is available Monday through Friday, 9am to 6pm Eastern."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.deliver_update,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_update(self):
-        status = self.ticket_status
-        is_resolved = status in ("solved", "closed")
-
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "wrap_up",
             objective=(
-                f"Deliver a support ticket update to {self.customer_name} regarding "
-                f"{self.ticket_subject} and confirm they received the information."
+                f"Deliver a support ticket update to {customer_name} regarding "
+                f"{call.ticket_subject} and confirm they received the information."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Morgan calling from Horizon Software. "
+                    f"Hi {customer_name}, this is Morgan calling from Horizon Software. "
                     f"I'm calling with an update on your support ticket regarding "
-                    f"{self.ticket_subject}."
+                    f"{call.ticket_subject}."
                 ),
-                guava.Say(self.update_summary),
+                guava.Say(update_summary),
                 guava.Field(
                     key="update_acknowledged",
                     field_type="text",
@@ -164,75 +187,56 @@ class ProactiveUpdateController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=lambda: self.wrap_up(is_resolved),
         )
 
-    def wrap_up(self, is_resolved: bool):
-        has_questions = self.get_field("has_questions") or "no"
-        question_detail = self.get_field("question_detail") or ""
 
-        outcome_parts = ["Customer reached and update delivered."]
-        if has_questions == "yes" and question_detail:
-            outcome_parts.append(f"Customer question: {question_detail}")
-        outcome_parts.append(f"Ticket status at time of call: {self.ticket_status}.")
+@agent.on_task_complete("wrap_up")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    ticket_id = call.get_variable("ticket_id")
+    has_questions = call.get_field("has_questions") or "no"
+    question_detail = call.get_field("question_detail") or ""
+    is_resolved = call.ticket_status in ("solved", "closed")
 
-        outcome = " ".join(outcome_parts)
-        logging.info("Proactive update call complete for ticket #%s — %s", self.ticket_id, outcome)
+    outcome_parts = ["Customer reached and update delivered."]
+    if has_questions == "yes" and question_detail:
+        outcome_parts.append(f"Customer question: {question_detail}")
+    outcome_parts.append(f"Ticket status at time of call: {call.ticket_status}.")
 
-        try:
-            add_call_log_note(self.ticket_id, self.customer_name, outcome)
-            logging.info("Call log note added to ticket #%s", self.ticket_id)
-        except Exception as e:
-            logging.error("Failed to add call log note to ticket #%s: %s", self.ticket_id, e)
+    outcome = " ".join(outcome_parts)
+    logging.info("Proactive update call complete for ticket #%s — %s", ticket_id, outcome)
 
-        if has_questions == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know that their question has been noted on the ticket "
-                    "and a support engineer will follow up by email with an answer. "
-                    + (
-                        "Since the ticket is resolved, let them know we can reopen it to address "
-                        "their question. "
-                        if is_resolved
-                        else ""
-                    )
-                    + "Thank them for their patience and for being a Horizon Software customer."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time. "
-                    + (
-                        "Let them know the ticket is resolved and they can reach out anytime "
-                        "if the issue recurs. "
-                        if is_resolved
-                        else "Let them know we'll continue to keep them updated. "
-                    )
-                    + "Wish them a great day."
-                )
-            )
+    try:
+        add_call_log_note(ticket_id, customer_name, outcome)
+        logging.info("Call log note added to ticket #%s", ticket_id)
+    except Exception as e:
+        logging.error("Failed to add call log note to ticket #%s: %s", ticket_id, e)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for proactive update on ticket #%s",
-            self.customer_name, self.ticket_id,
-        )
-        try:
-            add_call_log_note(
-                self.ticket_id,
-                self.customer_name,
-                "Proactive update call attempted — customer not available, voicemail left.",
-            )
-        except Exception as e:
-            logging.error("Failed to add call log note: %s", e)
-
-        self.hangup(
+    if has_questions == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.customer_name} on behalf of Horizon Software. "
-                f"Let them know you're calling with an update on {self.ticket_subject} and ask "
-                "them to check their email for full details. Provide a callback number and "
-                "let them know our team is available Monday through Friday, 9am to 6pm Eastern."
+                f"Let {customer_name} know that their question has been noted on the ticket "
+                "and a support engineer will follow up by email with an answer. "
+                + (
+                    "Since the ticket is resolved, let them know we can reopen it to address "
+                    "their question. "
+                    if is_resolved
+                    else ""
+                )
+                + "Thank them for their patience and for being a Horizon Software customer."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. "
+                + (
+                    "Let them know the ticket is resolved and they can reach out anytime "
+                    "if the issue recurs. "
+                    if is_resolved
+                    else "Let them know we'll continue to keep them updated. "
+                )
+                + "Wish them a great day."
             )
         )
 
@@ -257,12 +261,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.ticket_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ProactiveUpdateController(
-            ticket_id=args.ticket_id,
-            customer_name=args.name,
-            update_summary=args.update,
-        ),
+        variables={
+            "ticket_id": args.ticket_id,
+            "customer_name": args.name,
+            "update_summary": args.update,
+        },
     )

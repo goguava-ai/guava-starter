@@ -57,28 +57,31 @@ DESCRIPTIONS = {
     "life insurance": "Term life, whole life, death benefit, cash value, premiums by age, beneficiaries",
 }
 
+# The router uses the descriptions to classify which product line a question belongs to
+router = IntentRecognizer(DESCRIPTIONS, client=genai_client)
 
-class MultiProductQAController(guava.CallController):
-    """Routes each question to the best product-line knowledge base before answering."""
+agent = guava.Agent()
 
-    def __init__(self):
-        super().__init__()
-        # The router uses the descriptions to classify which product line a question belongs to
-        self.router = IntentRecognizer(DESCRIPTIONS, client=genai_client)
-        self.read_script("Hello, how can I help you today?")
-        self.accept_call()
 
-    def on_question(self, question: str) -> str:
-        # Classify which product line the question is about
-        choice = self.router.classify(question)
-        logger.info("Routed to '%s'", choice)
-        # Answer from only the relevant knowledge base
-        return DOCUMENT_QAS[choice].ask(question)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.read_script("Hello, how can I help you today?")
+
+
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    # Classify which product line the question is about
+    choice = router.classify(question)
+    logger.info("Routed to '%s'", choice)
+    # Answer from only the relevant knowledge base
+    return DOCUMENT_QAS[choice].ask(question)
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=MultiProductQAController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -61,57 +61,86 @@ def log_note_on_deal(deal_id: str, note_body: str) -> None:
     resp.raise_for_status()
 
 
-class RenewalOutreachController(guava.CallController):
-    def __init__(self, deal_id: str, customer_name: str):
-        super().__init__()
-        self.deal_id = deal_id
-        self.customer_name = customer_name
-        self.deal_name = "your current plan"
-        self.deal_amount = ""
-        self.close_date = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Apex Solutions",
+    purpose=(
+        "to reach out to customers ahead of their contract renewal and understand "
+        "their intent to continue with Apex Solutions"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    deal_id = call.get_variable("deal_id")
+    customer_name = call.get_variable("customer_name")
+
+    deal_name = "your current plan"
+    deal_amount = ""
+    close_date = ""
+
+    try:
+        deal = get_deal(deal_id)
+        if deal:
+            props = deal.get("properties", {})
+            if props.get("dealname"):
+                deal_name = props["dealname"]
+            if props.get("amount"):
+                deal_amount = f"${float(props['amount']):,.0f}"
+            if props.get("closedate"):
+                dt = datetime.strptime(props["closedate"][:10], "%Y-%m-%d")
+                close_date = dt.strftime("%B %d, %Y")
+    except Exception as e:
+        logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
+
+    call.deal_name = deal_name
+    call.deal_amount = deal_amount
+    call.close_date = close_date
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    deal_id = call.get_variable("deal_id")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for renewal outreach on deal %s",
+            customer_name, deal_id,
+        )
         try:
-            deal = get_deal(deal_id)
-            if deal:
-                props = deal.get("properties", {})
-                if props.get("dealname"):
-                    self.deal_name = props["dealname"]
-                if props.get("amount"):
-                    self.deal_amount = f"${float(props['amount']):,.0f}"
-                if props.get("closedate"):
-                    dt = datetime.strptime(props["closedate"][:10], "%Y-%m-%d")
-                    self.close_date = dt.strftime("%B %d, %Y")
+            log_note_on_deal(
+                deal_id,
+                f"Renewal outreach attempted — {customer_name} unavailable, voicemail left.",
+            )
         except Exception as e:
-            logging.error("Failed to fetch deal %s pre-call: %s", deal_id, e)
+            logging.error("Failed to log note for deal %s: %s", deal_id, e)
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to reach out to customers ahead of their contract renewal and understand "
-                "their intent to continue with Apex Solutions"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a friendly voicemail for {customer_name} on behalf of Apex Solutions. "
+                f"Let them know you're calling about their upcoming renewal for {call.deal_name} "
+                "and ask them to call back or look out for an email from our team with next steps. "
+                "Keep it brief and warm."
+            )
         )
+    elif outcome == "available":
+        amount_note = f" valued at {call.deal_amount}" if call.deal_amount else ""
+        date_note = f" on {call.close_date}" if call.close_date else " coming up soon"
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_renewal_conversation,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_renewal_conversation(self):
-        amount_note = f" valued at {self.deal_amount}" if self.deal_amount else ""
-        date_note = f" on {self.close_date}" if self.close_date else " coming up soon"
-
-        self.set_task(
+        call.set_task(
+            "record_outcome",
             objective=(
-                f"Speak with {self.customer_name} about renewing '{self.deal_name}'"
+                f"Speak with {customer_name} about renewing '{call.deal_name}'"
                 f"{amount_note}, with their renewal date{date_note}. "
                 "Understand their renewal intent and capture any concerns."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Morgan calling from Apex Solutions. "
+                    f"Hi {customer_name}, this is Morgan calling from Apex Solutions. "
                     f"I'm reaching out because your contract is coming up for renewal{date_note} "
                     "and I wanted to connect personally to make sure everything is going well "
                     "and talk through next steps."
@@ -158,95 +187,77 @@ class RenewalOutreachController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.record_outcome,
         )
 
-    def record_outcome(self):
-        satisfaction = self.get_field("satisfaction") or "unknown"
-        intent = self.get_field("renewal_intent") or "unknown"
-        concerns = self.get_field("concerns") or ""
-        followup = self.get_field("preferred_followup") or "email"
 
-        logging.info(
-            "Renewal outcome for deal %s — intent: %s, satisfaction: %s",
-            self.deal_id, intent, satisfaction,
-        )
+@agent.on_task_complete("record_outcome")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    deal_id = call.get_variable("deal_id")
 
-        stage_map = {
-            "yes/renew as-is": "contractsent",
-            "yes/would like to upgrade": "decisionmakerboughtin",
-            "undecided": "presentationscheduled",
-            "planning to cancel": "closedlost",
-        }
+    satisfaction = call.get_field("satisfaction") or "unknown"
+    intent = call.get_field("renewal_intent") or "unknown"
+    concerns = call.get_field("concerns") or ""
+    followup = call.get_field("preferred_followup") or "email"
 
-        note_lines = [
-            f"Renewal outreach call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Customer: {self.customer_name}",
-            f"Satisfaction: {satisfaction}",
-            f"Renewal intent: {intent}",
-            f"Preferred follow-up: {followup}",
-        ]
-        if concerns:
-            note_lines.append(f"Concerns: {concerns}")
+    logging.info(
+        "Renewal outcome for deal %s — intent: %s, satisfaction: %s",
+        deal_id, intent, satisfaction,
+    )
 
-        try:
-            new_stage = stage_map.get(intent)
-            if new_stage:
-                update_deal_stage(self.deal_id, new_stage)
-                logging.info("Updated deal %s to stage %s", self.deal_id, new_stage)
-            log_note_on_deal(self.deal_id, "\n".join(note_lines))
-        except Exception as e:
-            logging.error("Failed to update HubSpot for deal %s: %s", self.deal_id, e)
+    stage_map = {
+        "yes/renew as-is": "contractsent",
+        "yes/would like to upgrade": "decisionmakerboughtin",
+        "undecided": "presentationscheduled",
+        "planning to cancel": "closedlost",
+    }
 
-        if intent == "planning to cancel":
-            self.hangup(
-                final_instructions=(
-                    f"Express genuine concern and empathy to {self.customer_name}. "
-                    "Let them know their feedback has been noted and a customer success manager "
-                    "will reach out personally to understand their concerns and see what we can do. "
-                    "Thank them sincerely for being a customer."
-                )
-            )
-        elif intent in ("yes/renew as-is", "yes/would like to upgrade"):
-            email_note = "We'll send renewal paperwork via email shortly. " if followup in ("email", "both") else ""
-            call_note = "Someone will call to walk through the paperwork. " if followup in ("phone call", "both") else ""
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} enthusiastically for their continued loyalty. "
-                    + email_note
-                    + call_note
-                    + "Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their honesty. "
-                    "Let them know a customer success manager will be in touch to answer questions "
-                    "and explore the best path forward. Assure them there's no pressure. "
-                    "Wish them a great day."
-                )
-            )
+    note_lines = [
+        f"Renewal outreach call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Customer: {customer_name}",
+        f"Satisfaction: {satisfaction}",
+        f"Renewal intent: {intent}",
+        f"Preferred follow-up: {followup}",
+    ]
+    if concerns:
+        note_lines.append(f"Concerns: {concerns}")
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for renewal outreach on deal %s",
-            self.customer_name, self.deal_id,
-        )
-        try:
-            log_note_on_deal(
-                self.deal_id,
-                f"Renewal outreach attempted — {self.customer_name} unavailable, voicemail left.",
-            )
-        except Exception as e:
-            logging.error("Failed to log note for deal %s: %s", self.deal_id, e)
+    try:
+        new_stage = stage_map.get(intent)
+        if new_stage:
+            update_deal_stage(deal_id, new_stage)
+            logging.info("Updated deal %s to stage %s", deal_id, new_stage)
+        log_note_on_deal(deal_id, "\n".join(note_lines))
+    except Exception as e:
+        logging.error("Failed to update HubSpot for deal %s: %s", deal_id, e)
 
-        self.hangup(
+    if intent == "planning to cancel":
+        call.hangup(
             final_instructions=(
-                f"Leave a friendly voicemail for {self.customer_name} on behalf of Apex Solutions. "
-                f"Let them know you're calling about their upcoming renewal for {self.deal_name} "
-                "and ask them to call back or look out for an email from our team with next steps. "
-                "Keep it brief and warm."
+                f"Express genuine concern and empathy to {customer_name}. "
+                "Let them know their feedback has been noted and a customer success manager "
+                "will reach out personally to understand their concerns and see what we can do. "
+                "Thank them sincerely for being a customer."
+            )
+        )
+    elif intent in ("yes/renew as-is", "yes/would like to upgrade"):
+        email_note = "We'll send renewal paperwork via email shortly. " if followup in ("email", "both") else ""
+        call_note = "Someone will call to walk through the paperwork. " if followup in ("phone call", "both") else ""
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} enthusiastically for their continued loyalty. "
+                + email_note
+                + call_note
+                + "Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their honesty. "
+                "Let them know a customer success manager will be in touch to answer questions "
+                "and explore the best path forward. Assure them there's no pressure. "
+                "Wish them a great day."
             )
         )
 
@@ -266,11 +277,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.deal_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=RenewalOutreachController(
-            deal_id=args.deal_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "deal_id": args.deal_id,
+            "customer_name": args.name,
+        },
     )

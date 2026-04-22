@@ -89,184 +89,185 @@ def create_service_request(patient_id: str, medication_name: str, pharmacy: str,
     return resp.json().get("id", "")
 
 
-class MedicationRefillController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Riverside Health System",
+    purpose=(
+        "to help Riverside Health System patients request prescription refills "
+        "without needing to wait on hold or visit the clinic"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Riverside Health System",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help Riverside Health System patients request prescription refills "
-                "without needing to wait on hold or visit the clinic"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "submit_refill_request",
+        objective=(
+            "A patient has called to request a prescription refill. Verify their identity, "
+            "identify which medication they need refilled, and submit the refill request "
+            "through the EHR."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Riverside Health System. I'm Sam, and I can help "
+                "you request a prescription refill. Let me pull up your record."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A patient has called to request a prescription refill. Verify their identity, "
-                "identify which medication they need refilled, and submit the refill request "
-                "through the EHR."
+            guava.Field(
+                key="mrn",
+                field_type="text",
+                description="Ask for their medical record number (MRN).",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Riverside Health System. I'm Sam, and I can help "
-                    "you request a prescription refill. Let me pull up your record."
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description="Ask for their date of birth to verify identity. Repeat it back.",
+                required=True,
+            ),
+            guava.Field(
+                key="medication_name",
+                field_type="text",
+                description=(
+                    "Ask which medication they need refilled. "
+                    "Capture the name as they describe it — it doesn't need to be the exact clinical name."
                 ),
-                guava.Field(
-                    key="mrn",
-                    field_type="text",
-                    description="Ask for their medical record number (MRN).",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_pharmacy",
+                field_type="text",
+                description=(
+                    "Ask which pharmacy they'd like the refill sent to. "
+                    "Confirm the pharmacy name and location."
                 ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description="Ask for their date of birth to verify identity. Repeat it back.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="urgency",
+                field_type="multiple_choice",
+                description=(
+                    "Ask how soon they need the refill."
                 ),
-                guava.Field(
-                    key="medication_name",
-                    field_type="text",
-                    description=(
-                        "Ask which medication they need refilled. "
-                        "Capture the name as they describe it — it doesn't need to be the exact clinical name."
-                    ),
-                    required=True,
+                choices=["today — I'm almost out", "within a few days", "no rush"],
+                required=True,
+            ),
+            guava.Field(
+                key="side_effects",
+                field_type="multiple_choice",
+                description=(
+                    "Ask if they've experienced any side effects or concerns with this medication "
+                    "since their last prescription."
                 ),
-                guava.Field(
-                    key="preferred_pharmacy",
-                    field_type="text",
-                    description=(
-                        "Ask which pharmacy they'd like the refill sent to. "
-                        "Confirm the pharmacy name and location."
-                    ),
-                    required=True,
+                choices=["no issues", "yes, I have a concern"],
+                required=True,
+            ),
+            guava.Field(
+                key="side_effect_detail",
+                field_type="text",
+                description=(
+                    "If they have a concern, ask them to describe it. "
+                    "Capture the full detail — this will be flagged for the provider."
                 ),
-                guava.Field(
-                    key="urgency",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask how soon they need the refill."
-                    ),
-                    choices=["today — I'm almost out", "within a few days", "no rush"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="side_effects",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask if they've experienced any side effects or concerns with this medication "
-                        "since their last prescription."
-                    ),
-                    choices=["no issues", "yes, I have a concern"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="side_effect_detail",
-                    field_type="text",
-                    description=(
-                        "If they have a concern, ask them to describe it. "
-                        "Capture the full detail — this will be flagged for the provider."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.submit_refill_request,
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("submit_refill_request")
+def on_done(call: guava.Call) -> None:
+    mrn = (call.get_field("mrn") or "").strip()
+    dob = call.get_field("date_of_birth") or ""
+    medication = call.get_field("medication_name") or ""
+    pharmacy = call.get_field("preferred_pharmacy") or ""
+    urgency = call.get_field("urgency") or "within a few days"
+    side_effects = call.get_field("side_effects") or "no issues"
+    side_effect_detail = call.get_field("side_effect_detail") or ""
+
+    logging.info("Looking up patient by MRN: %s", mrn)
+    patient = None
+    try:
+        patient = find_patient_by_mrn(mrn)
+    except Exception as e:
+        logging.error("Patient lookup failed: %s", e)
+
+    if not patient:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know you couldn't locate their record with that MRN and date of birth. "
+                "Ask them to double-check the MRN or offer to transfer them to the front desk."
+            )
         )
+        return
 
-        self.accept_call()
+    patient_id = patient.get("id", "")
+    name_entry = (patient.get("name") or [{}])[0]
+    given = " ".join(name_entry.get("given", []))
+    family = name_entry.get("family", "")
+    patient_name = f"{given} {family}".strip() or "the patient"
 
-    def submit_refill_request(self):
-        mrn = (self.get_field("mrn") or "").strip()
-        dob = self.get_field("date_of_birth") or ""
-        medication = self.get_field("medication_name") or ""
-        pharmacy = self.get_field("preferred_pharmacy") or ""
-        urgency = self.get_field("urgency") or "within a few days"
-        side_effects = self.get_field("side_effects") or "no issues"
-        side_effect_detail = self.get_field("side_effect_detail") or ""
+    notes = (
+        f"Refill requested for: {medication}\n"
+        f"Preferred pharmacy: {pharmacy}\n"
+        f"Urgency: {urgency}\n"
+        f"Side effects reported: {side_effects}"
+    )
+    if side_effect_detail:
+        notes += f"\nSide effect detail: {side_effect_detail}"
 
-        logging.info("Looking up patient by MRN: %s", mrn)
-        patient = None
-        try:
-            patient = find_patient_by_mrn(mrn)
-        except Exception as e:
-            logging.error("Patient lookup failed: %s", e)
+    has_concern = side_effects == "yes, I have a concern"
 
-        if not patient:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you couldn't locate their record with that MRN and date of birth. "
-                    "Ask them to double-check the MRN or offer to transfer them to the front desk."
-                )
+    logging.info(
+        "Submitting refill request for patient %s — medication: %s, urgency: %s",
+        patient_id, medication, urgency,
+    )
+    request_id = ""
+    try:
+        request_id = create_service_request(patient_id, medication, pharmacy, notes)
+        logging.info("FHIR ServiceRequest created: %s", request_id)
+    except Exception as e:
+        logging.error("Failed to create FHIR ServiceRequest: %s", e)
+
+    if has_concern:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their refill request has been submitted but that "
+                "their concern about side effects has been flagged for the provider to review. "
+                "Let them know the provider's office will contact them before sending the refill. "
+                + (f"Reference ID: {request_id}. " if request_id else "")
+                + "Thank them for mentioning the concern and wish them good health."
             )
-            return
-
-        patient_id = patient.get("id", "")
-        name_entry = (patient.get("name") or [{}])[0]
-        given = " ".join(name_entry.get("given", []))
-        family = name_entry.get("family", "")
-        patient_name = f"{given} {family}".strip() or "the patient"
-
-        notes = (
-            f"Refill requested for: {medication}\n"
-            f"Preferred pharmacy: {pharmacy}\n"
-            f"Urgency: {urgency}\n"
-            f"Side effects reported: {side_effects}"
         )
-        if side_effect_detail:
-            notes += f"\nSide effect detail: {side_effect_detail}"
+    elif request_id:
+        sla = {
+            "today — I'm almost out": "within a few hours",
+            "within a few days": "within 1–2 business days",
+            "no rush": "within 2–3 business days",
+        }.get(urgency, "shortly")
 
-        has_concern = side_effects == "yes, I have a concern"
-
-        logging.info(
-            "Submitting refill request for patient %s — medication: %s, urgency: %s",
-            patient_id, medication, urgency,
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their refill request for {medication} has been submitted. "
+                f"It should be sent to {pharmacy} {sla}. "
+                + (f"Reference ID: {request_id}. " if request_id else "")
+                + "Thank them for calling Riverside Health System and wish them good health."
+            )
         )
-        request_id = ""
-        try:
-            request_id = create_service_request(patient_id, medication, pharmacy, notes)
-            logging.info("FHIR ServiceRequest created: %s", request_id)
-        except Exception as e:
-            logging.error("Failed to create FHIR ServiceRequest: %s", e)
-
-        if has_concern:
-            self.hangup(
-                final_instructions=(
-                    f"Let {patient_name} know their refill request has been submitted but that "
-                    "their concern about side effects has been flagged for the provider to review. "
-                    "Let them know the provider's office will contact them before sending the refill. "
-                    + (f"Reference ID: {request_id}. " if request_id else "")
-                    + "Thank them for mentioning the concern and wish them good health."
-                )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {patient_name} for a technical issue. Ask them to contact "
+                "the pharmacy directly or call back to resubmit. Thank them for their patience."
             )
-        elif request_id:
-            sla = {
-                "today — I'm almost out": "within a few hours",
-                "within a few days": "within 1–2 business days",
-                "no rush": "within 2–3 business days",
-            }.get(urgency, "shortly")
-
-            self.hangup(
-                final_instructions=(
-                    f"Let {patient_name} know their refill request for {medication} has been submitted. "
-                    f"It should be sent to {pharmacy} {sla}. "
-                    + (f"Reference ID: {request_id}. " if request_id else "")
-                    + "Thank them for calling Riverside Health System and wish them good health."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {patient_name} for a technical issue. Ask them to contact "
-                    "the pharmacy directly or call back to resubmit. Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=MedicationRefillController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

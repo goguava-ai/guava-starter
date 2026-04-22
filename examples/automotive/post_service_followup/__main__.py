@@ -7,45 +7,56 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Jamie",
+    organization="Lakeside Auto Group",
+    purpose=(
+        "follow up with customers after a service visit to confirm their "
+        "satisfaction, address any unresolved concerns, and invite them to "
+        "leave a review"
+    ),
+)
 
-class PostServiceFollowupController(guava.CallController):
-    def __init__(self, customer_name, vehicle, service_date, service_performed):
-        super().__init__()
-        self.customer_name = customer_name
-        self.vehicle = vehicle
-        self.service_date = service_date
-        self.service_performed = service_performed
 
-        self.set_persona(
-            organization_name="Lakeside Auto Group",
-            agent_name="Jamie",
-            agent_purpose=(
-                "follow up with customers after a service visit to confirm their "
-                "satisfaction, address any unresolved concerns, and invite them to "
-                "leave a review"
-            ),
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.start_followup,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def start_followup(self):
-        self.set_task(
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    vehicle = call.get_variable("vehicle")
+    service_date = call.get_variable("service_date")
+    service_performed = call.get_variable("service_performed")
+
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for post-service follow-up call.", customer_name)
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "customer_name": customer_name,
+            "vehicle": vehicle,
+            "service_date": service_date,
+            "service_performed": service_performed,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup()
+    elif outcome == "available":
+        call.set_task(
+            "followup",
             objective=(
-                f"Follow up with {self.customer_name} regarding their {self.vehicle} "
-                f"that was serviced on {self.service_date} for {self.service_performed}. "
+                f"Follow up with {customer_name} regarding their {vehicle} "
+                f"that was serviced on {service_date} for {service_performed}. "
                 f"Confirm they are satisfied with the work, check that the vehicle is "
                 f"performing well, address any outstanding concerns, and request permission "
                 f"to send a review link."
             ),
             checklist=[
                 guava.Say(
-                    f"Thank {self.customer_name} for choosing Lakeside Auto Group and "
-                    f"mention their recent visit on {self.service_date} for "
-                    f"{self.service_performed} on their {self.vehicle}."
+                    f"Thank {customer_name} for choosing Lakeside Auto Group and "
+                    f"mention their recent visit on {service_date} for "
+                    f"{service_performed} on their {vehicle}."
                 ),
                 guava.Field(
                     key="service_satisfaction_rating",
@@ -84,47 +95,37 @@ class PostServiceFollowupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "service_date": self.service_date,
-            "service_performed": self.service_performed,
-            "service_satisfaction_rating": self.get_field("service_satisfaction_rating"),
-            "issue_resolved": self.get_field("issue_resolved"),
-            "vehicle_performing_well": self.get_field("vehicle_performing_well"),
-            "follow_up_service_needed": self.get_field("follow_up_service_needed"),
-            "review_permission": self.get_field("review_permission"),
-        }
 
-        print(json.dumps(results, indent=2))
-        logging.info("Post-service follow-up results collected for %s", self.customer_name)
+@agent.on_task_complete("followup")
+def on_followup_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "customer_name": customer_name,
+        "vehicle": call.get_variable("vehicle"),
+        "service_date": call.get_variable("service_date"),
+        "service_performed": call.get_variable("service_performed"),
+        "service_satisfaction_rating": call.get_field("service_satisfaction_rating"),
+        "issue_resolved": call.get_field("issue_resolved"),
+        "vehicle_performing_well": call.get_field("vehicle_performing_well"),
+        "follow_up_service_needed": call.get_field("follow_up_service_needed"),
+        "review_permission": call.get_field("review_permission"),
+    }
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.customer_name} sincerely for their feedback and their "
-                f"continued trust in Lakeside Auto Group. If they gave permission for a "
-                f"review, let them know the link will be sent shortly. If any follow-up "
-                f"service was mentioned, assure them the service team will be in touch. "
-                f"Wish them a wonderful day."
-            )
+    print(json.dumps(results, indent=2))
+    logging.info("Post-service follow-up results collected for %s", customer_name)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} sincerely for their feedback and their "
+            f"continued trust in Lakeside Auto Group. If they gave permission for a "
+            f"review, let them know the link will be sent shortly. If any follow-up "
+            f"service was mentioned, assure them the service team will be in touch. "
+            f"Wish them a wonderful day."
         )
-
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for post-service follow-up call.", self.customer_name)
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "service_date": self.service_date,
-            "service_performed": self.service_performed,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
+    )
 
 
 if __name__ == "__main__":
@@ -147,13 +148,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PostServiceFollowupController(
-            customer_name=args.name,
-            vehicle=args.vehicle,
-            service_date=args.service_date,
-            service_performed=args.service_performed,
-        ),
+        variables={
+            "customer_name": args.name,
+            "vehicle": args.vehicle,
+            "service_date": args.service_date,
+            "service_performed": args.service_performed,
+        },
     )

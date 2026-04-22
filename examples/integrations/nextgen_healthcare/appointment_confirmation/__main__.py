@@ -40,51 +40,61 @@ def cancel_appointment(appointment_id: str, headers: dict) -> bool:
     return resp.ok
 
 
-class AppointmentConfirmationController(guava.CallController):
-    def __init__(self, patient_name: str, appointment_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment_id = appointment_id
-        self.appointment = None
-        self.headers = {}
+agent = guava.Agent(
+    name="Morgan",
+    organization="Metro Specialty Clinic",
+    purpose="to confirm upcoming appointments and help patients cancel if needed",
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {patient_name} from Metro Specialty Clinic "
+                "asking them to confirm or cancel their upcoming appointment by calling back. "
+                "Be brief and friendly."
+            )
+        )
+    elif outcome == "available":
         try:
             token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            self.appointment = get_appointment(appointment_id, self.headers)
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            appointment = get_appointment(appointment_id, headers)
             logging.info("Appointment %s loaded from NextGen.", appointment_id)
         except Exception as e:
             logging.error("Failed to load appointment %s: %s", appointment_id, e)
+            appointment = None
+            headers = {}
 
-        self.set_persona(
-            organization_name="Metro Specialty Clinic",
-            agent_name="Morgan",
-            agent_purpose="to confirm upcoming appointments and help patients cancel if needed",
-        )
+        call.appointment = appointment
+        call.headers = headers
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.confirm_appointment,
-            on_failure=self.leave_voicemail,
-        )
-
-    def confirm_appointment(self):
-        if not self.appointment:
-            self.hangup(
+        if not appointment:
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.patient_name} know you're calling from Metro Specialty Clinic "
+                    f"Let {patient_name} know you're calling from Metro Specialty Clinic "
                     "to confirm their appointment, but you couldn't retrieve the details. "
                     "Ask them to call the office. Be apologetic."
                 )
             )
             return
 
-        start = self.appointment.get("start", "")
-        appt_type_coding = self.appointment.get("appointmentType", {}).get("coding", [])
+        start = appointment.get("start", "")
+        appt_type_coding = appointment.get("appointmentType", {}).get("coding", [])
         appt_type = appt_type_coding[0].get("display", "appointment") if appt_type_coding else "appointment"
 
         provider = ""
-        for p in self.appointment.get("participant", []):
+        for p in appointment.get("participant", []):
             ref = p.get("actor", {}).get("reference", "")
             display = p.get("actor", {}).get("display", "")
             if "Practitioner" in ref and display:
@@ -98,11 +108,12 @@ class AppointmentConfirmationController(guava.CallController):
         except (ValueError, AttributeError):
             display_time = start or "your upcoming appointment"
 
-        self.set_task(
-            objective=f"Confirm {self.patient_name}'s {appt_type} with {provider} on {display_time}.",
+        call.set_task(
+            "appointment_confirmation",
+            objective=f"Confirm {patient_name}'s {appt_type} with {provider} on {display_time}.",
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Morgan calling from Metro Specialty Clinic. "
+                    f"Hi {patient_name}, this is Morgan calling from Metro Specialty Clinic. "
                     f"I'm calling to confirm your {appt_type} appointment with {provider} "
                     f"scheduled for {display_time}."
                 ),
@@ -114,46 +125,55 @@ class AppointmentConfirmationController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=lambda: self.handle_response(appt_type, display_time),
         )
 
-    def handle_response(self, appt_type: str, display_time: str):
-        attendance = self.get_field("attendance") or ""
 
-        if "cancel" in attendance:
-            try:
-                cancelled = cancel_appointment(self.appointment_id, self.headers)
-                logging.info("Appointment %s cancelled: %s", self.appointment_id, cancelled)
-            except Exception as e:
-                logging.error("Cancel failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their {appt_type} has been cancelled. "
-                    "Invite them to call back or go online to reschedule. Wish them a great day."
-                )
-            )
-        elif "reschedule" in attendance:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know a scheduling coordinator will call them back "
-                    "with new available times. Thank them for letting us know."
-                )
-            )
-        else:
-            logging.info("Appointment %s confirmed by %s.", self.appointment_id, self.patient_name)
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for confirming. Remind them to arrive a few minutes "
-                    "early and bring their insurance card and photo ID. Wish them a great day."
-                )
-            )
+@agent.on_task_complete("appointment_confirmation")
+def on_appointment_confirmation_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+    attendance = call.get_field("attendance") or ""
 
-    def leave_voicemail(self):
-        self.hangup(
+    # Reconstruct appt_type and display_time from stored appointment data
+    appointment = call.appointment
+    appt_type = "appointment"
+    if appointment:
+        appt_type_coding = appointment.get("appointmentType", {}).get("coding", [])
+        appt_type = appt_type_coding[0].get("display", "appointment") if appt_type_coding else "appointment"
+        start = appointment.get("start", "")
+        try:
+            dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            display_time = dt.strftime("%A, %B %-d at %-I:%M %p")
+        except (ValueError, AttributeError):
+            display_time = start or "your upcoming appointment"
+    else:
+        display_time = "your upcoming appointment"
+
+    if "cancel" in attendance:
+        try:
+            cancelled = cancel_appointment(appointment_id, call.headers)
+            logging.info("Appointment %s cancelled: %s", appointment_id, cancelled)
+        except Exception as e:
+            logging.error("Cancel failed: %s", e)
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Metro Specialty Clinic "
-                "asking them to confirm or cancel their upcoming appointment by calling back. "
-                "Be brief and friendly."
+                f"Let {patient_name} know their {appt_type} has been cancelled. "
+                "Invite them to call back or go online to reschedule. Wish them a great day."
+            )
+        )
+    elif "reschedule" in attendance:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know a scheduling coordinator will call them back "
+                "with new available times. Thank them for letting us know."
+            )
+        )
+    else:
+        logging.info("Appointment %s confirmed by %s.", appointment_id, patient_name)
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for confirming. Remind them to arrive a few minutes "
+                "early and bring their insurance card and photo ID. Wish them a great day."
             )
         )
 
@@ -166,11 +186,11 @@ if __name__ == "__main__":
     parser.add_argument("--appointment-id", required=True)
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentConfirmationController(
-            patient_name=args.name,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment_id": args.appointment_id,
+        },
     )

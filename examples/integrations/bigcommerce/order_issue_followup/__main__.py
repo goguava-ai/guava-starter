@@ -78,107 +78,124 @@ def update_order_status(order_id: int, status_id: int) -> dict:
     return resp.json()
 
 
-class OrderIssueFollowupController(guava.CallController):
-    def __init__(self, customer_name: str, order_id: int, issue_type: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.order_id = order_id
-        self.issue_type = issue_type
+agent = guava.Agent(
+    name="Sierra",
+    organization="Crestline Outdoor Gear",
+    purpose="to proactively reach customers about issues with their orders and resolve them",
+)
 
-        self.order = None
-        try:
-            self.order = fetch_order(order_id)
-        except Exception as e:
-            logging.error("Pre-fetch failed for order %s: %s", order_id, e)
 
-        self.issue_description = ISSUE_DESCRIPTIONS.get(
-            issue_type, "there is an issue with your order that needs your attention"
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_id = int(call.get_variable("order_id"))
+    issue_type = call.get_variable("issue_type")
+
+    order = None
+    try:
+        order = fetch_order(order_id)
+    except Exception as e:
+        logging.error("Pre-fetch failed for order %s: %s", order_id, e)
+
+    issue_description = ISSUE_DESCRIPTIONS.get(
+        issue_type, "there is an issue with your order that needs your attention"
+    )
+    choices = ISSUE_CHOICES.get(issue_type, ["speak with support"])
+
+    call.data = {
+        "order": order,
+        "issue_description": issue_description,
+        "choices": choices,
+    }
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        customer_name = call.get_variable("customer_name")
+        order_id = call.get_variable("order_id")
+        issue_description = call.data.get("issue_description", "there is an issue with your order")
+        call.hangup(
+            final_instructions=(
+                f"Leave a concise voicemail for {customer_name}. "
+                f"Mention you are Sierra from Crestline Outdoor Gear calling about order #{order_id}. "
+                f"Explain that {issue_description} and that you'd like to help resolve it. "
+                "Provide a callback number (use 1-800-555-0192) and ask them to call back at their earliest convenience."
+            )
         )
-        self.choices = ISSUE_CHOICES.get(issue_type, ["speak with support"])
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        order_id = call.get_variable("order_id")
+        issue_description = call.data.get("issue_description", "there is an issue with your order")
+        choices = call.data.get("choices", ["speak with support"])
 
-        self.set_persona(
-            organization_name="Crestline Outdoor Gear",
-            agent_name="Sierra",
-            agent_purpose="to proactively reach customers about issues with their orders and resolve them",
-        )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        self.set_task(
+        call.set_task(
+            "order_issue_resolution",
             objective=(
-                f"Inform {self.customer_name} about the issue with order #{self.order_id}, "
+                f"Inform {customer_name} about the issue with order #{order_id}, "
                 f"explain the situation clearly, offer the available resolution options, "
                 "and update the order status based on their choice."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, may I please speak with {self.customer_name}? "
-                    f"This is Sierra calling from Crestline Outdoor Gear regarding order #{self.order_id}."
+                    f"Hi, may I please speak with {customer_name}? "
+                    f"This is Sierra calling from Crestline Outdoor Gear regarding order #{order_id}."
                 ),
                 guava.Say(
-                    f"I'm reaching out because {self.issue_description}. "
+                    f"I'm reaching out because {issue_description}. "
                     "I'd like to help you resolve this as quickly as possible."
                 ),
                 guava.Field(
                     key="resolution",
                     field_type="multiple_choice",
                     description=(
-                        f"Explain each option clearly and ask {self.customer_name} how they'd like to proceed."
+                        f"Explain each option clearly and ask {customer_name} how they'd like to proceed."
                     ),
-                    choices=self.choices,
+                    choices=choices,
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        resolution = self.get_field("resolution")
-        new_status_id = CHOICE_STATUS_MAP.get(resolution)
-        update_succeeded = False
 
-        if new_status_id is not None:
-            try:
-                update_order_status(self.order_id, new_status_id)
-                update_succeeded = True
-                logging.info(
-                    "Order %s updated to status %s (%s) based on resolution '%s'.",
-                    self.order_id, new_status_id, ORDER_STATUSES.get(new_status_id), resolution,
-                )
-            except Exception as e:
-                logging.error("Failed to update order %s: %s", self.order_id, e)
+@agent.on_task_complete("order_issue_resolution")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_id = int(call.get_variable("order_id"))
 
-        if update_succeeded:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time and confirm that their choice "
-                    f"of '{resolution}' has been applied to order #{self.order_id}. "
-                    "Tell them they will receive a confirmation email shortly. "
-                    "Be warm and professional."
-                )
+    resolution = call.get_field("resolution")
+    new_status_id = CHOICE_STATUS_MAP.get(resolution)
+    update_succeeded = False
+
+    if new_status_id is not None:
+        try:
+            update_order_status(order_id, new_status_id)
+            update_succeeded = True
+            logging.info(
+                "Order %s updated to status %s (%s) based on resolution '%s'.",
+                order_id, new_status_id, ORDER_STATUSES.get(new_status_id), resolution,
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {self.customer_name} and let them know their preference of "
-                    f"'{resolution}' was noted but there was a system error applying it automatically. "
-                    "Assure them a support agent will follow up within one business day. "
-                    "Thank them for their patience."
-                )
-            )
+        except Exception as e:
+            logging.error("Failed to update order %s: %s", order_id, e)
 
-    def recipient_unavailable(self):
-        self.hangup(
+    if update_succeeded:
+        call.hangup(
             final_instructions=(
-                f"Leave a concise voicemail for {self.customer_name}. "
-                f"Mention you are Sierra from Crestline Outdoor Gear calling about order #{self.order_id}. "
-                f"Explain that {self.issue_description} and that you'd like to help resolve it. "
-                "Provide a callback number (use 1-800-555-0192) and ask them to call back at their earliest convenience."
+                f"Thank {customer_name} for their time and confirm that their choice "
+                f"of '{resolution}' has been applied to order #{order_id}. "
+                "Tell them they will receive a confirmation email shortly. "
+                "Be warm and professional."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {customer_name} and let them know their preference of "
+                f"'{resolution}' was noted but there was a system error applying it automatically. "
+                "Assure them a support agent will follow up within one business day. "
+                "Thank them for their patience."
             )
         )
 
@@ -199,12 +216,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=OrderIssueFollowupController(
-            customer_name=args.name,
-            order_id=args.order_id,
-            issue_type=args.issue,
-        ),
+        variables={
+            "customer_name": args.name,
+            "order_id": str(args.order_id),
+            "issue_type": args.issue,
+        },
     )

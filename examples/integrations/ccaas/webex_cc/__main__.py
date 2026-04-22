@@ -8,39 +8,47 @@ import requests
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Jordan",
+    organization="Evergreen Family Clinic",
+    purpose=(
+        "to confirm upcoming patient appointments, assist with rescheduling "
+        "if needed, and ensure the clinic schedule stays accurate"
+    ),
+)
 
-class OutboundAppointmentConfirmationController(guava.CallController):
-    def __init__(self, patient_name: str, appointment: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment = appointment
 
-        self.set_persona(
-            organization_name="Evergreen Family Clinic",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to confirm upcoming patient appointments, assist with rescheduling "
-                "if needed, and ensure the clinic schedule stays accurate"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        appointment = call.get_variable("appointment")
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief, friendly voicemail "
+                "from Evergreen Family Clinic asking them to call back to confirm or "
+                f"reschedule their appointment on {appointment}. Provide the clinic "
+                "phone number if available."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_confirmation,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_confirmation(self):
-        self.set_task(
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        appointment = call.get_variable("appointment")
+        call.set_task(
+            "save_results",
             objective=(
-                f"You've reached {self.patient_name}. Confirm their upcoming appointment at "
-                f"Evergreen Family Clinic scheduled for {self.appointment}. If they need to "
+                f"You've reached {patient_name}. Confirm their upcoming appointment at "
+                f"Evergreen Family Clinic scheduled for {appointment}. If they need to "
                 "reschedule, collect their preferred date and time. Be warm and professional."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Jordan calling from Evergreen Family Clinic. "
-                    f"I'm reaching out to confirm your appointment scheduled for {self.appointment}."
+                    f"Hi {patient_name}, this is Jordan calling from Evergreen Family Clinic. "
+                    f"I'm reaching out to confirm your appointment scheduled for {appointment}."
                 ),
                 guava.Field(
                     key="appointment_confirmed",
@@ -88,95 +96,89 @@ class OutboundAppointmentConfirmationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Jordan",
-            "organization": "Evergreen Family Clinic",
-            "use_case": "outbound_appointment_confirmation",
-            "patient_name": self.patient_name,
-            "appointment": self.appointment,
-            "fields": {
-                "appointment_confirmed": self.get_field("appointment_confirmed"),
-                "preferred_date": self.get_field("preferred_date"),
-                "preferred_time": self.get_field("preferred_time"),
-                "reason_for_change": self.get_field("reason_for_change"),
-                "additional_notes": self.get_field("additional_notes"),
-            },
+
+@agent.on_task_complete("save_results")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment = call.get_variable("appointment")
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Jordan",
+        "organization": "Evergreen Family Clinic",
+        "use_case": "outbound_appointment_confirmation",
+        "patient_name": patient_name,
+        "appointment": appointment,
+        "fields": {
+            "appointment_confirmed": call.get_field("appointment_confirmed"),
+            "preferred_date": call.get_field("preferred_date"),
+            "preferred_time": call.get_field("preferred_time"),
+            "reason_for_change": call.get_field("reason_for_change"),
+            "additional_notes": call.get_field("additional_notes"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Appointment confirmation results saved locally.")
+
+    # Push task to Webex Contact Center
+    try:
+        base_url = os.environ["WEBEX_CC_BASE_URL"]
+        token = os.environ["WEBEX_CC_ACCESS_TOKEN"]
+        org_id = os.environ["WEBEX_CC_ORG_ID"]
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
         }
-        print(json.dumps(results, indent=2))
-        logging.info("Appointment confirmation results saved locally.")
 
-        # Push task to Webex Contact Center
-        try:
-            base_url = os.environ["WEBEX_CC_BASE_URL"]
-            token = os.environ["WEBEX_CC_ACCESS_TOKEN"]
-            org_id = os.environ["WEBEX_CC_ORG_ID"]
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            }
-
-            confirmed = self.get_field("appointment_confirmed", "")
-            if confirmed.strip().lower() == "reschedule":
-                task_title = f"Reschedule appointment for {self.patient_name}"
-            else:
-                task_title = f"Appointment confirmed for {self.patient_name}"
-
-            task_payload = {
-                "orgId": org_id,
-                "title": task_title,
-                "description": json.dumps({
-                    "patient_name": self.patient_name,
-                    "original_appointment": self.appointment,
-                    "appointment_confirmed": self.get_field("appointment_confirmed"),
-                    "preferred_date": self.get_field("preferred_date"),
-                    "preferred_time": self.get_field("preferred_time"),
-                    "reason_for_change": self.get_field("reason_for_change"),
-                    "additional_notes": self.get_field("additional_notes"),
-                }),
-                "channel": "voice",
-                "source": "guava_voice_agent",
-            }
-            resp = requests.post(
-                f"{base_url}/v1/contactCenter/tasks",
-                headers=headers,
-                json=task_payload,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            logging.info("Webex CC task created successfully.")
-        except Exception as e:
-            logging.error("Failed to push to Webex CC: %s", e)
-
-        confirmed = self.get_field("appointment_confirmed", "")
+        confirmed = call.get_field("appointment_confirmed", "")
         if confirmed.strip().lower() == "reschedule":
-            self.hangup(
-                final_instructions=(
-                    "Thank the patient for letting us know. Let them know that someone from "
-                    "Evergreen Family Clinic will call back to confirm a new appointment time "
-                    "based on their preference. Wish them a great day."
-                )
-            )
+            task_title = f"Reschedule appointment for {patient_name}"
         else:
-            self.hangup(
-                final_instructions=(
-                    "Thank the patient for confirming. Remind them to arrive 10 minutes early "
-                    "and to bring their insurance card and a photo ID. Let them know we look "
-                    "forward to seeing them. Wish them a great day."
-                )
-            )
+            task_title = f"Appointment confirmed for {patient_name}"
 
-    def recipient_unavailable(self):
-        self.hangup(
+        task_payload = {
+            "orgId": org_id,
+            "title": task_title,
+            "description": json.dumps({
+                "patient_name": patient_name,
+                "original_appointment": appointment,
+                "appointment_confirmed": call.get_field("appointment_confirmed"),
+                "preferred_date": call.get_field("preferred_date"),
+                "preferred_time": call.get_field("preferred_time"),
+                "reason_for_change": call.get_field("reason_for_change"),
+                "additional_notes": call.get_field("additional_notes"),
+            }),
+            "channel": "voice",
+            "source": "guava_voice_agent",
+        }
+        resp = requests.post(
+            f"{base_url}/v1/contactCenter/tasks",
+            headers=headers,
+            json=task_payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logging.info("Webex CC task created successfully.")
+    except Exception as e:
+        logging.error("Failed to push to Webex CC: %s", e)
+
+    confirmed = call.get_field("appointment_confirmed", "")
+    if confirmed.strip().lower() == "reschedule":
+        call.hangup(
             final_instructions=(
-                "We were unable to reach the patient. Leave a brief, friendly voicemail "
-                "from Evergreen Family Clinic asking them to call back to confirm or "
-                f"reschedule their appointment on {self.appointment}. Provide the clinic "
-                "phone number if available."
+                "Thank the patient for letting us know. Let them know that someone from "
+                "Evergreen Family Clinic will call back to confirm a new appointment time "
+                "based on their preference. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Thank the patient for confirming. Remind them to arrive 10 minutes early "
+                "and to bring their insurance card and a photo ID. Let them know we look "
+                "forward to seeing them. Wish them a great day."
             )
         )
 
@@ -202,11 +204,11 @@ if __name__ == "__main__":
         args.appointment,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=OutboundAppointmentConfirmationController(
-            patient_name=args.name,
-            appointment=args.appointment,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment": args.appointment,
+        },
     )

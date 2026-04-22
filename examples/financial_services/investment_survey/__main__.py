@@ -8,33 +8,40 @@ from datetime import datetime, timezone
 
 
 
-class InvestmentSurveyController(guava.CallController):
-    def __init__(self, contact_name: str, advisor: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.advisor = advisor
+agent = guava.Agent(
+    name="Sam",
+    organization="First National Wealth Management",
+    purpose=(
+        "to conduct a brief client satisfaction survey covering advisor performance, "
+        "portfolio satisfaction, and overall service quality"
+    ),
+)
 
-        self.set_persona(
-            organization_name="First National Wealth Management",
-            agent_name="Sam",
-            agent_purpose=(
-                "to conduct a brief client satisfaction survey covering advisor performance, "
-                "portfolio satisfaction, and overall service quality"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"You were unable to reach {call.get_variable('contact_name')}. Leave a brief, friendly voicemail "
+                f"identifying yourself as Sam from First National Wealth Management. Let them know "
+                f"you were calling to gather a few minutes of feedback about their experience with "
+                f"us, and that their input is very important to us. Ask them to call back at their "
+                f"convenience or mention that you may follow up at another time."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_survey(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "survey",
             objective=(
                 f"You are conducting a client satisfaction survey on behalf of First National "
-                f"Wealth Management. You are speaking with {self.contact_name}, a client of "
-                f"{self.advisor}. The survey is designed to gather structured feedback on advisor "
+                f"Wealth Management. You are speaking with {call.get_variable('contact_name')}, a client of "
+                f"{call.get_variable('advisor')}. The survey is designed to gather structured feedback on advisor "
                 f"performance, portfolio satisfaction, and service quality for CRM and compliance "
                 f"reporting. Keep the tone warm, respectful, and efficient. This survey should "
                 f"take no more than 5 minutes. Thank the client for their time at each step and "
@@ -43,7 +50,7 @@ class InvestmentSurveyController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.contact_name}, this is Sam calling from First National Wealth "
+                    f"Hello {call.get_variable('contact_name')}, this is Sam calling from First National Wealth "
                     f"Management. I am reaching out today to gather a few minutes of feedback about "
                     f"your experience with us. Your responses help us ensure we are delivering the "
                     f"best possible service. Everything you share is confidential. Do you have about "
@@ -51,12 +58,12 @@ class InvestmentSurveyController(guava.CallController):
                 ),
                 guava.Say(
                     f"Great, let's get started. The first question is about your advisor, "
-                    f"{self.advisor}."
+                    f"{call.get_variable('advisor')}."
                 ),
                 guava.Field(
                     key="advisor_rating",
                     description=(
-                        f"Ask the client to rate their overall satisfaction with {self.advisor} "
+                        f"Ask the client to rate their overall satisfaction with {call.get_variable('advisor')} "
                         f"on a scale of 1 to 5, where 1 is very dissatisfied and 5 is very "
                         f"satisfied. Record the numeric rating they provide."
                     ),
@@ -111,42 +118,32 @@ class InvestmentSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "advisor": self.advisor,
-            "advisor_rating": self.get_field("advisor_rating"),
-            "portfolio_satisfaction": self.get_field("portfolio_satisfaction"),
-            "service_quality_rating": self.get_field("service_quality_rating"),
-            "likelihood_to_recommend": self.get_field("likelihood_to_recommend"),
-            "improvement_suggestions": self.get_field("improvement_suggestions"),
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.contact_name} sincerely for taking the time to complete the survey. "
-                f"Let them know their feedback is genuinely valued and will be reviewed by the "
-                f"leadership team at First National Wealth Management. If they gave a low rating "
-                f"on any question, acknowledge it and assure them that the team will work to "
-                f"improve. Remind them that {self.advisor} is always available if they have any "
-                f"questions about their portfolio, and wish them a great day before closing the call."
-            )
-        )
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"You were unable to reach {self.contact_name}. Leave a brief, friendly voicemail "
-                f"identifying yourself as Sam from First National Wealth Management. Let them know "
-                f"you were calling to gather a few minutes of feedback about their experience with "
-                f"us, and that their input is very important to us. Ask them to call back at their "
-                f"convenience or mention that you may follow up at another time."
-            )
+@agent.on_task_complete("survey")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "advisor": call.get_variable("advisor"),
+        "advisor_rating": call.get_field("advisor_rating"),
+        "portfolio_satisfaction": call.get_field("portfolio_satisfaction"),
+        "service_quality_rating": call.get_field("service_quality_rating"),
+        "likelihood_to_recommend": call.get_field("likelihood_to_recommend"),
+        "improvement_suggestions": call.get_field("improvement_suggestions"),
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('contact_name')} sincerely for taking the time to complete the survey. "
+            f"Let them know their feedback is genuinely valued and will be reviewed by the "
+            f"leadership team at First National Wealth Management. If they gave a low rating "
+            f"on any question, acknowledge it and assure them that the team will work to "
+            f"improve. Remind them that {call.get_variable('advisor')} is always available if they have any "
+            f"questions about their portfolio, and wish them a great day before closing the call."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -163,13 +160,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    controller = InvestmentSurveyController(
-        contact_name=args.name,
-        advisor=args.advisor,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "advisor": args.advisor,
+        },
     )

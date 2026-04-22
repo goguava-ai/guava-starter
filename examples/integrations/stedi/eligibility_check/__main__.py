@@ -68,122 +68,123 @@ def is_coverage_active(response: dict) -> tuple[bool, str]:
     return False, plan_name
 
 
-class EligibilityCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Ridgeline Health",
+    purpose=(
+        "to help patients confirm their insurance coverage is active "
+        "before their upcoming visit"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Ridgeline Health",
-            agent_name="Alex",
-            agent_purpose=(
-                "to help patients confirm their insurance coverage is active "
-                "before their upcoming visit"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "run_eligibility_check",
+        objective=(
+            "A patient has called to verify their insurance before an appointment. "
+            "Collect their insurance card details and run an eligibility check."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Ridgeline Health. I'm Alex. "
+                "I can verify your insurance right now — I just need a few details from your card."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A patient has called to verify their insurance before an appointment. "
-                "Collect their insurance card details and run an eligibility check."
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask for the patient's first name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Ridgeline Health. I'm Alex. "
-                    "I can verify your insurance right now — I just need a few details from your card."
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for the patient's last name.",
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="date",
+                description="Ask for their date of birth.",
+                required=True,
+            ),
+            guava.Field(
+                key="member_id",
+                field_type="text",
+                description=(
+                    "Ask for their insurance member ID. "
+                    "Let them know this appears on their insurance card."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask for the patient's first name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="payer_id",
+                field_type="text",
+                description=(
+                    "Ask which insurance company they have — for example, Aetna, "
+                    "UnitedHealthcare, BlueCross BlueShield, Cigna, or Humana. "
+                    "Capture the insurer name or trading partner ID."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for the patient's last name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="date",
-                    description="Ask for their date of birth.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="member_id",
-                    field_type="text",
-                    description=(
-                        "Ask for their insurance member ID. "
-                        "Let them know this appears on their insurance card."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="payer_id",
-                    field_type="text",
-                    description=(
-                        "Ask which insurance company they have — for example, Aetna, "
-                        "UnitedHealthcare, BlueCross BlueShield, Cigna, or Humana. "
-                        "Capture the insurer name or trading partner ID."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.run_eligibility_check,
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("run_eligibility_check")
+def run_eligibility_check(call: guava.Call) -> None:
+    first_name = call.get_field("first_name") or ""
+    last_name = call.get_field("last_name") or ""
+    dob = call.get_field("date_of_birth") or ""
+    member_id = call.get_field("member_id") or ""
+    payer_id = call.get_field("payer_id") or ""
+
+    logging.info(
+        "Checking eligibility — patient: %s %s, payer: %s, member: %s",
+        first_name, last_name, payer_id, member_id,
+    )
+
+    try:
+        result = check_eligibility(payer_id, member_id, first_name, last_name, dob)
+        active, plan_name = is_coverage_active(result)
+    except Exception as e:
+        logging.error("Stedi eligibility check failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {first_name} — there was a technical issue verifying their "
+                "coverage. Ask them to bring their insurance card to the appointment and we "
+                "will verify at check-in. Thank them for their patience."
+            )
         )
+        return
 
-        self.accept_call()
-
-    def run_eligibility_check(self):
-        first_name = self.get_field("first_name") or ""
-        last_name = self.get_field("last_name") or ""
-        dob = self.get_field("date_of_birth") or ""
-        member_id = self.get_field("member_id") or ""
-        payer_id = self.get_field("payer_id") or ""
-
-        logging.info(
-            "Checking eligibility — patient: %s %s, payer: %s, member: %s",
-            first_name, last_name, payer_id, member_id,
+    if active:
+        logging.info("Active coverage confirmed — plan: %s", plan_name)
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know their coverage under {plan_name} is currently active. "
+                "Remind them to bring their insurance card to the appointment. "
+                "Thank them for calling Ridgeline Health."
+            )
         )
-
-        try:
-            result = check_eligibility(payer_id, member_id, first_name, last_name, dob)
-            active, plan_name = is_coverage_active(result)
-        except Exception as e:
-            logging.error("Stedi eligibility check failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {first_name} — there was a technical issue verifying their "
-                    "coverage. Ask them to bring their insurance card to the appointment and we "
-                    "will verify at check-in. Thank them for their patience."
-                )
+    else:
+        logging.info("Coverage not confirmed active — plan: %s", plan_name)
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know we were unable to confirm active coverage under "
+                f"{plan_name} with the details they provided. "
+                "Suggest they double-check their member ID or contact their insurer directly. "
+                "Let them know our billing team is also available to help. Be empathetic."
             )
-            return
-
-        if active:
-            logging.info("Active coverage confirmed — plan: %s", plan_name)
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know their coverage under {plan_name} is currently active. "
-                    "Remind them to bring their insurance card to the appointment. "
-                    "Thank them for calling Ridgeline Health."
-                )
-            )
-        else:
-            logging.info("Coverage not confirmed active — plan: %s", plan_name)
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know we were unable to confirm active coverage under "
-                    f"{plan_name} with the details they provided. "
-                    "Suggest they double-check their member ID or contact their insurer directly. "
-                    "Let them know our billing team is also available to help. Be empathetic."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=EligibilityCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

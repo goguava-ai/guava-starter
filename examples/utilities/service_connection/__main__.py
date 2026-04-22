@@ -7,35 +7,51 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Casey",
+    organization="Metro Power & Light - New Connections",
+    purpose=(
+        "coordinate new electric service activation appointments with customers who are "
+        "moving into the Metro Power & Light service area, confirm their move-in details, "
+        "and schedule a convenient connection date"
+    ),
+)
 
-class ServiceConnectionController(guava.CallController):
-    def __init__(self, contact_name, service_address, application_number):
-        super().__init__()
-        self.contact_name = contact_name
-        self.service_address = service_address
-        self.application_number = application_number
 
-        self.set_persona(
-            organization_name="Metro Power & Light - New Connections",
-            agent_name="Casey",
-            agent_purpose=(
-                "coordinate new electric service activation appointments with customers who are "
-                "moving into the Metro Power & Light service area, confirm their move-in details, "
-                "and schedule a convenient connection date"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "contact_name": call.get_variable("contact_name"),
+            "service_address": call.get_variable("service_address"),
+            "application_number": call.get_variable("application_number"),
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "Leave a voicemail letting the customer know that Metro Power & Light New Connections "
+                "called to schedule their electric service activation appointment for their upcoming "
+                "move. Ask them to call back or visit metropowerandlight.com to schedule online, "
+                "referencing their application number. Let them know scheduling promptly ensures "
+                "power is ready on move-in day."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_scheduling,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_scheduling(self):
-        self.set_task(
+    elif outcome == "available":
+        contact_name = call.get_variable("contact_name")
+        service_address = call.get_variable("service_address")
+        application_number = call.get_variable("application_number")
+        call.set_task(
+            "service_connection_scheduling",
             objective=(
-                f"Speak with {self.contact_name} regarding their new service application "
-                f"(application {self.application_number}) for the address at {self.service_address}. "
+                f"Speak with {contact_name} regarding their new service application "
+                f"(application {application_number}) for the address at {service_address}. "
                 "Confirm their move-in date, schedule a service connection appointment that works "
                 "for their timeline, and verify billing details. Also offer optional programs "
                 "such as autopay and paperless billing to help them get set up conveniently "
@@ -43,9 +59,9 @@ class ServiceConnectionController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name.split()[0]}, this is Casey calling from Metro Power & Light "
+                    f"Hi {contact_name.split()[0]}, this is Casey calling from Metro Power & Light "
                     f"New Connections. I'm reaching out about your application to start electric service "
-                    f"at {self.service_address} — application number {self.application_number}. "
+                    f"at {service_address} — application number {application_number}. "
                     f"I'd like to confirm a few details and get your connection appointment scheduled "
                     f"so your power is ready when you move in."
                 ),
@@ -86,53 +102,35 @@ class ServiceConnectionController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def recipient_unavailable(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "service_address": self.service_address,
-            "application_number": self.application_number,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Leave a voicemail letting the customer know that Metro Power & Light New Connections "
-                "called to schedule their electric service activation appointment for their upcoming "
-                "move. Ask them to call back or visit metropowerandlight.com to schedule online, "
-                "referencing their application number. Let them know scheduling promptly ensures "
-                "power is ready on move-in day."
-            )
-        )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": self.contact_name,
-            "service_address": self.service_address,
-            "application_number": self.application_number,
-            "fields": {
-                "move_in_date": self.get_field("move_in_date"),
-                "preferred_connection_date": self.get_field("preferred_connection_date"),
-                "preferred_time_window": self.get_field("preferred_time_window"),
-                "billing_address_confirmed": self.get_field("billing_address_confirmed"),
-                "autopay_interest": self.get_field("autopay_interest"),
-                "paperless_billing_interest": self.get_field("paperless_billing_interest"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Confirm the connection appointment date and time window back to the customer. "
-                "Let them know that a technician will be on-site during the scheduled window to "
-                "activate service, and that someone 18 or older must be present at the property. "
-                "Mention they will receive a confirmation by email or text. Welcome them to Metro "
-                "Power & Light and wish them well with their move."
-            )
+@agent.on_task_complete("service_connection_scheduling")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "service_address": call.get_variable("service_address"),
+        "application_number": call.get_variable("application_number"),
+        "fields": {
+            "move_in_date": call.get_field("move_in_date"),
+            "preferred_connection_date": call.get_field("preferred_connection_date"),
+            "preferred_time_window": call.get_field("preferred_time_window"),
+            "billing_address_confirmed": call.get_field("billing_address_confirmed"),
+            "autopay_interest": call.get_field("autopay_interest"),
+            "paperless_billing_interest": call.get_field("paperless_billing_interest"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            "Confirm the connection appointment date and time window back to the customer. "
+            "Let them know that a technician will be on-site during the scheduled window to "
+            "activate service, and that someone 18 or older must be present at the property. "
+            "Mention they will receive a confirmation by email or text. Welcome them to Metro "
+            "Power & Light and wish them well with their move."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -154,14 +152,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    controller = ServiceConnectionController(
-        contact_name=args.name,
-        service_address=args.service_address,
-        application_number=args.application_number,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "service_address": args.service_address,
+            "application_number": args.application_number,
+        },
     )

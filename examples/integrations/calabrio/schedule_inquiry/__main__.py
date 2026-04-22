@@ -55,147 +55,148 @@ def format_shift(shift: dict) -> str:
     return f"{activity} from {start_display} to {end_display}"
 
 
-class ScheduleInquiryController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Riley",
+    organization="Horizon Contact Center",
+    purpose=(
+        "to help contact center agents check their upcoming work schedules"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Horizon Contact Center",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help contact center agents check their upcoming work schedules"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_schedule",
+        objective=(
+            "An agent is calling to check their schedule. Collect their email and "
+            "the date they want to check, then look it up in Calabrio."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Horizon Contact Center workforce management. "
+                "I'm Riley, and I can look up your schedule."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "An agent is calling to check their schedule. Collect their email and "
-                "the date they want to check, then look it up in Calabrio."
+            guava.Field(
+                key="agent_email",
+                field_type="text",
+                description="Ask for the agent's work email address.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Horizon Contact Center workforce management. "
-                    "I'm Riley, and I can look up your schedule."
+            guava.Field(
+                key="date_preference",
+                field_type="multiple_choice",
+                description="Ask which date they'd like to check.",
+                choices=["today", "tomorrow", "specific date"],
+                required=True,
+            ),
+            guava.Field(
+                key="specific_date",
+                field_type="text",
+                description=(
+                    "If they chose 'specific date', ask for the date in YYYY-MM-DD format. "
+                    "Skip if they selected today or tomorrow."
                 ),
-                guava.Field(
-                    key="agent_email",
-                    field_type="text",
-                    description="Ask for the agent's work email address.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_preference",
-                    field_type="multiple_choice",
-                    description="Ask which date they'd like to check.",
-                    choices=["today", "tomorrow", "specific date"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="specific_date",
-                    field_type="text",
-                    description=(
-                        "If they chose 'specific date', ask for the date in YYYY-MM-DD format. "
-                        "Skip if they selected today or tomorrow."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.look_up_schedule,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def look_up_schedule(self):
-        email = (self.get_field("agent_email") or "").strip().lower()
-        date_pref = self.get_field("date_preference")
-        specific = (self.get_field("specific_date") or "").strip()
+@agent.on_task_complete("look_up_schedule")
+def on_done(call: guava.Call) -> None:
+    email = (call.get_field("agent_email") or "").strip().lower()
+    date_pref = call.get_field("date_preference")
+    specific = (call.get_field("specific_date") or "").strip()
 
-        today = datetime.now(timezone.utc).date()
-        if date_pref == "today":
-            target_date = today
-        elif date_pref == "tomorrow":
-            target_date = today + timedelta(days=1)
-        elif specific:
-            try:
-                target_date = datetime.strptime(specific, "%Y-%m-%d").date()
-            except ValueError:
-                target_date = today
-        else:
-            target_date = today
-
-        date_str = target_date.strftime("%Y-%m-%d")
-        date_label = (
-            "today" if target_date == today
-            else "tomorrow" if target_date == today + timedelta(days=1)
-            else target_date.strftime("%A, %B %-d")
-        )
-
-        logging.info("Calabrio schedule lookup for %s on %s", email, date_str)
-
+    today = datetime.now(timezone.utc).date()
+    if date_pref == "today":
+        target_date = today
+    elif date_pref == "tomorrow":
+        target_date = today + timedelta(days=1)
+    elif specific:
         try:
-            agent = find_agent_by_email(email)
-        except Exception as e:
-            logging.error("Agent lookup failed: %s", e)
-            agent = None
+            target_date = datetime.strptime(specific, "%Y-%m-%d").date()
+        except ValueError:
+            target_date = today
+    else:
+        target_date = today
 
-        if not agent:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know we couldn't find an agent account for that email address. "
-                    "Ask them to verify their work email and try again, or contact their "
-                    "workforce management team. Thank them for calling."
-                )
-            )
-            return
+    date_str = target_date.strftime("%Y-%m-%d")
+    date_label = (
+        "today" if target_date == today
+        else "tomorrow" if target_date == today + timedelta(days=1)
+        else target_date.strftime("%A, %B %-d")
+    )
 
-        agent_id = agent.get("id") or agent.get("agentId", "")
-        agent_name = agent.get("name") or agent.get("displayName", "there")
-        first_name = agent_name.split()[0] if agent_name else "there"
+    logging.info("Calabrio schedule lookup for %s on %s", email, date_str)
 
-        try:
-            shifts = get_agent_schedule(agent_id, date_str)
-        except Exception as e:
-            logging.error("Schedule lookup failed for agent %s: %s", agent_id, e)
-            shifts = []
+    try:
+        agent_record = find_agent_by_email(email)
+    except Exception as e:
+        logging.error("Agent lookup failed: %s", e)
+        agent_record = None
 
-        result = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Riley",
-            "use_case": "schedule_inquiry",
-            "caller_email": email,
-            "agent_id": agent_id,
-            "date": date_str,
-            "shifts_found": len(shifts),
-            "shifts": shifts,
-        }
-        print(json.dumps(result, indent=2))
-
-        if not shifts:
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know that no scheduled shifts were found for {date_label}. "
-                    "It's possible they have a day off or their schedule hasn't been published yet. "
-                    "Suggest they check Calabrio directly or contact their supervisor. "
-                    "Thank them for calling."
-                )
-            )
-            return
-
-        shift_descriptions = [format_shift(s) for s in shifts]
-        shift_text = "; then ".join(shift_descriptions)
-
-        self.hangup(
+    if not agent_record:
+        call.hangup(
             final_instructions=(
-                f"Let {first_name} know their schedule for {date_label}: {shift_text}. "
-                "If they have more than one activity, read them in order. "
-                "Thank them for calling Horizon Contact Center workforce management."
+                "Let the caller know we couldn't find an agent account for that email address. "
+                "Ask them to verify their work email and try again, or contact their "
+                "workforce management team. Thank them for calling."
             )
         )
+        return
+
+    agent_id = agent_record.get("id") or agent_record.get("agentId", "")
+    agent_name = agent_record.get("name") or agent_record.get("displayName", "there")
+    first_name = agent_name.split()[0] if agent_name else "there"
+
+    try:
+        shifts = get_agent_schedule(agent_id, date_str)
+    except Exception as e:
+        logging.error("Schedule lookup failed for agent %s: %s", agent_id, e)
+        shifts = []
+
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Riley",
+        "use_case": "schedule_inquiry",
+        "caller_email": email,
+        "agent_id": agent_id,
+        "date": date_str,
+        "shifts_found": len(shifts),
+        "shifts": shifts,
+    }
+    print(json.dumps(result, indent=2))
+
+    if not shifts:
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know that no scheduled shifts were found for {date_label}. "
+                "It's possible they have a day off or their schedule hasn't been published yet. "
+                "Suggest they check Calabrio directly or contact their supervisor. "
+                "Thank them for calling."
+            )
+        )
+        return
+
+    shift_descriptions = [format_shift(s) for s in shifts]
+    shift_text = "; then ".join(shift_descriptions)
+
+    call.hangup(
+        final_instructions=(
+            f"Let {first_name} know their schedule for {date_label}: {shift_text}. "
+            "If they have more than one activity, read them in order. "
+            "Thank them for calling Horizon Contact Center workforce management."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ScheduleInquiryController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

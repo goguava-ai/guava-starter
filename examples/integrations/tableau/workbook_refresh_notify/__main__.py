@@ -43,72 +43,89 @@ def get_workbook(workbook_id: str) -> dict:
     return resp.json().get("workbook", {})
 
 
-class WorkbookRefreshNotifyController(guava.CallController):
-    def __init__(self, workbook_id: str, contact_name: str, refresh_status: str):
-        super().__init__()
-        self.workbook_id = workbook_id
-        self.contact_name = contact_name
-        self.refresh_status = refresh_status  # "completed" or "failed"
+agent = guava.Agent(
+    name="Alex",
+    organization="Vertex Analytics",
+    purpose=(
+        "to notify users when their Tableau workbook refresh has completed or failed "
+        "and capture any follow-up actions they need"
+    ),
+)
 
-        # Fetch workbook details before the call
-        self.workbook_name = "your workbook"
-        self.updated_display = "recently"
-        self.size_display = ""
 
-        try:
-            workbook = get_workbook(workbook_id)
-            self.workbook_name = workbook.get("name", self.workbook_name)
-            updated_at_str = workbook.get("updatedAt", "")
-            if updated_at_str:
-                updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-                self.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
-            size_bytes = workbook.get("size")
-            if size_bytes is not None:
-                size_mb = int(size_bytes) / (1024 * 1024)
-                self.size_display = f"{size_mb:.1f} MB"
-        except Exception as e:
-            logging.error("Failed to fetch workbook %s pre-call: %s", workbook_id, e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    workbook_id = call.get_variable("workbook_id")
+    contact_name = call.get_variable("contact_name")
 
-        self.set_persona(
-            organization_name="Vertex Analytics",
-            agent_name="Alex",
-            agent_purpose=(
-                "to notify users when their Tableau workbook refresh has completed or failed "
-                "and capture any follow-up actions they need"
-            ),
+    # Fetch workbook details before the call
+    call.workbook_name = "your workbook"
+    call.updated_display = "recently"
+    call.size_display = ""
+
+    try:
+        workbook = get_workbook(workbook_id)
+        call.workbook_name = workbook.get("name", call.workbook_name)
+        updated_at_str = workbook.get("updatedAt", "")
+        if updated_at_str:
+            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            call.updated_display = updated_at.strftime("%B %d, %Y at %I:%M %p UTC")
+        size_bytes = workbook.get("size")
+        if size_bytes is not None:
+            size_mb = int(size_bytes) / (1024 * 1024)
+            call.size_display = f"{size_mb:.1f} MB"
+    except Exception as e:
+        logging.error("Failed to fetch workbook %s pre-call: %s", workbook_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    workbook_id = call.get_variable("workbook_id")
+    refresh_status = call.get_variable("refresh_status")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for workbook refresh notification on workbook %s",
+            contact_name, workbook_id,
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.deliver_notification,
-            on_failure=self.recipient_unavailable,
+        status_word = "completed" if refresh_status == "completed" else "encountered an issue"
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {contact_name} on behalf of Vertex Analytics. "
+                f"Let them know the refresh for the Tableau workbook '{call.workbook_name}' has "
+                f"{status_word} and ask them to reach out to the analytics team if they have "
+                "any questions. Keep it concise and professional."
+            )
         )
-
-    def deliver_notification(self):
-        if self.refresh_status == "completed":
+    elif outcome == "available":
+        if refresh_status == "completed":
             status_message = (
                 f"I'm calling to let you know that the refresh for your Tableau workbook "
-                f"'{self.workbook_name}' has completed successfully. "
-                f"It was last updated on {self.updated_display}."
+                f"'{call.workbook_name}' has completed successfully. "
+                f"It was last updated on {call.updated_display}."
             )
-            if self.size_display:
-                status_message += f" The workbook is currently {self.size_display}."
+            if call.size_display:
+                status_message += f" The workbook is currently {call.size_display}."
         else:
             status_message = (
                 f"I'm calling to let you know that the refresh for your Tableau workbook "
-                f"'{self.workbook_name}' has unfortunately failed. "
+                f"'{call.workbook_name}' has unfortunately failed. "
                 "Our team has been notified, but I wanted to make sure you were aware directly."
             )
 
-        self.set_task(
+        call.set_task(
+            "record_outcome",
             objective=(
-                f"Notify {self.contact_name} about the Tableau workbook refresh "
-                f"{'completion' if self.refresh_status == 'completed' else 'failure'} "
-                f"for '{self.workbook_name}'. Capture their reaction and any issues they've noticed."
+                f"Notify {contact_name} about the Tableau workbook refresh "
+                f"{'completion' if refresh_status == 'completed' else 'failure'} "
+                f"for '{call.workbook_name}'. Capture their reaction and any issues they've noticed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Alex from Vertex Analytics. "
+                    f"Hi {contact_name}, this is Alex from Vertex Analytics. "
                     + status_message
                 ),
                 guava.Field(
@@ -133,58 +150,47 @@ class WorkbookRefreshNotifyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_outcome,
         )
 
-    def record_outcome(self):
-        satisfaction = self.get_field("satisfaction") or "satisfied"
-        any_issues = self.get_field("any_issues") or ""
 
-        logging.info(
-            "Refresh notification outcome for workbook %s — status: %s, satisfaction: %s",
-            self.workbook_id, self.refresh_status, satisfaction,
-        )
-        if any_issues:
-            logging.info("Issues reported: %s", any_issues)
+@agent.on_task_complete("record_outcome")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    workbook_id = call.get_variable("workbook_id")
+    refresh_status = call.get_variable("refresh_status")
+    satisfaction = call.get_field("satisfaction") or "satisfied"
+    any_issues = call.get_field("any_issues") or ""
 
-        if satisfaction == "needs-review":
-            issue_note = f" They noted: {any_issues}." if any_issues else ""
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know the analytics team will review the workbook "
-                    f"'{self.workbook_name}' and follow up with them shortly.{issue_note} "
-                    "Thank them for flagging it and wish them a great day."
-                )
-            )
-        elif satisfaction == "will-check-myself":
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge that {self.contact_name} will check the workbook themselves. "
-                    "Let them know the analytics team is available if they have any questions "
-                    "after reviewing. Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. "
-                    "Let them know the analytics team is here if anything comes up. "
-                    "Wish them a great day."
-                )
-            )
+    logging.info(
+        "Refresh notification outcome for workbook %s — status: %s, satisfaction: %s",
+        workbook_id, refresh_status, satisfaction,
+    )
+    if any_issues:
+        logging.info("Issues reported: %s", any_issues)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for workbook refresh notification on workbook %s",
-            self.contact_name, self.workbook_id,
-        )
-        status_word = "completed" if self.refresh_status == "completed" else "encountered an issue"
-        self.hangup(
+    if satisfaction == "needs-review":
+        issue_note = f" They noted: {any_issues}." if any_issues else ""
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} on behalf of Vertex Analytics. "
-                f"Let them know the refresh for the Tableau workbook '{self.workbook_name}' has "
-                f"{status_word} and ask them to reach out to the analytics team if they have "
-                "any questions. Keep it concise and professional."
+                f"Let {contact_name} know the analytics team will review the workbook "
+                f"'{call.workbook_name}' and follow up with them shortly.{issue_note} "
+                "Thank them for flagging it and wish them a great day."
+            )
+        )
+    elif satisfaction == "will-check-myself":
+        call.hangup(
+            final_instructions=(
+                f"Acknowledge that {contact_name} will check the workbook themselves. "
+                "Let them know the analytics team is available if they have any questions "
+                "after reviewing. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. "
+                "Let them know the analytics team is here if anything comes up. "
+                "Wish them a great day."
             )
         )
 
@@ -210,12 +216,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.workbook_id, args.status,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=WorkbookRefreshNotifyController(
-            workbook_id=args.workbook_id,
-            contact_name=args.name,
-            refresh_status=args.status,
-        ),
+        variables={
+            "workbook_id": args.workbook_id,
+            "contact_name": args.name,
+            "refresh_status": args.status,
+        },
     )

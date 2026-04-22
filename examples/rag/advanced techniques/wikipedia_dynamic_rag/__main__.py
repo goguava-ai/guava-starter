@@ -124,66 +124,69 @@ class DynamicWikipediaRetriever:
 
 WIKI = DynamicWikipediaRetriever()
 
+agent = guava.Agent()
 
-class WikipediaOpenQAController(guava.CallController):
-    """Answers open-domain questions by dynamically fetching and caching Wikipedia articles."""
 
-    def __init__(self):
-        super().__init__()
-        # Per-call state: conversation history, accumulated chunks, and a per-call LanceDB store
-        self.history: list[tuple[str, str]] = []
-        self._processed_titles: set[str] = set()
-        # Each call gets an isolated in-memory LanceDB store (temp dir, cleared on exit)
-        self._tmpdir = tempfile.mkdtemp(prefix="guava_wiki_")
-        self._store = LanceDBStore(
-            path=self._tmpdir,
-            embedding_model=VertexAIEmbedding(client=genai_client),
-        )
-        self.read_script("Hello, how can I help you today?")
-        self.accept_call()
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-    def _fetch_new_articles(self, query: str) -> bool:
-        """Search Wikipedia and add any new articles to the per-call store."""
-        search_query = _rewrite_query(query, self.history, _WIKI_REWRITE_INSTRUCTIONS)
-        added = False
-        for title in WIKI.search(search_query):
-            if title not in self._processed_titles:
-                text = WIKI.fetch_article(title)
-                if text:
-                    chunks = chunk_document(text)
-                    self._store.add_texts(chunks)
-                    self._processed_titles.add(title)
-                    added = True
-        return added
 
-    def on_question(self, question: str) -> str:
-        # Rewrite follow-ups into standalone queries
-        rewritten = _rewrite_query(question, self.history, _REWRITE_INSTRUCTIONS)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    # Per-call state: conversation history, accumulated chunks, and a per-call LanceDB store
+    call.history: list[tuple[str, str]] = []
+    call.processed_titles: set[str] = set()
+    # Each call gets an isolated in-memory LanceDB store (temp dir, cleared on exit)
+    call.tmpdir = tempfile.mkdtemp(prefix="guava_wiki_")
+    call.store = LanceDBStore(
+        path=call.tmpdir,
+        embedding_model=VertexAIEmbedding(client=genai_client),
+    )
+    call.read_script("Hello, how can I help you today?")
 
-        # Step 1: Try answering from articles already fetched in this call.
-        if self._store.count() > 0:
-            chunks = self._store.search(rewritten, k=20)
-            answer = _generate_answer(chunks, rewritten, _TRY_INSTRUCTIONS)
-            if "NEED_MORE_INFO" not in answer:
-                self.history.append((question, answer))
-                return answer
 
-        # Step 2: Cached context was insufficient — fetch new Wikipedia articles
-        if not self._fetch_new_articles(rewritten) and self._store.count() == 0:
-            answer = "I'm sorry, I couldn't find any information on that topic."
-            self.history.append((question, answer))
+def _fetch_new_articles(call: guava.Call, query: str) -> bool:
+    """Search Wikipedia and add any new articles to the per-call store."""
+    search_query = _rewrite_query(query, call.history, _WIKI_REWRITE_INSTRUCTIONS)
+    added = False
+    for title in WIKI.search(search_query):
+        if title not in call.processed_titles:
+            text = WIKI.fetch_article(title)
+            if text:
+                chunks = chunk_document(text)
+                call.store.add_texts(chunks)
+                call.processed_titles.add(title)
+                added = True
+    return added
+
+
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    # Rewrite follow-ups into standalone queries
+    rewritten = _rewrite_query(question, call.history, _REWRITE_INSTRUCTIONS)
+
+    # Step 1: Try answering from articles already fetched in this call.
+    if call.store.count() > 0:
+        chunks = call.store.search(rewritten, k=20)
+        answer = _generate_answer(chunks, rewritten, _TRY_INSTRUCTIONS)
+        if "NEED_MORE_INFO" not in answer:
+            call.history.append((question, answer))
             return answer
 
-        # Step 3: Answer from the expanded store (old + newly fetched articles)
-        chunks = self._store.search(rewritten, k=20)
-        answer = _generate_answer(chunks, rewritten)
-        self.history.append((question, answer))
+    # Step 2: Cached context was insufficient — fetch new Wikipedia articles
+    if not _fetch_new_articles(call, rewritten) and call.store.count() == 0:
+        answer = "I'm sorry, I couldn't find any information on that topic."
+        call.history.append((question, answer))
         return answer
+
+    # Step 3: Answer from the expanded store (old + newly fetched articles)
+    chunks = call.store.search(rewritten, k=20)
+    answer = _generate_answer(chunks, rewritten)
+    call.history.append((question, answer))
+    return answer
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=WikipediaOpenQAController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

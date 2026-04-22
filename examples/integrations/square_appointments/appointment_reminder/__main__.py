@@ -56,60 +56,80 @@ def format_start_at(start_at: str) -> str:
         return start_at
 
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, booking_id: str, customer_name: str):
-        super().__init__()
-        self.booking_id = booking_id
-        self.customer_name = customer_name
+agent = guava.Agent(
+    name="Morgan",
+    organization="Crestwood Wellness",
+    purpose="to remind Crestwood Wellness clients of their upcoming appointments",
+)
 
-        # Pre-call: fetch appointment details
-        self.booking = None
-        self.readable_start = "your upcoming appointment"
-        self.service_description = "your appointment"
 
-        try:
-            self.booking = get_booking(booking_id)
-            if self.booking:
-                start_at = self.booking.get("start_at", "")
-                if start_at:
-                    self.readable_start = format_start_at(start_at)
-                segments = self.booking.get("appointment_segments", [])
-                if segments:
-                    duration = segments[0].get("duration_minutes", 60)
-                    self.service_description = f"your {duration}-minute appointment"
-                logging.info(
-                    "Loaded booking %s: start=%s, status=%s",
-                    booking_id, start_at, self.booking.get("status"),
-                )
-            else:
-                logging.warning("Booking %s not found for reminder call.", booking_id)
-        except Exception as e:
-            logging.error("Failed to fetch booking %s: %s", booking_id, e)
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    booking_id = call.get_variable("booking_id")
+    customer_name = call.get_variable("customer_name")
 
-        self.set_persona(
-            organization_name="Crestwood Wellness",
-            agent_name="Morgan",
-            agent_purpose="to remind Crestwood Wellness clients of their upcoming appointments",
+    # Pre-call: fetch appointment details
+    booking = None
+    readable_start = "your upcoming appointment"
+    service_description = "your appointment"
+
+    try:
+        booking = get_booking(booking_id)
+        if booking:
+            start_at = booking.get("start_at", "")
+            if start_at:
+                readable_start = format_start_at(start_at)
+            segments = booking.get("appointment_segments", [])
+            if segments:
+                duration = segments[0].get("duration_minutes", 60)
+                service_description = f"your {duration}-minute appointment"
+            logging.info(
+                "Loaded booking %s: start=%s, status=%s",
+                booking_id, start_at, booking.get("status"),
+            )
+        else:
+            logging.warning("Booking %s not found for reminder call.", booking_id)
+    except Exception as e:
+        logging.error("Failed to fetch booking %s: %s", booking_id, e)
+
+    call.booking = booking
+    call.readable_start = readable_start
+    call.service_description = service_description
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    booking_id = call.get_variable("booking_id")
+    customer_name = call.get_variable("customer_name")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for appointment reminder (booking %s).",
+            customer_name, booking_id,
         )
-
-        self.reach_person(
-            contact_full_name=customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {customer_name} from Crestwood Wellness. "
+                f"Let them know you're calling as a reminder about {call.service_description} on "
+                f"{call.readable_start}. Ask them to call back at their earliest convenience "
+                "if they need to make any changes. Keep the message concise and professional."
+            )
         )
-
-    def begin_call(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "save_results",
             objective=(
-                f"Remind {self.customer_name} of {self.service_description} at Crestwood Wellness "
-                f"scheduled for {self.readable_start}. Confirm whether they'll be attending, "
+                f"Remind {customer_name} of {call.service_description} at Crestwood Wellness "
+                f"scheduled for {call.readable_start}. Confirm whether they'll be attending, "
                 "and handle any cancellation or reschedule requests."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Morgan calling from Crestwood Wellness. "
-                    f"I'm reaching out as a friendly reminder about {self.service_description} "
-                    f"we have scheduled for you on {self.readable_start}."
+                    f"Hi {customer_name}, this is Morgan calling from Crestwood Wellness. "
+                    f"I'm reaching out as a friendly reminder about {call.service_description} "
+                    f"we have scheduled for you on {call.readable_start}."
                 ),
                 guava.Field(
                     key="confirmation",
@@ -135,86 +155,75 @@ class AppointmentReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        confirmation = self.get_field("confirmation") or ""
-        has_questions = self.get_field("has_questions") or "no"
-        special_requests = self.get_field("special_requests") or ""
 
-        logging.info(
-            "Reminder outcome for booking %s (%s): confirmation=%s, questions=%s",
-            self.booking_id, self.customer_name, confirmation, has_questions,
-        )
+@agent.on_task_complete("save_results")
+def save_results(call: guava.Call) -> None:
+    booking_id = call.get_variable("booking_id")
+    customer_name = call.get_variable("customer_name")
+    confirmation = call.get_field("confirmation") or ""
+    has_questions = call.get_field("has_questions") or "no"
+    special_requests = call.get_field("special_requests") or ""
 
-        if confirmation == "need-to-cancel":
-            cancelled = None
-            if self.booking:
-                try:
-                    booking_version = self.booking.get("version", 0)
-                    cancelled = cancel_booking(self.booking_id, booking_version)
-                    logging.info(
-                        "Booking %s cancelled via reminder call, status=%s",
-                        self.booking_id, cancelled.get("status"),
-                    )
-                except Exception as e:
-                    logging.error("Failed to cancel booking %s during reminder: %s", self.booking_id, e)
+    logging.info(
+        "Reminder outcome for booking %s (%s): confirmation=%s, questions=%s",
+        booking_id, customer_name, confirmation, has_questions,
+    )
 
-            if cancelled and "CANCELLED" in cancelled.get("status", ""):
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know their appointment on {self.readable_start} "
-                        "has been cancelled. Let them know they're welcome to call back any time to rebook. "
-                        "Thank them and wish them a great day."
-                    )
+    if confirmation == "need-to-cancel":
+        cancelled = None
+        if call.booking:
+            try:
+                booking_version = call.booking.get("version", 0)
+                cancelled = cancel_booking(booking_id, booking_version)
+                logging.info(
+                    "Booking %s cancelled via reminder call, status=%s",
+                    booking_id, cancelled.get("status"),
                 )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know you've noted their wish to cancel the appointment "
-                        f"on {self.readable_start}. Let them know our team will follow up to confirm "
-                        "the cancellation by email. Thank them for letting us know."
-                    )
-                )
+            except Exception as e:
+                logging.error("Failed to cancel booking %s during reminder: %s", booking_id, e)
 
-        elif confirmation == "need-to-reschedule":
-            self.hangup(
+        if cancelled and "CANCELLED" in cancelled.get("status", ""):
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know you've noted they need to reschedule from {self.readable_start}. "
-                    "Ask them to call us back at their convenience or visit CreswoodWellness.com "
-                    "to pick a new time. Thank them and wish them a great day."
+                    f"Let {customer_name} know their appointment on {call.readable_start} "
+                    "has been cancelled. Let them know they're welcome to call back any time to rebook. "
+                    "Thank them and wish them a great day."
                 )
             )
-
         else:
-            # Confirmed — wrap up
-            questions_note = ""
-            if has_questions == "yes" and special_requests:
-                questions_note = (
-                    f" Also let them know you've noted their request: '{special_requests}' "
-                    "and that their provider will be informed."
-                )
-
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Thank {self.customer_name} for confirming their appointment on {self.readable_start} "
-                    f"at Crestwood Wellness.{questions_note} "
-                    "Let them know we look forward to seeing them and wish them a wonderful day."
+                    f"Let {customer_name} know you've noted their wish to cancel the appointment "
+                    f"on {call.readable_start}. Let them know our team will follow up to confirm "
+                    "the cancellation by email. Thank them for letting us know."
                 )
             )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for appointment reminder (booking %s).",
-            self.customer_name, self.booking_id,
-        )
-        self.hangup(
+    elif confirmation == "need-to-reschedule":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.customer_name} from Crestwood Wellness. "
-                f"Let them know you're calling as a reminder about {self.service_description} on "
-                f"{self.readable_start}. Ask them to call back at their earliest convenience "
-                "if they need to make any changes. Keep the message concise and professional."
+                f"Let {customer_name} know you've noted they need to reschedule from {call.readable_start}. "
+                "Ask them to call us back at their convenience or visit CreswoodWellness.com "
+                "to pick a new time. Thank them and wish them a great day."
+            )
+        )
+
+    else:
+        # Confirmed — wrap up
+        questions_note = ""
+        if has_questions == "yes" and special_requests:
+            questions_note = (
+                f" Also let them know you've noted their request: '{special_requests}' "
+                "and that their provider will be informed."
+            )
+
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for confirming their appointment on {call.readable_start} "
+                f"at Crestwood Wellness.{questions_note} "
+                "Let them know we look forward to seeing them and wish them a wonderful day."
             )
         )
 
@@ -227,11 +236,11 @@ if __name__ == "__main__":
     parser.add_argument("--name", required=True, help="Customer's full name")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            booking_id=args.booking_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "booking_id": args.booking_id,
+            "customer_name": args.name,
+        },
     )

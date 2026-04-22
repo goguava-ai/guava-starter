@@ -7,33 +7,49 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Morgan",
+    organization="Keystone Property & Casualty - Claims",
+    purpose=(
+        "to provide claimants with a proactive status update on their open claim "
+        "and gather any outstanding information needed to keep the claim moving forward"
+    ),
+)
 
-class ClaimsStatusController(guava.CallController):
-    def __init__(self, contact_name: str, claim_number: str, status: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.claim_number = claim_number
-        self.status = status
 
-        self.set_persona(
-            organization_name="Keystone Property & Casualty - Claims",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to provide claimants with a proactive status update on their open claim "
-                "and gather any outstanding information needed to keep the claim moving forward"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for claims status update on claim %s.",
+            call.get_variable("contact_name"),
+            call.get_variable("claim_number"),
         )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.start_status_flow,
-            on_failure=self.recipient_unavailable,
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "use_case": "claims_status_update",
+            "contact_name": call.get_variable("contact_name"),
+            "claim_number": call.get_variable("claim_number"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the claimant. "
+                "Please attempt re-contact or send a written status update via email."
+            )
         )
-
-    def start_status_flow(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "claims_status",
             objective=(
-                f"You are calling {self.contact_name} with a status update on claim number "
-                f"{self.claim_number}. The current status is: {self.status}. "
+                f"You are calling {call.get_variable('contact_name')} with a status update on claim number "
+                f"{call.get_variable('claim_number')}. The current status is: {call.get_variable('status')}. "
                 "Clearly communicate this status and explain what the next steps are. "
                 "Ask whether the claimant has a preferred repair vendor, whether they have "
                 "any additional documentation to submit, and whether they need a follow-up "
@@ -42,9 +58,9 @@ class ClaimsStatusController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.contact_name}, this is Morgan calling from the Claims "
+                    f"Hello {call.get_variable('contact_name')}, this is Morgan calling from the Claims "
                     f"department at Keystone Property & Casualty. I'm calling with an update "
-                    f"on your claim number {self.claim_number}. I have a few quick questions "
+                    f"on your claim number {call.get_variable('claim_number')}. I have a few quick questions "
                     "for you as well to help us keep things moving."
                 ),
                 guava.Field(
@@ -84,56 +100,36 @@ class ClaimsStatusController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "claims_status_update",
-            "contact_name": self.contact_name,
-            "claim_number": self.claim_number,
-            "status_communicated": self.status,
-            "update_understood": self.get_field("update_understood"),
-            "repair_vendor_preference": self.get_field("repair_vendor_preference"),
-            "additional_documentation_available": self.get_field(
-                "additional_documentation_available"
-            ),
-            "follow_up_needed": self.get_field("follow_up_needed"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Claims status results saved: %s", results)
-        self.hangup(
-            final_instructions=(
-                "Thank you for your time today. We have noted your responses and will make "
-                "sure your claim file is updated accordingly. If you submitted or plan to "
-                "submit additional documentation, please send it to the email or portal link "
-                "in your original claim confirmation. If you requested adjuster follow-up, "
-                "someone will be in touch within one business day. We appreciate your patience "
-                "and are committed to resolving your claim as quickly as possible. Take care."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for claims status update on claim %s.",
-            self.contact_name,
-            self.claim_number,
+@agent.on_task_complete("claims_status")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "claims_status_update",
+        "contact_name": call.get_variable("contact_name"),
+        "claim_number": call.get_variable("claim_number"),
+        "status_communicated": call.get_variable("status"),
+        "update_understood": call.get_field("update_understood"),
+        "repair_vendor_preference": call.get_field("repair_vendor_preference"),
+        "additional_documentation_available": call.get_field(
+            "additional_documentation_available"
+        ),
+        "follow_up_needed": call.get_field("follow_up_needed"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Claims status results saved: %s", results)
+    call.hangup(
+        final_instructions=(
+            "Thank you for your time today. We have noted your responses and will make "
+            "sure your claim file is updated accordingly. If you submitted or plan to "
+            "submit additional documentation, please send it to the email or portal link "
+            "in your original claim confirmation. If you requested adjuster follow-up, "
+            "someone will be in touch within one business day. We appreciate your patience "
+            "and are committed to resolving your claim as quickly as possible. Take care."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "claims_status_update",
-            "contact_name": self.contact_name,
-            "claim_number": self.claim_number,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "We were unable to reach the claimant. "
-                "Please attempt re-contact or send a written status update via email."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -151,12 +147,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ClaimsStatusController(
-            contact_name=args.name,
-            claim_number=args.claim_number,
-            status=args.status,
-        ),
+        variables={
+            "contact_name": args.name,
+            "claim_number": args.claim_number,
+            "status": args.status,
+        },
     )

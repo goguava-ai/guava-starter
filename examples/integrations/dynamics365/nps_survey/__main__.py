@@ -63,52 +63,70 @@ def log_phone_call(incident_id: str, subject: str, description: str) -> None:
     resp.raise_for_status()
 
 
-class NpsSurveyController(guava.CallController):
-    def __init__(self, case_id: str, contact_name: str):
-        super().__init__()
-        self.case_id = case_id
-        self.contact_name = contact_name
-        self.case_title = "your recently resolved support case"
-        self.ticket_number = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Pinnacle Solutions",
+    purpose=(
+        "to collect customer satisfaction feedback on behalf of Pinnacle Solutions "
+        "after a support case has been resolved"
+    ),
+)
 
-        # Pre-call: fetch case details to personalize the survey
-        try:
-            case = get_case(case_id)
-            if case:
-                if case.get("title"):
-                    self.case_title = f"'{case['title']}'"
-                self.ticket_number = case.get("ticketnumber", "")
-        except Exception as e:
-            logging.error("Failed to fetch case %s pre-call: %s", case_id, e)
 
-        self.set_persona(
-            organization_name="Pinnacle Solutions",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to collect customer satisfaction feedback on behalf of Pinnacle Solutions "
-                "after a support case has been resolved"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    case_id = call.get_variable("case_id")
+
+    # Fetch case details to personalize the survey
+    case_title = "your recently resolved support case"
+    ticket_number = ""
+    try:
+        case = get_case(case_id)
+        if case:
+            if case.get("title"):
+                case_title = f"'{case['title']}'"
+            ticket_number = case.get("ticketnumber", "")
+    except Exception as e:
+        logging.error("Failed to fetch case %s pre-call: %s", case_id, e)
+
+    call.data = {"case_title": case_title, "ticket_number": ticket_number}
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    case_title = call.data.get("case_title", "your recently resolved support case")
+    ticket_number = call.data.get("ticket_number", "")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for NPS survey on case %s",
+            contact_name, call.get_variable("case_id"),
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {contact_name} on behalf of "
+                "Pinnacle Solutions. Let them know you were calling to follow up on their "
+                f"recently resolved support case regarding {case_title}. "
+                "Let them know no action is needed and you hope everything is working well. "
+                "Wish them a great day."
+            )
         )
-
-    def begin_survey(self):
-        case_ref = self.ticket_number if self.ticket_number else self.case_title
-
-        self.set_task(
+    elif outcome == "available":
+        case_ref = ticket_number if ticket_number else case_title
+        call.set_task(
+            "save_results",
             objective=(
-                f"Collect NPS feedback from {self.contact_name} regarding their recently "
+                f"Collect NPS feedback from {contact_name} regarding their recently "
                 f"resolved case {case_ref}. Keep the call brief and friendly."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan calling from Pinnacle Solutions. "
+                    f"Hi {contact_name}, this is Morgan calling from Pinnacle Solutions. "
                     f"I'm following up on your recently resolved support case regarding "
-                    f"{self.case_title}. I have just a couple of quick questions — "
+                    f"{case_title}. I have just a couple of quick questions — "
                     "this will only take about a minute of your time."
                 ),
                 guava.Field(
@@ -141,95 +159,86 @@ class NpsSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        nps_score = self.get_field("nps_score") or "not provided"
-        primary_reason = self.get_field("primary_reason") or ""
-        improvement = self.get_field("improvement_suggestion") or ""
 
-        logging.info(
-            "NPS results for case %s — score: %s", self.case_id, nps_score
-        )
+@agent.on_task_complete("save_results")
+def on_save_results(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    case_id = call.get_variable("case_id")
+    case_title = call.data.get("case_title", "your recently resolved support case")
 
-        # Categorise the score for the note
-        try:
-            score_int = int(nps_score)
-            if score_int >= 9:
-                category = "Promoter"
-            elif score_int >= 7:
-                category = "Passive"
-            else:
-                category = "Detractor"
-        except ValueError:
-            score_int = -1
-            category = "Unknown"
+    nps_score = call.get_field("nps_score") or "not provided"
+    primary_reason = call.get_field("primary_reason") or ""
+    improvement = call.get_field("improvement_suggestion") or ""
 
-        note_lines = [
-            f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Customer: {self.contact_name}",
-            f"NPS score: {nps_score}/10 ({category})",
-        ]
-        if primary_reason:
-            note_lines.append(f"Primary reason: {primary_reason}")
-        if improvement and improvement.strip().lower() not in ("none", "n/a", ""):
-            note_lines.append(f"Improvement suggestion: {improvement}")
+    logging.info(
+        "NPS results for case %s — score: %s", case_id, nps_score
+    )
 
-        note_text = "\n".join(note_lines)
-
-        try:
-            add_case_note(self.case_id, "NPS survey — voice call", note_text)
-            logging.info("NPS note added to case %s", self.case_id)
-        except Exception as e:
-            logging.error("Failed to save NPS note to case %s: %s", self.case_id, e)
-
-        try:
-            log_phone_call(
-                self.case_id,
-                subject=f"NPS survey call — {self.contact_name}",
-                description=note_text,
-            )
-            logging.info("Phone call logged for case %s", self.case_id)
-        except Exception as e:
-            logging.error("Failed to log phone call for case %s: %s", self.case_id, e)
-
-        if score_int >= 0 and score_int <= 6:
-            self.hangup(
-                final_instructions=(
-                    f"Sincerely thank {self.contact_name} for their candid feedback. "
-                    "Acknowledge that we did not fully meet their expectations and let them know "
-                    "a member of our customer success team will personally follow up to understand "
-                    "how we can do better. Apologize and wish them a good day."
-                )
-            )
-        elif score_int >= 7 and score_int <= 8:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their feedback. Let them know we appreciate "
-                    "their honest input and will use it to keep improving. Wish them a great day."
-                )
-            )
+    # Categorise the score for the note
+    try:
+        score_int = int(nps_score)
+        if score_int >= 9:
+            category = "Promoter"
+        elif score_int >= 7:
+            category = "Passive"
         else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} warmly for their positive feedback and for being "
-                    "a valued Pinnacle Solutions customer. Let them know we are glad we could "
-                    "help and we are always here if they need anything. Wish them a wonderful day."
-                )
-            )
+            category = "Detractor"
+    except ValueError:
+        score_int = -1
+        category = "Unknown"
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for NPS survey on case %s", self.contact_name, self.case_id
+    note_lines = [
+        f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Customer: {contact_name}",
+        f"NPS score: {nps_score}/10 ({category})",
+    ]
+    if primary_reason:
+        note_lines.append(f"Primary reason: {primary_reason}")
+    if improvement and improvement.strip().lower() not in ("none", "n/a", ""):
+        note_lines.append(f"Improvement suggestion: {improvement}")
+
+    note_text = "\n".join(note_lines)
+
+    try:
+        add_case_note(case_id, "NPS survey — voice call", note_text)
+        logging.info("NPS note added to case %s", case_id)
+    except Exception as e:
+        logging.error("Failed to save NPS note to case %s: %s", case_id, e)
+
+    try:
+        log_phone_call(
+            case_id,
+            subject=f"NPS survey call — {contact_name}",
+            description=note_text,
         )
-        self.hangup(
+        logging.info("Phone call logged for case %s", case_id)
+    except Exception as e:
+        logging.error("Failed to log phone call for case %s: %s", case_id, e)
+
+    if score_int >= 0 and score_int <= 6:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.contact_name} on behalf of "
-                "Pinnacle Solutions. Let them know you were calling to follow up on their "
-                f"recently resolved support case regarding {self.case_title}. "
-                "Let them know no action is needed and you hope everything is working well. "
-                "Wish them a great day."
+                f"Sincerely thank {contact_name} for their candid feedback. "
+                "Acknowledge that we did not fully meet their expectations and let them know "
+                "a member of our customer success team will personally follow up to understand "
+                "how we can do better. Apologize and wish them a good day."
+            )
+        )
+    elif score_int >= 7 and score_int <= 8:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their feedback. Let them know we appreciate "
+                "their honest input and will use it to keep improving. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} warmly for their positive feedback and for being "
+                "a valued Pinnacle Solutions customer. Let them know we are glad we could "
+                "help and we are always here if they need anything. Wish them a wonderful day."
             )
         )
 
@@ -251,11 +260,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.case_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=NpsSurveyController(
-            case_id=args.case_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "case_id": args.case_id,
+            "contact_name": args.name,
+        },
     )

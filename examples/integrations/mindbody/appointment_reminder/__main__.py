@@ -59,57 +59,68 @@ def send_confirmation_email(client_id: str, appointment_id: int):
     return resp.json()
 
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, client_name: str, client_id: str, appointment_id: int,
-                 appointment_datetime: str, service_name: str, staff_name: str):
-        super().__init__()
-        self.client_name = client_name
-        self.client_id = client_id
-        self.appointment_id = appointment_id
-        self.appointment_datetime = appointment_datetime
-        self.service_name = service_name
-        self.staff_name = staff_name
+agent = guava.Agent(
+    name="Jordan",
+    organization="Peak Performance Studio",
+    purpose="to confirm upcoming appointments with clients",
+)
 
-        # Pre-fetch the appointment to verify it still exists.
-        try:
-            appointments = fetch_client_appointments(client_id)
-            self.appointment = next(
-                (a for a in appointments if a.get("Id") == appointment_id), None
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    appointment_id = int(call.get_variable("appointment_id"))
+
+    # Pre-fetch the appointment to verify it still exists.
+    appointment = None
+    try:
+        appointments = fetch_client_appointments(client_id)
+        appointment = next(
+            (a for a in appointments if a.get("Id") == appointment_id), None
+        )
+    except Exception as e:
+        logging.error("Failed to pre-fetch appointment: %s", e)
+
+    call.appointment = appointment
+    call.reach_person(contact_full_name=client_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    client_name = call.get_variable("client_name")
+    appointment_datetime = call.get_variable("appointment_datetime")
+    service_name = call.get_variable("service_name")
+    staff_name = call.get_variable("staff_name")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a friendly voicemail for {client_name} reminding them about their "
+                f"{service_name} appointment with {staff_name} tomorrow at "
+                f"{appointment_datetime}. Ask them to call Peak Performance Studio "
+                "if they need to make any changes. Keep it brief and warm."
             )
-        except Exception as e:
-            logging.error("Failed to pre-fetch appointment: %s", e)
-            self.appointment = None
-
-        self.set_persona(
-            organization_name="Peak Performance Studio",
-            agent_name="Jordan",
-            agent_purpose="to confirm upcoming appointments with clients",
         )
-
-        self.reach_person(
-            contact_full_name=self.client_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "collect_confirmation",
             objective=(
-                f"Confirm or cancel {self.client_name}'s appointment tomorrow "
-                f"({self.appointment_datetime}) for {self.service_name} with {self.staff_name}."
+                f"Confirm or cancel {client_name}'s appointment tomorrow "
+                f"({appointment_datetime}) for {service_name} with {staff_name}."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.client_name}, this is Jordan calling from Peak Performance Studio. "
-                    f"I'm reaching out to confirm your {self.service_name} session with "
-                    f"{self.staff_name} scheduled for tomorrow at {self.appointment_datetime}. "
+                    f"Hi {client_name}, this is Jordan calling from Peak Performance Studio. "
+                    f"I'm reaching out to confirm your {service_name} session with "
+                    f"{staff_name} scheduled for tomorrow at {appointment_datetime}. "
                     "This will just take a moment!"
                 ),
                 guava.Field(
                     key="confirmation",
                     field_type="multiple_choice",
                     description=(
-                        f"Ask {self.client_name} whether they will be attending the appointment "
+                        f"Ask {client_name} whether they will be attending the appointment "
                         "or if they need to cancel."
                     ),
                     choices=["confirm", "cancel"],
@@ -134,65 +145,60 @@ class AppointmentReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        confirmation = self.get_field("confirmation")
-        reschedule = self.get_field("reschedule_interest")
 
-        if confirmation == "cancel":
-            try:
-                cancel_appointment(self.appointment_id)
-                logging.info(
-                    "Cancelled appointment %s for client %s", self.appointment_id, self.client_id
-                )
-            except Exception as e:
-                logging.error("Failed to cancel appointment %s: %s", self.appointment_id, e)
+@agent.on_task_complete("collect_confirmation")
+def handle_outcome(call: guava.Call) -> None:
+    client_name = call.get_variable("client_name")
+    client_id = call.get_variable("client_id")
+    appointment_id = int(call.get_variable("appointment_id"))
+    appointment_datetime = call.get_variable("appointment_datetime")
+    confirmation = call.get_field("confirmation")
+    reschedule = call.get_field("reschedule_interest")
 
-            if reschedule == "yes, reschedule":
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {self.client_name} for letting us know. Confirm the appointment has been "
-                        "cancelled and let them know a team member will follow up to help reschedule. "
-                        "Be understanding and warm."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Thank {self.client_name} for letting us know. Confirm the appointment has been "
-                        "cancelled and invite them to call back whenever they are ready to book their next session. "
-                        "Be warm and wish them well."
-                    )
-                )
-        else:
-            # Confirmed — send a confirmation email.
-            try:
-                send_confirmation_email(self.client_id, self.appointment_id)
-                logging.info(
-                    "Sent confirmation email to client %s for appointment %s",
-                    self.client_id, self.appointment_id,
-                )
-            except Exception as e:
-                logging.error("Failed to send confirmation email: %s", e)
+    if confirmation == "cancel":
+        try:
+            cancel_appointment(appointment_id)
+            logging.info(
+                "Cancelled appointment %s for client %s", appointment_id, client_id
+            )
+        except Exception as e:
+            logging.error("Failed to cancel appointment %s: %s", appointment_id, e)
 
-            self.hangup(
+        if reschedule == "yes, reschedule":
+            call.hangup(
                 final_instructions=(
-                    f"Confirm to {self.client_name} that their appointment is all set for tomorrow "
-                    f"at {self.appointment_datetime}. Remind them to arrive 10 minutes early and "
-                    "bring water. Let them know a confirmation email is on its way. "
-                    "Be enthusiastic and wish them a great session."
+                    f"Thank {client_name} for letting us know. Confirm the appointment has been "
+                    "cancelled and let them know a team member will follow up to help reschedule. "
+                    "Be understanding and warm."
                 )
             )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Thank {client_name} for letting us know. Confirm the appointment has been "
+                    "cancelled and invite them to call back whenever they are ready to book their next session. "
+                    "Be warm and wish them well."
+                )
+            )
+    else:
+        # Confirmed — send a confirmation email.
+        try:
+            send_confirmation_email(client_id, appointment_id)
+            logging.info(
+                "Sent confirmation email to client %s for appointment %s",
+                client_id, appointment_id,
+            )
+        except Exception as e:
+            logging.error("Failed to send confirmation email: %s", e)
 
-    def recipient_unavailable(self):
-        self.hangup(
+        call.hangup(
             final_instructions=(
-                f"Leave a friendly voicemail for {self.client_name} reminding them about their "
-                f"{self.service_name} appointment with {self.staff_name} tomorrow at "
-                f"{self.appointment_datetime}. Ask them to call Peak Performance Studio "
-                "if they need to make any changes. Keep it brief and warm."
+                f"Confirm to {client_name} that their appointment is all set for tomorrow "
+                f"at {appointment_datetime}. Remind them to arrive 10 minutes early and "
+                "bring water. Let them know a confirmation email is on its way. "
+                "Be enthusiastic and wish them a great session."
             )
         )
 
@@ -219,15 +225,15 @@ if __name__ == "__main__":
     parser.add_argument("--staff-name", required=True, help="Trainer or instructor name")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            client_name=args.name,
-            client_id=args.client_id,
-            appointment_id=args.appointment_id,
-            appointment_datetime=args.appointment_datetime,
-            service_name=args.service_name,
-            staff_name=args.staff_name,
-        ),
+        variables={
+            "client_name": args.name,
+            "client_id": args.client_id,
+            "appointment_id": str(args.appointment_id),
+            "appointment_datetime": args.appointment_datetime,
+            "service_name": args.service_name,
+            "staff_name": args.staff_name,
+        },
     )

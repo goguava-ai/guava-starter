@@ -7,33 +7,49 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="Keystone Property & Casualty",
+    purpose=(
+        "to reach out to policyholders ahead of their renewal date to confirm "
+        "their coverage needs, answer questions, and ensure a smooth renewal process"
+    ),
+)
 
-class PolicyRenewalController(guava.CallController):
-    def __init__(self, contact_name: str, policy_number: str, renewal_date: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.policy_number = policy_number
-        self.renewal_date = renewal_date
 
-        self.set_persona(
-            organization_name="Keystone Property & Casualty",
-            agent_name="Riley",
-            agent_purpose=(
-                "to reach out to policyholders ahead of their renewal date to confirm "
-                "their coverage needs, answer questions, and ensure a smooth renewal process"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for policy renewal on policy %s.",
+            call.get_variable("contact_name"),
+            call.get_variable("policy_number"),
         )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.start_renewal_flow,
-            on_failure=self.recipient_unavailable,
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "use_case": "policy_renewal",
+            "contact_name": call.get_variable("contact_name"),
+            "policy_number": call.get_variable("policy_number"),
+            "renewal_date": call.get_variable("renewal_date"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the policyholder. Please schedule a callback attempt."
+            )
         )
-
-    def start_renewal_flow(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "policy_renewal",
             objective=(
-                f"You are calling {self.contact_name} regarding policy number "
-                f"{self.policy_number}, which is coming up for renewal {self.renewal_date}. "
+                f"You are calling {call.get_variable('contact_name')} regarding policy number "
+                f"{call.get_variable('policy_number')}, which is coming up for renewal {call.get_variable('renewal_date')}. "
                 "Confirm whether they would like to renew as-is, if they need any coverage "
                 "changes, or if they have questions. Explore whether any additional coverage "
                 "types may benefit them based on life changes. Capture their preferred payment "
@@ -42,9 +58,9 @@ class PolicyRenewalController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Riley calling from Keystone Property "
-                    f"& Casualty. I'm reaching out because your policy number {self.policy_number} "
-                    f"is coming up for renewal {self.renewal_date}, and I wanted to take a few "
+                    f"Hi {call.get_variable('contact_name')}, this is Riley calling from Keystone Property "
+                    f"& Casualty. I'm reaching out because your policy number {call.get_variable('policy_number')} "
+                    f"is coming up for renewal {call.get_variable('renewal_date')}, and I wanted to take a few "
                     "minutes to make sure everything still looks right for you."
                 ),
                 guava.Field(
@@ -83,53 +99,33 @@ class PolicyRenewalController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "policy_renewal",
-            "contact_name": self.contact_name,
-            "policy_number": self.policy_number,
-            "renewal_date": self.renewal_date,
-            "renewal_confirmed": self.get_field("renewal_confirmed"),
-            "coverage_change_requested": self.get_field("coverage_change_requested"),
-            "additional_coverage_interest": self.get_field("additional_coverage_interest"),
-            "preferred_payment_method": self.get_field("preferred_payment_method"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Policy renewal results saved: %s", results)
-        self.hangup(
-            final_instructions=(
-                "Thank you so much for taking the time to speak with me today. Your renewal "
-                "preferences have been noted, and a member of our team will follow up with "
-                "any updated policy documents or next steps before the renewal date. "
-                "We truly appreciate your continued trust in Keystone Property & Casualty. "
-                "Have a wonderful day."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for policy renewal on policy %s.",
-            self.contact_name,
-            self.policy_number,
+@agent.on_task_complete("policy_renewal")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "policy_renewal",
+        "contact_name": call.get_variable("contact_name"),
+        "policy_number": call.get_variable("policy_number"),
+        "renewal_date": call.get_variable("renewal_date"),
+        "renewal_confirmed": call.get_field("renewal_confirmed"),
+        "coverage_change_requested": call.get_field("coverage_change_requested"),
+        "additional_coverage_interest": call.get_field("additional_coverage_interest"),
+        "preferred_payment_method": call.get_field("preferred_payment_method"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Policy renewal results saved: %s", results)
+    call.hangup(
+        final_instructions=(
+            "Thank you so much for taking the time to speak with me today. Your renewal "
+            "preferences have been noted, and a member of our team will follow up with "
+            "any updated policy documents or next steps before the renewal date. "
+            "We truly appreciate your continued trust in Keystone Property & Casualty. "
+            "Have a wonderful day."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "policy_renewal",
-            "contact_name": self.contact_name,
-            "policy_number": self.policy_number,
-            "renewal_date": self.renewal_date,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "We were unable to reach the policyholder. Please schedule a callback attempt."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -147,12 +143,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PolicyRenewalController(
-            contact_name=args.name,
-            policy_number=args.policy_number,
-            renewal_date=args.renewal_date,
-        ),
+        variables={
+            "contact_name": args.name,
+            "policy_number": args.policy_number,
+            "renewal_date": args.renewal_date,
+        },
     )

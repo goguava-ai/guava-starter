@@ -66,56 +66,75 @@ def mark_cart_contacted(cart_id: int, outcome: str) -> None:
             )
 
 
-class CartRecoveryController(guava.CallController):
-    def __init__(self, cart_id: int, customer_name: str):
-        super().__init__()
-        self.cart_id = cart_id
-        self.customer_name = customer_name
-        self.total_str = ""
-        self.item_summary = ""
+agent = guava.Agent(
+    name="Riley",
+    organization="Peak Outdoors",
+    purpose=(
+        "to follow up with Peak Outdoors customers who left items in their cart "
+        "and help them complete their purchase"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    cart_id = int(call.get_variable("cart_id"))
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for cart recovery on cart %d", customer_name, cart_id
+        )
+        try:
+            mark_cart_contacted(cart_id, "voicemail")
+        except Exception as e:
+            logging.error("Failed to update cart %d outcome: %s", cart_id, e)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {customer_name} from Peak Outdoors. "
+                "Let them know you noticed items in their cart and you're here to help "
+                "if they have any questions. Give the callback number 1-800-PEAK-OUT. Keep it short."
+            )
+        )
+    elif outcome == "available":
         try:
             cart = get_cart(cart_id)
             if cart:
                 total = cart.get("total_amount")
                 currency = (cart.get("currency") or "USD").upper()
-                self.total_str = f"${float(total):,.2f} {currency}" if total else ""
+                call.total_str = f"${float(total):,.2f} {currency}" if total else ""
+            else:
+                call.total_str = ""
             items = get_cart_items(cart_id)
             if items:
                 lines = [f"{r['product_name']} ×{r['quantity']}" for r in items]
-                self.item_summary = ", ".join(lines)
+                call.item_summary = ", ".join(lines)
+            else:
+                call.item_summary = ""
         except Exception as e:
             logging.error("Failed to fetch cart %d: %s", cart_id, e)
+            call.total_str = ""
+            call.item_summary = ""
 
-        self.set_persona(
-            organization_name="Peak Outdoors",
-            agent_name="Riley",
-            agent_purpose=(
-                "to follow up with Peak Outdoors customers who left items in their cart "
-                "and help them complete their purchase"
-            ),
-        )
+        cart_note = f" You had {call.item_summary} in your cart." if call.item_summary else ""
+        total_note = f" The total comes to {call.total_str}." if call.total_str else ""
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.deliver_followup,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_followup(self):
-        cart_note = f" You had {self.item_summary} in your cart." if self.item_summary else ""
-        total_note = f" The total comes to {self.total_str}." if self.total_str else ""
-
-        self.set_task(
+        call.set_task(
+            "cart_followup",
             objective=(
-                f"Follow up with {self.customer_name} about items left in their Peak Outdoors cart. "
-                + (f"Cart contents: {self.item_summary}." if self.item_summary else "")
-                + (f" Cart total: {self.total_str}." if self.total_str else "")
+                f"Follow up with {customer_name} about items left in their Peak Outdoors cart. "
+                + (f"Cart contents: {call.item_summary}." if call.item_summary else "")
+                + (f" Cart total: {call.total_str}." if call.total_str else "")
                 + " Find out if they have questions and help them complete the purchase."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Riley from Peak Outdoors. "
+                    f"Hi {customer_name}, this is Riley from Peak Outdoors. "
                     "I noticed you left some items in your cart and wanted to reach out "
                     "in case you had any questions or needed help completing your order."
                     + cart_note
@@ -146,69 +165,56 @@ class CartRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        reason = self.get_field("reason_for_leaving") or "unknown"
-        intent = self.get_field("purchase_intent") or "no"
 
-        logging.info(
-            "Cart recovery for cart %d — reason: %s, intent: %s",
-            self.cart_id, reason, intent,
-        )
+@agent.on_task_complete("cart_followup")
+def on_cart_followup_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    cart_id = int(call.get_variable("cart_id"))
+    reason = call.get_field("reason_for_leaving") or "unknown"
+    intent = call.get_field("purchase_intent") or "no"
 
-        if "complete" in intent:
-            outcome = "converted"
-        elif "question" in intent:
-            outcome = "interested"
-        else:
-            outcome = "declined"
+    logging.info(
+        "Cart recovery for cart %d — reason: %s, intent: %s",
+        cart_id, reason, intent,
+    )
 
-        try:
-            mark_cart_contacted(self.cart_id, outcome)
-        except Exception as e:
-            logging.error("Failed to update cart %d outcome: %s", self.cart_id, e)
+    if "complete" in intent:
+        outcome = "converted"
+    elif "question" in intent:
+        outcome = "interested"
+    else:
+        outcome = "declined"
 
-        if "complete" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know you'll send a direct checkout link "
-                    "to the email on file so they can finish the purchase in one click. "
-                    "Thank them for choosing Peak Outdoors."
-                )
-            )
-        elif "question" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Answer any product questions {self.customer_name} has to the best of your ability. "
-                    "For detailed technical questions, offer to have a gear specialist call them back. "
-                    "Let them know their cart will be saved for 7 days."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time. "
-                    "Let them know their cart will be saved if they change their mind, "
-                    "and invite them to visit peakoutdoors.com or call back anytime. "
-                    "Wish them a great day."
-                )
-            )
+    try:
+        mark_cart_contacted(cart_id, outcome)
+    except Exception as e:
+        logging.error("Failed to update cart %d outcome: %s", cart_id, e)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for cart recovery on cart %d", self.customer_name, self.cart_id
-        )
-        try:
-            mark_cart_contacted(self.cart_id, "voicemail")
-        except Exception as e:
-            logging.error("Failed to update cart %d outcome: %s", self.cart_id, e)
-        self.hangup(
+    if "complete" in intent:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.customer_name} from Peak Outdoors. "
-                "Let them know you noticed items in their cart and you're here to help "
-                "if they have any questions. Give the callback number 1-800-PEAK-OUT. Keep it short."
+                f"Let {customer_name} know you'll send a direct checkout link "
+                "to the email on file so they can finish the purchase in one click. "
+                "Thank them for choosing Peak Outdoors."
+            )
+        )
+    elif "question" in intent:
+        call.hangup(
+            final_instructions=(
+                f"Answer any product questions {customer_name} has to the best of your ability. "
+                "For detailed technical questions, offer to have a gear specialist call them back. "
+                "Let them know their cart will be saved for 7 days."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. "
+                "Let them know their cart will be saved if they change their mind, "
+                "and invite them to visit peakoutdoors.com or call back anytime. "
+                "Wish them a great day."
             )
         )
 
@@ -228,11 +234,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.cart_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CartRecoveryController(
-            cart_id=args.cart_id,
-            customer_name=args.name,
-        ),
+        variables={
+            "cart_id": str(args.cart_id),
+            "customer_name": args.name,
+        },
     )

@@ -7,35 +7,40 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Sophie",
+    organization="The Grand Meridian Hotel",
+    purpose=(
+        "reach out to a guest ahead of their arrival to ensure every detail of their "
+        "stay is thoughtfully prepared, including dietary needs, accessibility requirements, "
+        "room preferences, and any special requests"
+    ),
+)
 
-class PreArrivalController(guava.CallController):
-    def __init__(self, name, reservation_number, checkin_date):
-        super().__init__()
-        self.name = name
-        self.reservation_number = reservation_number
-        self.checkin_date = checkin_date
 
-        self.set_persona(
-            organization_name="The Grand Meridian Hotel",
-            agent_name="Sophie",
-            agent_purpose=(
-                "reach out to a guest ahead of their arrival to ensure every detail of their "
-                "stay is thoughtfully prepared, including dietary needs, accessibility requirements, "
-                "room preferences, and any special requests"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for pre-arrival call.", call.get_variable("name"))
+        call.hangup(
+            final_instructions=(
+                "Leave a warm and professional voicemail as Sophie from The Grand Meridian Hotel, "
+                "mentioning that you are calling ahead of their upcoming stay to ensure everything "
+                "is perfectly prepared. Invite them to call back or contact the concierge team "
+                "with any preferences or special requests."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_pre_arrival,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_pre_arrival(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "pre_arrival",
             objective=(
-                f"You are calling {self.name} ahead of their check-in on {self.checkin_date} "
-                f"(reservation {self.reservation_number}). Your goal is to ensure the hotel team "
+                f"You are calling {call.get_variable('name')} ahead of their check-in on {call.get_variable('checkin_date')} "
+                f"(reservation {call.get_variable('reservation_number')}). Your goal is to ensure the hotel team "
                 "has everything needed to personalise their stay. Ask about dietary restrictions, "
                 "accessibility requirements, room and pillow preferences, estimated arrival time, "
                 "and any other special requests. Approach the conversation with warmth and genuine "
@@ -43,8 +48,8 @@ class PreArrivalController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Greet {self.name} warmly, introduce yourself, and let them know you are "
-                    f"calling to help personalise their upcoming stay arriving on {self.checkin_date}."
+                    f"Greet {call.get_variable('name')} warmly, introduce yourself, and let them know you are "
+                    f"calling to help personalise their upcoming stay arriving on {call.get_variable('checkin_date')}."
                 ),
                 guava.Field(
                     key="dietary_restrictions",
@@ -98,45 +103,35 @@ class PreArrivalController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "pre_arrival",
-            "guest_name": self.name,
-            "reservation_number": self.reservation_number,
-            "checkin_date": self.checkin_date,
-            "fields": {
-                "dietary_restrictions": self.get_field("dietary_restrictions"),
-                "accessibility_needs": self.get_field("accessibility_needs"),
-                "bed_preference": self.get_field("bed_preference"),
-                "pillow_preference": self.get_field("pillow_preference"),
-                "estimated_arrival_time": self.get_field("estimated_arrival_time"),
-                "special_requests": self.get_field("special_requests"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Pre-arrival preferences saved for %s", self.name)
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} graciously for taking the time to share their preferences. "
-                "Let them know the hotel team will have everything ready upon arrival, and express "
-                "how much the team is looking forward to welcoming them. Wish them a pleasant journey."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for pre-arrival call.", self.name)
-        self.hangup(
-            final_instructions=(
-                "Leave a warm and professional voicemail as Sophie from The Grand Meridian Hotel, "
-                "mentioning that you are calling ahead of their upcoming stay to ensure everything "
-                "is perfectly prepared. Invite them to call back or contact the concierge team "
-                "with any preferences or special requests."
-            )
+@agent.on_task_complete("pre_arrival")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "pre_arrival",
+        "guest_name": call.get_variable("name"),
+        "reservation_number": call.get_variable("reservation_number"),
+        "checkin_date": call.get_variable("checkin_date"),
+        "fields": {
+            "dietary_restrictions": call.get_field("dietary_restrictions"),
+            "accessibility_needs": call.get_field("accessibility_needs"),
+            "bed_preference": call.get_field("bed_preference"),
+            "pillow_preference": call.get_field("pillow_preference"),
+            "estimated_arrival_time": call.get_field("estimated_arrival_time"),
+            "special_requests": call.get_field("special_requests"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Pre-arrival preferences saved for %s", call.get_variable("name"))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} graciously for taking the time to share their preferences. "
+            "Let them know the hotel team will have everything ready upon arrival, and express "
+            "how much the team is looking forward to welcoming them. Wish them a pleasant journey."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -150,12 +145,12 @@ if __name__ == "__main__":
     parser.add_argument("--checkin-date", required=True, help="Scheduled check-in date")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PreArrivalController(
-            name=args.name,
-            reservation_number=args.reservation_number,
-            checkin_date=args.checkin_date,
-        ),
+        variables={
+            "name": args.name,
+            "reservation_number": args.reservation_number,
+            "checkin_date": args.checkin_date,
+        },
     )

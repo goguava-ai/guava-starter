@@ -90,55 +90,85 @@ OUTCOME_STATUS = {
 }
 
 
-class PaymentCollectionsController(guava.CallController):
-    def __init__(self, account_id: str, contact_name: str, overdue_amount: str):
-        super().__init__()
-        self.account_id = account_id
-        self.contact_name = contact_name
-        self.overdue_amount = overdue_amount
-        self.account_name = ""
+agent = guava.Agent(
+    name="Alex",
+    organization="Crestline Financial",
+    purpose=(
+        "to assist customers with outstanding account balances and help them "
+        "resolve overdue payments for Crestline Financial"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+
+    call.account_name = ""
+    try:
+        account = get_account(account_id)
+        if account:
+            call.account_name = account.get("Name", "")
+    except Exception as e:
+        logging.error("Failed to fetch Account %s pre-call: %s", account_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+    overdue_amount = call.get_variable("overdue_amount")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for collections call on account %s.",
+            contact_name, account_id,
+        )
         try:
-            account = get_account(account_id)
-            if account:
-                self.account_name = account.get("Name", "")
+            log_collections_task(
+                account_id,
+                subject="Collections call — contact unavailable",
+                description=(
+                    f"Collections outreach attempted — {contact_name} unavailable, voicemail left.\n"
+                    f"Overdue amount: {overdue_amount}\n"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+                ),
+                priority="High",
+            )
         except Exception as e:
-            logging.error("Failed to fetch Account %s pre-call: %s", account_id, e)
+            logging.error("Failed to log missed-call Task: %s", e)
 
-        self.set_persona(
-            organization_name="Crestline Financial",
-            agent_name="Alex",
-            agent_purpose=(
-                "to assist customers with outstanding account balances and help them "
-                "resolve overdue payments for Crestline Financial"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a professional, non-threatening voicemail for {contact_name} "
+                "from Crestline Financial. Mention that you're calling regarding their account "
+                "and ask them to call back at their earliest convenience. "
+                "Do not mention specific dollar amounts in the voicemail."
+            )
         )
+    elif outcome == "available":
+        account_note = f" at {call.account_name}" if call.account_name else ""
 
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_collections_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_collections_call(self):
-        account_note = f" at {self.account_name}" if self.account_name else ""
-
-        self.set_task(
+        call.set_task(
+            "record_outcome",
             objective=(
-                f"Speak with {self.contact_name}{account_note} about an outstanding balance "
-                f"of {self.overdue_amount}. Be professional, empathetic, and non-confrontational. "
+                f"Speak with {contact_name}{account_note} about an outstanding balance "
+                f"of {overdue_amount}. Be professional, empathetic, and non-confrontational. "
                 "Help them find a resolution that works for both parties."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, may I speak with {self.contact_name}? "
+                    f"Hi, may I speak with {contact_name}? "
                     f"This is Alex calling from Crestline Financial regarding your account."
                 ),
                 guava.Field(
                     key="acknowledges_balance",
                     field_type="multiple_choice",
                     description=(
-                        f"Inform them there is an outstanding balance of {self.overdue_amount} on their account "
+                        f"Inform them there is an outstanding balance of {overdue_amount} on their account "
                         "and ask if they are aware of it. Capture their response."
                     ),
                     choices=["yes, aware", "no, not aware", "disputes the amount"],
@@ -178,119 +208,96 @@ class PaymentCollectionsController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_outcome,
         )
 
-    def record_outcome(self):
-        acknowledges = self.get_field("acknowledges_balance") or "yes, aware"
-        outcome = self.get_field("payment_outcome") or "promised to pay later"
-        promise_date = self.get_field("promise_date") or ""
-        dispute_detail = self.get_field("dispute_detail") or ""
 
-        collections_status = OUTCOME_STATUS.get(outcome, "Promise to Pay")
-        priority = "High" if outcome in ("refused to pay", "disputes the amount") else "Normal"
+@agent.on_task_complete("record_outcome")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    account_id = call.get_variable("account_id")
+    overdue_amount = call.get_variable("overdue_amount")
 
-        description_lines = [
-            f"Collections call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Contact: {self.contact_name}",
-            f"Overdue amount: {self.overdue_amount}",
-            f"Acknowledged balance: {acknowledges}",
-            f"Outcome: {outcome}",
-        ]
-        if promise_date:
-            description_lines.append(f"Promise to pay by: {promise_date}")
-        if dispute_detail:
-            description_lines.append(f"Dispute details: {dispute_detail}")
+    acknowledges = call.get_field("acknowledges_balance") or "yes, aware"
+    outcome = call.get_field("payment_outcome") or "promised to pay later"
+    promise_date = call.get_field("promise_date") or ""
+    dispute_detail = call.get_field("dispute_detail") or ""
 
-        logging.info(
-            "Collections call complete for account %s — outcome: %s, status: %s",
-            self.account_id, outcome, collections_status,
+    collections_status = OUTCOME_STATUS.get(outcome, "Promise to Pay")
+    priority = "High" if outcome in ("refused to pay", "disputes the amount") else "Normal"
+
+    description_lines = [
+        f"Collections call — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Contact: {contact_name}",
+        f"Overdue amount: {overdue_amount}",
+        f"Acknowledged balance: {acknowledges}",
+        f"Outcome: {outcome}",
+    ]
+    if promise_date:
+        description_lines.append(f"Promise to pay by: {promise_date}")
+    if dispute_detail:
+        description_lines.append(f"Dispute details: {dispute_detail}")
+
+    logging.info(
+        "Collections call complete for account %s — outcome: %s, status: %s",
+        account_id, outcome, collections_status,
+    )
+
+    try:
+        log_collections_task(
+            account_id,
+            subject=f"Collections call — {outcome}",
+            description="\n".join(description_lines),
+            priority=priority,
         )
+        logging.info("Task logged for account %s.", account_id)
+    except Exception as e:
+        logging.error("Failed to log Task: %s", e)
 
-        try:
-            log_collections_task(
-                self.account_id,
-                subject=f"Collections call — {outcome}",
-                description="\n".join(description_lines),
-                priority=priority,
-            )
-            logging.info("Task logged for account %s.", self.account_id)
-        except Exception as e:
-            logging.error("Failed to log Task: %s", e)
+    try:
+        update_account_collections_status(account_id, collections_status)
+        logging.info("Updated Collections_Status__c to '%s' for account %s.", collections_status, account_id)
+    except Exception as e:
+        logging.warning("Could not update Collections_Status__c (field may not exist): %s", e)
 
-        try:
-            update_account_collections_status(self.account_id, collections_status)
-            logging.info("Updated Collections_Status__c to '%s' for account %s.", collections_status, self.account_id)
-        except Exception as e:
-            logging.warning("Could not update Collections_Status__c (field may not exist): %s", e)
-
-        if outcome == "paying now":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for taking care of this right away. "
-                    "Let them know they'll receive a payment confirmation via email. "
-                    "Wish them a great day."
-                )
-            )
-        elif outcome == "payment plan requested":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for working with us. "
-                    "Let them know a member of the billing team will reach out within one business day "
-                    "to arrange a payment plan. Reassure them that we'll find a workable solution."
-                )
-            )
-        elif outcome == "promised to pay later":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} and confirm the promise date back to them: "
-                    f"'{promise_date}'. "
-                    "Let them know we'll follow up if the payment hasn't been received by then. "
-                    "Wish them a good day."
-                )
-            )
-        elif outcome == "disputes the amount":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for letting us know. "
-                    "Let them know their dispute has been noted and a billing specialist will review "
-                    "it and follow up within two business days. Apologize for any confusion."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. Let them know this matter will be "
-                    "escalated to our accounts receivable team who will be in touch. "
-                    "Remain professional and non-confrontational."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for collections call on account %s.",
-            self.contact_name, self.account_id,
-        )
-        try:
-            log_collections_task(
-                self.account_id,
-                subject="Collections call — contact unavailable",
-                description=(
-                    f"Collections outreach attempted — {self.contact_name} unavailable, voicemail left.\n"
-                    f"Overdue amount: {self.overdue_amount}\n"
-                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-                ),
-                priority="High",
-            )
-        except Exception as e:
-            logging.error("Failed to log missed-call Task: %s", e)
-
-        self.hangup(
+    if outcome == "paying now":
+        call.hangup(
             final_instructions=(
-                f"Leave a professional, non-threatening voicemail for {self.contact_name} "
-                "from Crestline Financial. Mention that you're calling regarding their account "
-                "and ask them to call back at their earliest convenience. "
-                "Do not mention specific dollar amounts in the voicemail."
+                f"Thank {contact_name} for taking care of this right away. "
+                "Let them know they'll receive a payment confirmation via email. "
+                "Wish them a great day."
+            )
+        )
+    elif outcome == "payment plan requested":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for working with us. "
+                "Let them know a member of the billing team will reach out within one business day "
+                "to arrange a payment plan. Reassure them that we'll find a workable solution."
+            )
+        )
+    elif outcome == "promised to pay later":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} and confirm the promise date back to them: "
+                f"'{promise_date}'. "
+                "Let them know we'll follow up if the payment hasn't been received by then. "
+                "Wish them a good day."
+            )
+        )
+    elif outcome == "disputes the amount":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for letting us know. "
+                "Let them know their dispute has been noted and a billing specialist will review "
+                "it and follow up within two business days. Apologize for any confusion."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Let them know this matter will be "
+                "escalated to our accounts receivable team who will be in touch. "
+                "Remain professional and non-confrontational."
             )
         )
 
@@ -311,12 +318,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.account_id, args.amount,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PaymentCollectionsController(
-            account_id=args.account_id,
-            contact_name=args.name,
-            overdue_amount=args.amount,
-        ),
+        variables={
+            "account_id": args.account_id,
+            "contact_name": args.name,
+            "overdue_amount": args.amount,
+        },
     )

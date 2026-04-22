@@ -98,138 +98,139 @@ def parse_claim_status(response: dict) -> dict:
     return result
 
 
-class ClaimStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Dana",
+    organization="Valley Medical Group Billing",
+    purpose=(
+        "to help patients and provider staff check the status of a submitted "
+        "insurance claim"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Valley Medical Group Billing",
-            agent_name="Dana",
-            agent_purpose=(
-                "to help patients and provider staff check the status of a submitted "
-                "insurance claim"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_claim",
+        objective=(
+            "A caller is checking on the status of a submitted claim. Collect the "
+            "information needed to look up the claim and report back the current status."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Valley Medical Group billing. I'm Dana. "
+                "I can look up the status of a claim for you right now."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A caller is checking on the status of a submitted claim. Collect the "
-                "information needed to look up the claim and report back the current status."
+            guava.Field(
+                key="patient_last_name",
+                field_type="text",
+                description="Ask for the patient's last name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Valley Medical Group billing. I'm Dana. "
-                    "I can look up the status of a claim for you right now."
+            guava.Field(
+                key="patient_date_of_birth",
+                field_type="text",
+                description="Ask for the patient's date of birth. Capture in YYYY-MM-DD format.",
+                required=True,
+            ),
+            guava.Field(
+                key="member_id",
+                field_type="text",
+                description="Ask for the patient's insurance member ID.",
+                required=True,
+            ),
+            guava.Field(
+                key="service_date",
+                field_type="text",
+                description=(
+                    "Ask for the approximate date of service for the claim. "
+                    "Capture in YYYY-MM-DD format."
                 ),
-                guava.Field(
-                    key="patient_last_name",
-                    field_type="text",
-                    description="Ask for the patient's last name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="patient_date_of_birth",
-                    field_type="text",
-                    description="Ask for the patient's date of birth. Capture in YYYY-MM-DD format.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="member_id",
-                    field_type="text",
-                    description="Ask for the patient's insurance member ID.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="service_date",
-                    field_type="text",
-                    description=(
-                        "Ask for the approximate date of service for the claim. "
-                        "Capture in YYYY-MM-DD format."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="payer_name",
-                    field_type="text",
-                    description="Ask which insurance company the claim was submitted to.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_claim,
+                required=True,
+            ),
+            guava.Field(
+                key="payer_name",
+                field_type="text",
+                description="Ask which insurance company the claim was submitted to.",
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("look_up_claim")
+def on_look_up_claim(call: guava.Call) -> None:
+    last_name = call.get_field("patient_last_name")
+    dob = call.get_field("patient_date_of_birth")
+    member_id = call.get_field("member_id")
+    service_date = call.get_field("service_date")
+    payer_name = call.get_field("payer_name")
+
+    # In production, map payer_name to the correct payer ID from your payer directory
+    payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
+    provider_npi = os.environ["PROVIDER_NPI"]
+
+    logging.info(
+        "Checking claim status for %s (DOB: %s, member: %s, service: %s)",
+        last_name, dob, member_id, service_date,
+    )
+
+    try:
+        response = get_claim_status(
+            payer_id=payer_id,
+            provider_npi=provider_npi,
+            patient_member_id=member_id,
+            patient_last_name=last_name,
+            patient_date_of_birth=dob,
+            service_date=service_date,
         )
+        claim_info = parse_claim_status(response)
+        logging.info("Claim status result: %s", claim_info)
 
-        self.accept_call()
+        result = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Dana",
+            "use_case": "claim_status",
+            "patient_last_name": last_name,
+            "member_id": member_id,
+            "service_date": service_date,
+            "payer": payer_name,
+            "claim_status": claim_info,
+        }
+        print(json.dumps(result, indent=2))
 
-    def look_up_claim(self):
-        last_name = self.get_field("patient_last_name")
-        dob = self.get_field("patient_date_of_birth")
-        member_id = self.get_field("member_id")
-        service_date = self.get_field("service_date")
-        payer_name = self.get_field("payer_name")
+        status_desc = claim_info.get("status_description") or claim_info.get("status", "unknown")
+        claim_ref = claim_info.get("payer_claim_number") or claim_info.get("claim_reference", "")
+        adj_date = claim_info.get("adjudication_date", "")
 
-        # In production, map payer_name to the correct payer ID from your payer directory
-        payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
-        provider_npi = os.environ["PROVIDER_NPI"]
+        ref_note = f" The payer claim reference number is {claim_ref}." if claim_ref else ""
+        date_note = f" The adjudication date on file is {adj_date}." if adj_date else ""
 
-        logging.info(
-            "Checking claim status for %s (DOB: %s, member: %s, service: %s)",
-            last_name, dob, member_id, service_date,
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know that the claim status for the service date of "
+                f"{service_date} is: {status_desc}.{ref_note}{date_note} "
+                "If the status is a denial or returned claim, let them know that our "
+                "billing team will review it and contact them if any action is needed. "
+                "Thank them for calling Valley Medical Group billing."
+            )
         )
-
-        try:
-            response = get_claim_status(
-                payer_id=payer_id,
-                provider_npi=provider_npi,
-                patient_member_id=member_id,
-                patient_last_name=last_name,
-                patient_date_of_birth=dob,
-                service_date=service_date,
+    except Exception as e:
+        logging.error("Claim status lookup failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know we were unable to "
+                "retrieve the claim status at this time. Advise them to call back or contact "
+                "their insurance company directly for an update. Thank them for their patience."
             )
-            claim_info = parse_claim_status(response)
-            logging.info("Claim status result: %s", claim_info)
-
-            result = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Dana",
-                "use_case": "claim_status",
-                "patient_last_name": last_name,
-                "member_id": member_id,
-                "service_date": service_date,
-                "payer": payer_name,
-                "claim_status": claim_info,
-            }
-            print(json.dumps(result, indent=2))
-
-            status_desc = claim_info.get("status_description") or claim_info.get("status", "unknown")
-            claim_ref = claim_info.get("payer_claim_number") or claim_info.get("claim_reference", "")
-            adj_date = claim_info.get("adjudication_date", "")
-
-            ref_note = f" The payer claim reference number is {claim_ref}." if claim_ref else ""
-            date_note = f" The adjudication date on file is {adj_date}." if adj_date else ""
-
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know that the claim status for the service date of "
-                    f"{service_date} is: {status_desc}.{ref_note}{date_note} "
-                    "If the status is a denial or returned claim, let them know that our "
-                    "billing team will review it and contact them if any action is needed. "
-                    "Thank them for calling Valley Medical Group billing."
-                )
-            )
-        except Exception as e:
-            logging.error("Claim status lookup failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize for a technical issue and let the caller know we were unable to "
-                    "retrieve the claim status at this time. Advise them to call back or contact "
-                    "their insurance company directly for an update. Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ClaimStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

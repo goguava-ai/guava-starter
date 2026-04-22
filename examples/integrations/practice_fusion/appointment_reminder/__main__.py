@@ -67,60 +67,72 @@ def get_provider_display(appointment: dict) -> str:
     return ""
 
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, appointment_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.appointment_id = appointment_id
-        self._appointment_description = "your upcoming appointment"
-        self._provider_name = ""
+agent = guava.Agent(
+    name="Taylor",
+    organization="Riverside Family Medicine",
+    purpose=(
+        "to remind patients of their upcoming appointments at Riverside Family Medicine "
+        "and record whether they plan to attend or need to cancel"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Riverside Family Medicine",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to remind patients of their upcoming appointments at Riverside Family Medicine "
-                "and record whether they plan to attend or need to cancel"
-            ),
-        )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.deliver_reminder,
-            on_failure=self.leave_voicemail,
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    call.reach_person(contact_full_name=patient_name)
 
-    def _fetch_appointment_details(self):
-        """Fetch the FHIR Appointment resource and cache a readable description."""
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+
+    if outcome == "unavailable":
+        appointment_description = "the scheduled date"
         try:
-            appointment = get_appointment(self.appointment_id)
-            self._appointment_description = format_appointment_start(appointment)
-            self._provider_name = get_provider_display(appointment)
+            appointment = get_appointment(appointment_id)
+            appointment_description = format_appointment_start(appointment)
+        except Exception:
+            pass
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {patient_name} on behalf of Riverside "
+                f"Family Medicine reminding them of their appointment on "
+                f"{appointment_description}. "
+                "Ask them to call the office back if they have questions or need to reschedule. "
+                "Do not leave any clinical details in the voicemail. Keep it under 30 seconds."
+            )
+        )
+    elif outcome == "available":
+        appointment_description = "your upcoming appointment"
+        provider_name = ""
+        try:
+            appointment = get_appointment(appointment_id)
+            appointment_description = format_appointment_start(appointment)
+            provider_name = get_provider_display(appointment)
             logging.info(
                 "Appointment %s: %s with %s",
-                self.appointment_id,
-                self._appointment_description,
-                self._provider_name or "provider",
+                appointment_id,
+                appointment_description,
+                provider_name or "provider",
             )
         except Exception as exc:
-            logging.error("Failed to fetch appointment %s: %s", self.appointment_id, exc)
+            logging.error("Failed to fetch appointment %s: %s", appointment_id, exc)
 
-    def deliver_reminder(self):
-        self._fetch_appointment_details()
+        provider_clause = f" with {provider_name}" if provider_name else ""
 
-        provider_clause = f" with {self._provider_name}" if self._provider_name else ""
-
-        self.set_task(
+        call.set_task(
+            "deliver_reminder",
             objective=(
-                f"Remind {self.patient_name} of their appointment{provider_clause} at Riverside Family Medicine "
-                f"on {self._appointment_description}. Confirm whether they plan to attend or need to cancel."
+                f"Remind {patient_name} of their appointment{provider_clause} at Riverside Family Medicine "
+                f"on {appointment_description}. Confirm whether they plan to attend or need to cancel."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.patient_name}, this is Taylor calling from Riverside Family Medicine. "
+                    f"Hello {patient_name}, this is Taylor calling from Riverside Family Medicine. "
                     f"I'm reaching out to remind you of your appointment{provider_clause} scheduled for "
-                    f"{self._appointment_description}."
+                    f"{appointment_description}."
                 ),
                 guava.Field(
                     key="confirmed",
@@ -143,57 +155,50 @@ class AppointmentReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_confirmation,
         )
 
-    def handle_confirmation(self):
-        confirmed = self.get_field("confirmed")
-        cancellation_reason = self.get_field("cancellation_reason")
 
-        cancelled = confirmed and confirmed.strip().lower() == "cancel"
-        new_status = "cancelled" if cancelled else "booked"
+@agent.on_task_complete("deliver_reminder")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
 
-        # Post-call: patch the appointment status in Practice Fusion.
-        # For cancellations, include the patient-provided reason as a comment.
-        try:
-            patch_appointment(
-                self.appointment_id,
-                new_status,
-                cancellation_reason if cancelled else None,
-            )
-            logging.info(
-                "Appointment %s patched to status=%s",
-                self.appointment_id,
-                new_status,
-            )
-        except Exception as exc:
-            logging.error("Failed to patch appointment %s: %s", self.appointment_id, exc)
+    confirmed = call.get_field("confirmed")
+    cancellation_reason = call.get_field("cancellation_reason")
 
-        if cancelled:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their appointment has been cancelled and that "
-                    "a member of the Riverside Family Medicine scheduling team will follow up to "
-                    "help them find a new time whenever they are ready. Thank them warmly."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for confirming. Let them know we look forward to "
-                    "seeing them. Remind them to arrive about 10 minutes early and to bring a photo "
-                    "ID and insurance card if they have not visited recently. Wish them a great day."
-                )
-            )
+    cancelled = confirmed and confirmed.strip().lower() == "cancel"
+    new_status = "cancelled" if cancelled else "booked"
 
-    def leave_voicemail(self):
-        self.hangup(
+    # Post-call: patch the appointment status in Practice Fusion.
+    # For cancellations, include the patient-provided reason as a comment.
+    try:
+        patch_appointment(
+            appointment_id,
+            new_status,
+            cancellation_reason if cancelled else None,
+        )
+        logging.info(
+            "Appointment %s patched to status=%s",
+            appointment_id,
+            new_status,
+        )
+    except Exception as exc:
+        logging.error("Failed to patch appointment %s: %s", appointment_id, exc)
+
+    if cancelled:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.patient_name} on behalf of Riverside "
-                f"Family Medicine reminding them of their appointment on "
-                f"{self._appointment_description or 'the scheduled date'}. "
-                "Ask them to call the office back if they have questions or need to reschedule. "
-                "Do not leave any clinical details in the voicemail. Keep it under 30 seconds."
+                f"Let {patient_name} know their appointment has been cancelled and that "
+                "a member of the Riverside Family Medicine scheduling team will follow up to "
+                "help them find a new time whenever they are ready. Thank them warmly."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for confirming. Let them know we look forward to "
+                "seeing them. Remind them to arrive about 10 minutes early and to bring a photo "
+                "ID and insurance card if they have not visited recently. Wish them a great day."
             )
         )
 
@@ -216,12 +221,12 @@ if __name__ == "__main__":
         args.appointment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "appointment_id": args.appointment_id,
+        },
     )

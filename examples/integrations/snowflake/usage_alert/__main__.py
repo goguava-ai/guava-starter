@@ -78,59 +78,80 @@ def record_alert_response(account_id: str, customer_name: str, decision: str, no
     logging.info("Alert response recorded for account %s: %s", account_id, response)
 
 
-class UsageAlertController(guava.CallController):
-    def __init__(self, account_id: str, contact_name: str):
-        super().__init__()
-        self.account_id = account_id
-        self.contact_name = contact_name
-        self.current_usage_gb = "unknown"
-        self.quota_gb = "unknown"
-        self.usage_pct = "unknown"
+agent = guava.Agent(
+    name="Taylor",
+    organization="Meridian Analytics",
+    purpose=(
+        "to notify customers when their Meridian Analytics usage is approaching their "
+        "monthly quota and to collect their preferred course of action"
+    ),
+)
 
-        # Pre-call: fetch alert data so the agent can reference specific numbers.
-        try:
-            alert = get_account_alert(account_id)
-            if alert:
-                self.current_usage_gb = alert.get("CURRENT_USAGE_GB", "unknown")
-                self.quota_gb = alert.get("QUOTA_GB", "unknown")
-                self.usage_pct = alert.get("USAGE_PCT", "unknown")
-                logging.info(
-                    "Pre-call alert data for account %s — usage: %s GB / %s GB (%s%%)",
-                    account_id, self.current_usage_gb, self.quota_gb, self.usage_pct,
-                )
-            else:
-                logging.warning("No alert record found for account %s", account_id)
-        except Exception as e:
-            logging.error("Failed to fetch alert data for account %s: %s", account_id, e)
 
-        self.set_persona(
-            organization_name="Meridian Analytics",
-            agent_name="Taylor",
-            agent_purpose=(
-                "to notify customers when their Meridian Analytics usage is approaching their "
-                "monthly quota and to collect their preferred course of action"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    account_id = call.get_variable("account_id")
+    contact_name = call.get_variable("contact_name")
+
+    # Fetch alert data so the agent can reference specific numbers.
+    current_usage_gb = "unknown"
+    quota_gb = "unknown"
+    usage_pct = "unknown"
+
+    try:
+        alert = get_account_alert(account_id)
+        if alert:
+            current_usage_gb = alert.get("CURRENT_USAGE_GB", "unknown")
+            quota_gb = alert.get("QUOTA_GB", "unknown")
+            usage_pct = alert.get("USAGE_PCT", "unknown")
+            logging.info(
+                "Pre-call alert data for account %s — usage: %s GB / %s GB (%s%%)",
+                account_id, current_usage_gb, quota_gb, usage_pct,
+            )
+        else:
+            logging.warning("No alert record found for account %s", account_id)
+    except Exception as e:
+        logging.error("Failed to fetch alert data for account %s: %s", account_id, e)
+
+    call.current_usage_gb = current_usage_gb
+    call.quota_gb = quota_gb
+    call.usage_pct = usage_pct
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    account_id = call.get_variable("account_id")
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for usage alert on account %s",
+            contact_name, account_id,
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {contact_name} from Meridian Analytics. "
+                f"Let them know their account ({account_id}) is approaching its monthly "
+                "data quota and ask them to log in to their account portal or call us back "
+                "to discuss their options. Keep the message concise and professional."
+            )
         )
-
-    def begin_call(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "save_response",
             objective=(
-                f"Notify {self.contact_name} that their Meridian Analytics account "
-                f"({self.account_id}) is approaching its monthly quota, and collect "
+                f"Notify {contact_name} that their Meridian Analytics account "
+                f"({account_id}) is approaching its monthly quota, and collect "
                 "their preferred response: upgrade their plan or reduce usage."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Taylor calling from Meridian Analytics. "
-                    f"I'm reaching out because your account is currently at {self.usage_pct}% "
-                    f"of its monthly quota — you've used {self.current_usage_gb} GB out of "
-                    f"your {self.quota_gb} GB allowance. I wanted to make sure you're aware "
+                    f"Hi {contact_name}, this is Taylor calling from Meridian Analytics. "
+                    f"I'm reaching out because your account is currently at {call.usage_pct}% "
+                    f"of its monthly quota — you've used {call.current_usage_gb} GB out of "
+                    f"your {call.quota_gb} GB allowance. I wanted to make sure you're aware "
                     "and give you a chance to decide how you'd like to handle this."
                 ),
                 guava.Field(
@@ -155,59 +176,48 @@ class UsageAlertController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_response,
         )
 
-    def save_response(self):
-        decision = self.get_field("decision") or "not_provided"
-        notes = self.get_field("additional_notes") or ""
 
-        logging.info(
-            "Usage alert response for account %s — decision: %s", self.account_id, decision
+@agent.on_task_complete("save_response")
+def save_response(call: guava.Call) -> None:
+    account_id = call.get_variable("account_id")
+    contact_name = call.get_variable("contact_name")
+    decision = call.get_field("decision") or "not_provided"
+    notes = call.get_field("additional_notes") or ""
+
+    logging.info(
+        "Usage alert response for account %s — decision: %s", account_id, decision
+    )
+
+    try:
+        record_alert_response(
+            account_id=account_id,
+            customer_name=contact_name,
+            decision=decision,
+            notes=notes,
+        )
+        logging.info("Alert response written to ALERT_RESPONSES for account %s", account_id)
+    except Exception as e:
+        logging.error(
+            "Failed to write alert response for account %s: %s", account_id, e
         )
 
-        try:
-            record_alert_response(
-                account_id=self.account_id,
-                customer_name=self.contact_name,
-                decision=decision,
-                notes=notes,
-            )
-            logging.info("Alert response written to ALERT_RESPONSES for account %s", self.account_id)
-        except Exception as e:
-            logging.error(
-                "Failed to write alert response for account %s: %s", self.account_id, e
-            )
-
-        if decision == "upgrade_plan":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time and let them know that a member of "
-                    "the Meridian Analytics team will be in touch shortly to walk them through the "
-                    "available plan options and complete the upgrade. Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. Let them know their preference to "
-                    "manage usage within the current quota has been noted. Suggest they review "
-                    "which queries or workflows are consuming the most data and offer that support "
-                    "documentation is available in their account portal. Wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for usage alert on account %s",
-            self.contact_name, self.account_id,
-        )
-        self.hangup(
+    if decision == "upgrade_plan":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} from Meridian Analytics. "
-                f"Let them know their account ({self.account_id}) is approaching its monthly "
-                "data quota and ask them to log in to their account portal or call us back "
-                "to discuss their options. Keep the message concise and professional."
+                f"Thank {contact_name} for their time and let them know that a member of "
+                "the Meridian Analytics team will be in touch shortly to walk them through the "
+                "available plan options and complete the upgrade. Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Let them know their preference to "
+                "manage usage within the current quota has been noted. Suggest they review "
+                "which queries or workflows are consuming the most data and offer that support "
+                "documentation is available in their account portal. Wish them a great day."
             )
         )
 
@@ -227,11 +237,11 @@ if __name__ == "__main__":
         args.name, args.phone, args.account_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=UsageAlertController(
-            account_id=args.account_id,
-            contact_name=args.name,
-        ),
+        variables={
+            "account_id": args.account_id,
+            "contact_name": args.name,
+        },
     )

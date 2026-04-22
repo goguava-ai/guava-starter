@@ -51,79 +51,78 @@ def search_kb(question: str) -> list[dict]:
     return results
 
 
-class KnowledgeBaseQueryController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Apex Store",
+    purpose="to help Apex Store customers find answers to their questions using our knowledge base",
+)
 
-        self.set_persona(
-            organization_name="Apex Store",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to help Apex Store customers find answers to their questions using our knowledge base"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "knowledge_base_query",
+        objective=(
+            "A customer has called with a question. "
+            "Collect their question, search the knowledge base, and read back the most relevant answer."
+        ),
+        checklist=[
+            guava.Say(
+                "Welcome to Apex Store support. This is Morgan. What question can I help you with today?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called with a question. "
-                "Collect their question, search the knowledge base, and read back the most relevant answer."
+            guava.Field(
+                key="question",
+                field_type="text",
+                description="Ask for their question or what they need help with.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Welcome to Apex Store support. This is Morgan. What question can I help you with today?"
-                ),
-                guava.Field(
-                    key="question",
-                    field_type="text",
-                    description="Ask for their question or what they need help with.",
-                    required=True,
-                ),
-            ],
-            on_complete=self.answer_question,
-        )
+        ],
+    )
 
-        self.accept_call()
 
-    def answer_question(self):
-        question = self.get_field("question") or ""
+@agent.on_task_complete("knowledge_base_query")
+def on_done(call: guava.Call) -> None:
+    question = call.get_field("question") or ""
 
-        logging.info("Searching knowledge base for: %s", question)
+    logging.info("Searching knowledge base for: %s", question)
 
-        articles = []
-        try:
-            articles = search_kb(question)
-            logging.info("Found %d knowledge base results", len(articles))
-        except Exception as e:
-            logging.error("Failed to search knowledge base: %s", e)
+    articles = []
+    try:
+        articles = search_kb(question)
+        logging.info("Found %d knowledge base results", len(articles))
+    except Exception as e:
+        logging.error("Failed to search knowledge base: %s", e)
 
-        if not articles:
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know we didn't find a specific article for that question. "
-                    "Suggest they visit the Apex Store help center at support.apexstore.com, "
-                    "or offer to connect them with a human agent. Thank them for calling."
-                )
-            )
-            return
-
-        top = articles[0]
-        title = top.get("title", "Support Article")
-        snippet = top.get("snippet", top.get("content", ""))[:500]
-        url = top.get("url", "")
-
-        self.hangup(
+    if not articles:
+        call.hangup(
             final_instructions=(
-                f"The best matching article is titled '{title}'. "
-                f"Read the following excerpt to the customer: {snippet} "
-                + (f"The full article is available at: {url}. " if url else "")
-                + "Thank them for calling Apex Store."
+                "Let the customer know we didn't find a specific article for that question. "
+                "Suggest they visit the Apex Store help center at support.apexstore.com, "
+                "or offer to connect them with a human agent. Thank them for calling."
             )
         )
+        return
+
+    top = articles[0]
+    title = top.get("title", "Support Article")
+    snippet = top.get("snippet", top.get("content", ""))[:500]
+    url = top.get("url", "")
+
+    call.hangup(
+        final_instructions=(
+            f"The best matching article is titled '{title}'. "
+            f"Read the following excerpt to the customer: {snippet} "
+            + (f"The full article is available at: {url}. " if url else "")
+            + "Thank them for calling Apex Store."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=KnowledgeBaseQueryController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

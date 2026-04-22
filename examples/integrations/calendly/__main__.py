@@ -142,118 +142,98 @@ def format_slot(iso_slot: str) -> str:
     return dt.strftime("%B %d at %I:%M %p %Z")
 
 
-# ── Call controller ──────────────────────────────────────────────────────────
+# ── Agent ────────────────────────────────────────────────────────────────────
+
+genai_client = google_genai.Client(vertexai=True, location="us-central1")
+date_parser = DateRangeParser(client=genai_client)
+
+user_uri = get_current_user_uri()
+event_types = get_event_types(user_uri)
+event_type_map = {et["name"]: et for et in event_types}
+
+agent = guava.Agent(
+    name="Grace",
+    organization="Acme Consulting",
+    purpose="to help callers book a meeting with the Acme Consulting team",
+)
 
 
-class AppointmentSchedulingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self.caller_number = None
-        self.selected_event_type = None
-        self.genai_client = google_genai.Client(vertexai=True, location="us-central1")
-        self.date_parser = DateRangeParser(client=self.genai_client)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        user_uri = get_current_user_uri()
-        event_types = get_event_types(user_uri)
-        self.event_type_map = {et["name"]: et for et in event_types}
 
-        self.set_persona(
-            organization_name="Acme Consulting",
-            agent_name="Grace",
-            agent_purpose="to help callers book a meeting with the Acme Consulting team",
-        )
-
-        self.set_task(
-            objective="Determine what kind of meeting the caller needs and collect their details.",
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Acme Consulting. My name is Grace. "
-                    "I'd be happy to help you schedule a meeting."
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.data["caller_number"] = call.from_number
+    call.set_task(
+        "collect_details",
+        objective="Determine what kind of meeting the caller needs and collect their details.",
+        checklist=[
+            guava.Say(
+                "Thank you for calling Acme Consulting. My name is Grace. "
+                "I'd be happy to help you schedule a meeting."
+            ),
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask the caller for their full name.",
+                required=True,
+            ),
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for their email address so we can send a confirmation.",
+                required=True,
+            ),
+            guava.Field(
+                key="caller_timezone",
+                field_type="text",
+                description=(
+                    "Ask for their timezone. Capture as an IANA timezone string "
+                    "such as 'America/New_York', 'America/Los_Angeles', or 'Europe/London'."
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask the caller for their full name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="meeting_type",
+                field_type="multiple_choice",
+                description=(
+                    "Ask what kind of meeting they'd like to schedule and offer the options. "
+                    "Match their answer to one of the choices."
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for their email address so we can send a confirmation.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="caller_timezone",
-                    field_type="text",
-                    description=(
-                        "Ask for their timezone. Capture as an IANA timezone string "
-                        "such as 'America/New_York', 'America/Los_Angeles', or 'Europe/London'."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="meeting_type",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask what kind of meeting they'd like to schedule and offer the options. "
-                        "Match their answer to one of the choices."
-                    ),
-                    choices=list(self.event_type_map.keys()),
-                    required=True,
-                ),
-            ],
-            on_complete=self.start_slot_selection,
-        )
+                choices=list(event_type_map.keys()),
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def on_incoming_call(self, from_number):
-        self.caller_number = from_number
+@agent.on_task_complete("collect_details")
+def on_details_done(call: guava.Call) -> None:
+    """Set up the slot selection task after the caller picks a meeting type."""
+    meeting_type = call.get_field("meeting_type")
+    selected_event_type = event_type_map.get(meeting_type)
 
-    def start_slot_selection(self):
-        """Set up the slot selection task after the caller picks a meeting type."""
-        meeting_type = self.get_field("meeting_type")
-        self.selected_event_type = self.event_type_map.get(meeting_type)
-
-        if not self.selected_event_type:
-            logging.error("Unknown meeting type: %s", meeting_type)
-            self.hangup(
-                final_instructions=(
-                    "Apologize and let the caller know we had trouble finding that meeting type. "
-                    "Ask them to call back or reach out by email."
-                )
+    if not selected_event_type:
+        logging.error("Unknown meeting type: %s", meeting_type)
+        call.hangup(
+            final_instructions=(
+                "Apologize and let the caller know we had trouble finding that meeting type. "
+                "Ask them to call back or reach out by email."
             )
-            return
-
-        caller_name = self.get_field("caller_name")
-        self.set_task(
-            objective=f"Find a {meeting_type} slot that works for {caller_name}.",
-            checklist=[
-                guava.Field(
-                    key="appointment_time",
-                    field_type="calendar_slot",
-                    description=(
-                        f"Ask when they'd like to schedule their {meeting_type} and offer "
-                        "matching times. Propose 2–3 options and confirm their choice."
-                    ),
-                    choice_generator=self.filter_slots,
-                    required=True,
-                ),
-                guava.Say(
-                    "Your appointment is confirmed. "
-                    "You'll receive a calendar invite and confirmation email shortly. "
-                    "Have a great day!"
-                ),
-            ],
-            on_complete=self.finalize_booking,
         )
+        return
 
-    def filter_slots(self, query: str) -> tuple[list[str], list[str]]:
+    call.data["selected_event_type"] = selected_event_type
+    caller_name = call.get_field("caller_name")
+
+    def filter_slots(query: str) -> tuple[list[str], list[str]]:
         """Fetch available slots from Calendly on demand based on the caller's request."""
-        event_type_uri = self.selected_event_type["uri"]
+        event_type_uri = selected_event_type["uri"]
 
         # Parse the caller's natural language into a date range (±1 day buffer).
-        start, end = self.date_parser.parse(query, buffer_days=1)
+        start, end = date_parser.parse(query, buffer_days=1)
         slots = get_available_slots(event_type_uri, start, end)
         print(slots)
 
@@ -269,17 +249,69 @@ class AppointmentSchedulingController(guava.CallController):
         wider_slots = get_available_slots(event_type_uri, wide_start, wide_end)
         return [], wider_slots
 
-    def finalize_booking(self):
-        """Book the meeting via the Calendly API, or send a scheduling link as fallback."""
-        name = self.get_field("caller_name") or "Unknown Caller"
-        email = self.get_field("caller_email")
-        timezone = self.get_field("caller_timezone") or "UTC"
-        slot = self.get_field("appointment_time")
-        meeting_type = self.selected_event_type["name"]
+    call.set_task(
+        "finalize_booking",
+        objective=f"Find a {meeting_type} slot that works for {caller_name}.",
+        checklist=[
+            guava.Field(
+                key="appointment_time",
+                field_type="calendar_slot",
+                description=(
+                    f"Ask when they'd like to schedule their {meeting_type} and offer "
+                    "matching times. Propose 2–3 options and confirm their choice."
+                ),
+                choice_generator=filter_slots,
+                required=True,
+            ),
+            guava.Say(
+                "Your appointment is confirmed. "
+                "You'll receive a calendar invite and confirmation email shortly. "
+                "Have a great day!"
+            ),
+        ],
+    )
 
-        if not slot or not email:
-            logging.error("Missing required booking fields — slot: %s, email: %s", slot, email)
-            self.hangup(
+
+@agent.on_task_complete("finalize_booking")
+def on_booking_done(call: guava.Call) -> None:
+    """Book the meeting via the Calendly API, or send a scheduling link as fallback."""
+    name = call.get_field("caller_name") or "Unknown Caller"
+    email = call.get_field("caller_email")
+    timezone = call.get_field("caller_timezone") or "UTC"
+    slot = call.get_field("appointment_time")
+    selected_event_type = call.data.get("selected_event_type", {})
+    meeting_type = selected_event_type.get("name", "")
+    caller_number = call.data.get("caller_number")
+
+    if not slot or not email:
+        logging.error("Missing required booking fields — slot: %s, email: %s", slot, email)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know someone from "
+                "Acme Consulting will follow up by email to confirm their appointment."
+            )
+        )
+        return
+
+    logging.info("Booking %s for %s (%s) at %s", meeting_type, name, email, slot)
+
+    try:
+        invitee = create_invitee(
+            event_type=selected_event_type,
+            start_time=slot,
+            name=name,
+            email=email,
+            timezone=timezone,
+        )
+        logging.info("Booking confirmed:  %s", invitee.get("uri"))
+        logging.info("Cancel URL:         %s", invitee.get("cancel_url"))
+        logging.info("Reschedule URL:     %s", invitee.get("reschedule_url"))
+        call.hangup()
+
+    except requests.HTTPError as e:
+        if e.response.status_code != 403:
+            logging.error("Calendly API error: %s — %s", e, e.response.text)
+            call.hangup(
                 final_instructions=(
                     "Apologize for a technical issue and let the caller know someone from "
                     "Acme Consulting will follow up by email to confirm their appointment."
@@ -287,76 +319,47 @@ class AppointmentSchedulingController(guava.CallController):
             )
             return
 
-        logging.info("Booking %s for %s (%s) at %s", meeting_type, name, email, slot)
-
+        # Free-tier fallback: create a scheduling link and text it to the caller.
+        logging.warning("Scheduling API unavailable (free tier) — falling back to scheduling link")
+        booking_url = None
         try:
-            invitee = create_invitee(
-                event_type=self.selected_event_type,
-                start_time=slot,
-                name=name,
-                email=email,
-                timezone=timezone,
-            )
-            logging.info("Booking confirmed:  %s", invitee.get("uri"))
-            logging.info("Cancel URL:         %s", invitee.get("cancel_url"))
-            logging.info("Reschedule URL:     %s", invitee.get("reschedule_url"))
-            self.hangup()
+            booking_url = create_scheduling_link(selected_event_type["uri"])
+            logging.info("Scheduling link created: %s", booking_url)
+        except Exception as link_err:
+            logging.error("Failed to create scheduling link: %s", link_err)
 
-        except requests.HTTPError as e:
-            if e.response.status_code != 403:
-                logging.error("Calendly API error: %s — %s", e, e.response.text)
-                self.hangup(
-                    final_instructions=(
-                        "Apologize for a technical issue and let the caller know someone from "
-                        "Acme Consulting will follow up by email to confirm their appointment."
-                    )
-                )
-                return
-
-            # Free-tier fallback: create a scheduling link and text it to the caller.
-            logging.warning("Scheduling API unavailable (free tier) — falling back to scheduling link")
-            booking_url = None
+        sms_sent = False
+        if booking_url and caller_number:
             try:
-                booking_url = create_scheduling_link(self.selected_event_type["uri"])
-                logging.info("Scheduling link created: %s", booking_url)
-            except Exception as link_err:
-                logging.error("Failed to create scheduling link: %s", link_err)
-
-            sms_sent = False
-            if booking_url and self.caller_number:
-                try:
-                    guava.Client().send_sms(
-                        from_number=AGENT_NUMBER,
-                        to_number=self.caller_number,
-                        message=(
-                            f"Hi {name}, your {meeting_type} is scheduled for "
-                            f"{format_slot(slot)}. Complete your booking here: {booking_url}"
-                        ),
-                    )
-                    logging.info("Booking link sent via SMS to %s", self.caller_number)
-                    sms_sent = True
-                except Exception as sms_err:
-                    logging.error("Failed to send SMS: %s", sms_err)
-
-            if sms_sent:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {name} know we weren't able to complete the booking automatically, "
-                        "but we've sent a personal booking link to their phone via text message."
-                    )
+                guava.Client().send_sms(
+                    from_number=AGENT_NUMBER,
+                    to_number=caller_number,
+                    message=(
+                        f"Hi {name}, your {meeting_type} is scheduled for "
+                        f"{format_slot(slot)}. Complete your booking here: {booking_url}"
+                    ),
                 )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {name} know we weren't able to complete the booking automatically. "
-                        "Ask them to visit our website to complete their booking."
-                    )
+                logging.info("Booking link sent via SMS to %s", caller_number)
+                sms_sent = True
+            except Exception as sms_err:
+                logging.error("Failed to send SMS: %s", sms_err)
+
+        if sms_sent:
+            call.hangup(
+                final_instructions=(
+                    f"Let {name} know we weren't able to complete the booking automatically, "
+                    "but we've sent a personal booking link to their phone via text message."
                 )
+            )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Let {name} know we weren't able to complete the booking automatically. "
+                    "Ask them to visit our website to complete their booking."
+                )
+            )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=AGENT_NUMBER,
-        controller_class=AppointmentSchedulingController,
-    )
+    agent.listen_phone(AGENT_NUMBER)

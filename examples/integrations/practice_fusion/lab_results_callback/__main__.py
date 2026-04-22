@@ -99,52 +99,64 @@ def log_communication(patient_id: str, report_id: str, acknowledged: str, questi
     return resp.json()
 
 
-class LabResultsCallbackController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, report_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.report_id = report_id
-        self._test_name = "your recent lab panel"
-        self._status_phrase = "results are available"
+agent = guava.Agent(
+    name="Riley",
+    organization="Westfield Medical Group",
+    purpose=(
+        "to notify patients that their lab results are ready, provide a high-level summary "
+        "of whether values are normal or abnormal, answer general questions, and log "
+        "acknowledgment in Practice Fusion"
+    ),
+)
 
-        # Pre-call: fetch the DiagnosticReport so the agent can describe the test
-        # type and convey a high-level normal/abnormal summary.
-        try:
-            report = get_diagnostic_report(report_id)
-            test_name, status_phrase = classify_report(report)
-            self._test_name = test_name
-            self._status_phrase = status_phrase
-            logging.info(
-                "DiagnosticReport %s: test=%s, status=%s",
-                report_id,
-                test_name,
-                status_phrase,
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    report_id = call.get_variable("report_id")
+
+    call.test_name = "your recent lab panel"
+    call.status_phrase = "results are available"
+
+    # Pre-call: fetch the DiagnosticReport so the agent can describe the test
+    # type and convey a high-level normal/abnormal summary.
+    try:
+        report = get_diagnostic_report(report_id)
+        test_name, status_phrase = classify_report(report)
+        call.test_name = test_name
+        call.status_phrase = status_phrase
+        logging.info(
+            "DiagnosticReport %s: test=%s, status=%s",
+            report_id,
+            test_name,
+            status_phrase,
+        )
+    except Exception as exc:
+        logging.error("Failed to fetch DiagnosticReport %s: %s", report_id, exc)
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {patient_name} on behalf of "
+                "Westfield Medical Group. Let them know we are calling because their recent lab "
+                "results are available and ask them to call us back at their earliest convenience. "
+                "Do not mention specific test names, values, or any clinical details. "
+                "Keep the message under 30 seconds."
             )
-        except Exception as exc:
-            logging.error("Failed to fetch DiagnosticReport %s: %s", report_id, exc)
-
-        self.set_persona(
-            organization_name="Westfield Medical Group",
-            agent_name="Riley",
-            agent_purpose=(
-                "to notify patients that their lab results are ready, provide a high-level summary "
-                "of whether values are normal or abnormal, answer general questions, and log "
-                "acknowledgment in Practice Fusion"
-            ),
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.deliver_results,
-            on_failure=self.leave_voicemail,
-        )
-
-    def deliver_results(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "deliver_results",
             objective=(
-                f"Notify {self.patient_name} that their {self._test_name} results are ready. "
-                f"The high-level summary is: {self._status_phrase}. "
+                f"Notify {patient_name} that their {call.test_name} results are ready. "
+                f"The high-level summary is: {call.status_phrase}. "
                 "Convey this in plain, reassuring language. Do not read raw codes or numeric values. "
                 "If values are outside the normal range, let the patient know their provider will "
                 "review the results and follow up with next steps. "
@@ -152,14 +164,14 @@ class LabResultsCallbackController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.patient_name}, this is Riley calling from Westfield Medical Group. "
-                    f"I'm reaching out because your {self._test_name} results are now available."
+                    f"Hello {patient_name}, this is Riley calling from Westfield Medical Group. "
+                    f"I'm reaching out because your {call.test_name} results are now available."
                 ),
                 guava.Field(
                     key="acknowledged",
                     field_type="multiple_choice",
                     description=(
-                        f"Let the patient know the overall status: {self._status_phrase}. "
+                        f"Let the patient know the overall status: {call.status_phrase}. "
                         "Ask if they acknowledge receiving this update."
                     ),
                     choices=["yes", "no"],
@@ -186,54 +198,48 @@ class LabResultsCallbackController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        acknowledged = self.get_field("acknowledged") or "yes"
-        has_questions = self.get_field("has_questions") or "no"
-        question_details = self.get_field("question_details")
 
-        # Log a Communication resource in Practice Fusion to record the outreach outcome.
-        questions_noted = "yes" if has_questions.strip().lower() == "yes" else "no"
-        try:
-            comm = log_communication(
-                self.patient_id,
-                self.report_id,
-                acknowledged,
-                questions_noted,
-            )
-            logging.info("Communication resource created: %s", comm.get("id", "unknown"))
-        except Exception as exc:
-            logging.error("Failed to log Communication for patient %s: %s", self.patient_id, exc)
+@agent.on_task_complete("deliver_results")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    report_id = call.get_variable("report_id")
 
-        if has_questions.strip().lower() == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know their questions have been noted and a member of "
-                    "their care team at Westfield Medical Group will call them back within one to two "
-                    "business days to discuss their results in detail. "
-                    "If they mentioned any specific concerns, acknowledge those warmly. "
-                    "Thank them and wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for taking the call. Let them know they can view "
-                    "their full results in the Westfield Medical Group patient portal at any time. "
-                    "Remind them to reach out if any questions come up later. Wish them a great day."
-                )
-            )
+    acknowledged = call.get_field("acknowledged") or "yes"
+    has_questions = call.get_field("has_questions") or "no"
+    question_details = call.get_field("question_details")
 
-    def leave_voicemail(self):
-        self.hangup(
+    # Log a Communication resource in Practice Fusion to record the outreach outcome.
+    questions_noted = "yes" if has_questions.strip().lower() == "yes" else "no"
+    try:
+        comm = log_communication(
+            patient_id,
+            report_id,
+            acknowledged,
+            questions_noted,
+        )
+        logging.info("Communication resource created: %s", comm.get("id", "unknown"))
+    except Exception as exc:
+        logging.error("Failed to log Communication for patient %s: %s", patient_id, exc)
+
+    if has_questions.strip().lower() == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.patient_name} on behalf of "
-                "Westfield Medical Group. Let them know we are calling because their recent lab "
-                "results are available and ask them to call us back at their earliest convenience. "
-                "Do not mention specific test names, values, or any clinical details. "
-                "Keep the message under 30 seconds."
+                f"Let {patient_name} know their questions have been noted and a member of "
+                "their care team at Westfield Medical Group will call them back within one to two "
+                "business days to discuss their results in detail. "
+                "If they mentioned any specific concerns, acknowledge those warmly. "
+                "Thank them and wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for taking the call. Let them know they can view "
+                "their full results in the Westfield Medical Group patient portal at any time. "
+                "Remind them to reach out if any questions come up later. Wish them a great day."
             )
         )
 
@@ -256,12 +262,12 @@ if __name__ == "__main__":
         args.report_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=LabResultsCallbackController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            report_id=args.report_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "report_id": args.report_id,
+        },
     )

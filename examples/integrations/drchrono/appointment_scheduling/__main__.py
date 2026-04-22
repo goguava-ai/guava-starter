@@ -72,163 +72,163 @@ TIME_MAP = {
 }
 
 
-class AppointmentSchedulingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self.patient = None
+agent = guava.Agent(
+    name="Jordan",
+    organization="Oakridge Family Medicine",
+    purpose="to help patients schedule appointments at Oakridge Family Medicine",
+)
 
-        self.set_persona(
-            organization_name="Oakridge Family Medicine",
-            agent_name="Jordan",
-            agent_purpose="to help patients schedule appointments at Oakridge Family Medicine",
-        )
 
-        self.set_task(
-            objective=(
-                "A patient has called Oakridge Family Medicine to schedule an appointment. "
-                "Collect their contact information, verify or create their patient record, "
-                "and capture their scheduling preferences."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "handle_complete",
+        objective=(
+            "A patient has called Oakridge Family Medicine to schedule an appointment. "
+            "Collect their contact information, verify or create their patient record, "
+            "and capture their scheduling preferences."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Oakridge Family Medicine. "
+                "My name is Jordan and I'd be happy to help you schedule an appointment today."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Oakridge Family Medicine. "
-                    "My name is Jordan and I'd be happy to help you schedule an appointment today."
+            guava.Field(
+                key="patient_email",
+                field_type="text",
+                description="Ask for the caller's email address so we can look up their record.",
+                required=True,
+            ),
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description=(
+                    "If this is a new patient (we couldn't find them by email), ask for their first name. "
+                    "Skip this question if they are already in our system."
                 ),
-                guava.Field(
-                    key="patient_email",
-                    field_type="text",
-                    description="Ask for the caller's email address so we can look up their record.",
-                    required=True,
+                required=False,
+            ),
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description=(
+                    "If this is a new patient, ask for their last name. "
+                    "Skip this question if they are already in our system."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description=(
-                        "If this is a new patient (we couldn't find them by email), ask for their first name. "
-                        "Skip this question if they are already in our system."
-                    ),
-                    required=False,
+                required=False,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description=(
+                    "Ask for their date of birth for verification. "
+                    "Capture in YYYY-MM-DD format."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description=(
-                        "If this is a new patient, ask for their last name. "
-                        "Skip this question if they are already in our system."
-                    ),
-                    required=False,
+                required=True,
+            ),
+            guava.Field(
+                key="appointment_reason",
+                field_type="text",
+                description="Ask what brings them in — the reason for the appointment.",
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_date",
+                field_type="text",
+                description=(
+                    "Ask for their preferred appointment date. "
+                    "Ask them to give a specific date, for example 'March 15th'."
                 ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description=(
-                        "Ask for their date of birth for verification. "
-                        "Capture in YYYY-MM-DD format."
-                    ),
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_time",
+                field_type="multiple_choice",
+                description="Ask whether they prefer a morning, afternoon, or evening appointment.",
+                choices=["morning", "afternoon", "evening"],
+                required=True,
+            ),
+            guava.Field(
+                key="appointment_type",
+                field_type="multiple_choice",
+                description=(
+                    "Ask what type of appointment this is. "
+                    "Options: wellness visit, sick visit, follow-up, specialist referral, or other."
                 ),
-                guava.Field(
-                    key="appointment_reason",
-                    field_type="text",
-                    description="Ask what brings them in — the reason for the appointment.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_date",
-                    field_type="text",
-                    description=(
-                        "Ask for their preferred appointment date. "
-                        "Ask them to give a specific date, for example 'March 15th'."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_time",
-                    field_type="multiple_choice",
-                    description="Ask whether they prefer a morning, afternoon, or evening appointment.",
-                    choices=["morning", "afternoon", "evening"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="appointment_type",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask what type of appointment this is. "
-                        "Options: wellness visit, sick visit, follow-up, specialist referral, or other."
-                    ),
-                    choices=["wellness-visit", "sick-visit", "follow-up", "specialist-referral", "other"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.handle_complete,
-        )
+                choices=["wellness-visit", "sick-visit", "follow-up", "specialist-referral", "other"],
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def handle_complete(self):
-        email = self.get_field("patient_email") or ""
-        first_name = self.get_field("first_name") or ""
-        last_name = self.get_field("last_name") or ""
-        dob = self.get_field("date_of_birth") or ""
-        reason = self.get_field("appointment_reason") or "General visit"
-        preferred_time = self.get_field("preferred_time") or "morning"
-        appointment_type = self.get_field("appointment_type") or "other"
+@agent.on_task_complete("handle_complete")
+def on_handle_complete(call: guava.Call) -> None:
+    email = call.get_field("patient_email") or ""
+    first_name = call.get_field("first_name") or ""
+    last_name = call.get_field("last_name") or ""
+    dob = call.get_field("date_of_birth") or ""
+    reason = call.get_field("appointment_reason") or "General visit"
+    preferred_time = call.get_field("preferred_time") or "morning"
+    appointment_type = call.get_field("appointment_type") or "other"
 
-        # Look up or create patient
-        patient_id = None
-        patient_first = first_name
-        try:
-            existing = search_patient_by_email(email)
-            if existing:
-                patient_id = existing["id"]
-                patient_first = existing.get("first_name", first_name)
-                logging.info("Found existing patient %s (ID: %s)", patient_first, patient_id)
-            elif first_name and last_name:
-                new_patient = create_patient(first_name, last_name, email, dob)
-                patient_id = new_patient["id"]
-                logging.info("Created new patient %s %s (ID: %s)", first_name, last_name, patient_id)
-            else:
-                logging.warning("New patient but first/last name not collected — cannot create record.")
-        except Exception as e:
-            logging.error("Patient lookup/creation failed: %s", e)
-
-        # Build a placeholder scheduled time — scheduling team will confirm exact time
-        time_str = TIME_MAP.get(preferred_time, "09:00:00")
-        scheduled_time = f"2025-01-15T{time_str}"
-
-        appt_id = None
-        if patient_id:
-            try:
-                full_reason = f"{appointment_type.replace('-', ' ').title()} — {reason}"
-                appt = create_appointment(patient_id, full_reason, scheduled_time)
-                appt_id = appt.get("id")
-                logging.info("Created appointment ID %s for patient %s", appt_id, patient_id)
-            except Exception as e:
-                logging.error("Appointment creation failed: %s", e)
-
-        if appt_id:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know their appointment request has been received. "
-                    f"Tell them that the scheduling team at Oakridge Family Medicine will call them back "
-                    f"to confirm the exact date and time based on their preference of {preferred_time}. "
-                    "Ask them to have their insurance card ready for the visit. "
-                    "Thank them for calling and wish them a great day."
-                )
-            )
+    # Look up or create patient
+    patient_id = None
+    patient_first = first_name
+    try:
+        existing = search_patient_by_email(email)
+        if existing:
+            patient_id = existing["id"]
+            patient_first = existing.get("first_name", first_name)
+            logging.info("Found existing patient %s (ID: %s)", patient_first, patient_id)
+        elif first_name and last_name:
+            new_patient = create_patient(first_name, last_name, email, dob)
+            patient_id = new_patient["id"]
+            logging.info("Created new patient %s %s (ID: %s)", first_name, last_name, patient_id)
         else:
-            self.hangup(
-                final_instructions=(
-                    "Apologize to the caller and let them know there was a technical issue processing "
-                    "their appointment request. Ask them to call back or hold while a team member assists. "
-                    "Thank them for their patience."
-                )
+            logging.warning("New patient but first/last name not collected — cannot create record.")
+    except Exception as e:
+        logging.error("Patient lookup/creation failed: %s", e)
+
+    # Build a placeholder scheduled time — scheduling team will confirm exact time
+    time_str = TIME_MAP.get(preferred_time, "09:00:00")
+    scheduled_time = f"2025-01-15T{time_str}"
+
+    appt_id = None
+    if patient_id:
+        try:
+            full_reason = f"{appointment_type.replace('-', ' ').title()} — {reason}"
+            appt = create_appointment(patient_id, full_reason, scheduled_time)
+            appt_id = appt.get("id")
+            logging.info("Created appointment ID %s for patient %s", appt_id, patient_id)
+        except Exception as e:
+            logging.error("Appointment creation failed: %s", e)
+
+    if appt_id:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know their appointment request has been received. "
+                f"Tell them that the scheduling team at Oakridge Family Medicine will call them back "
+                f"to confirm the exact date and time based on their preference of {preferred_time}. "
+                "Ask them to have their insurance card ready for the visit. "
+                "Thank them for calling and wish them a great day."
             )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Apologize to the caller and let them know there was a technical issue processing "
+                "their appointment request. Ask them to call back or hold while a team member assists. "
+                "Thank them for their patience."
+            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=AppointmentSchedulingController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

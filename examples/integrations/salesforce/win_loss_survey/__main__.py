@@ -77,57 +77,83 @@ def log_task(what_id: str, subject: str, description: str) -> None:
     resp.raise_for_status()
 
 
-class WinLossSurveyController(guava.CallController):
-    def __init__(self, opp_id: str, contact_name: str, deal_outcome: str):
-        super().__init__()
-        self.opp_id = opp_id
-        self.contact_name = contact_name
-        self.deal_outcome = deal_outcome.lower()  # "won" or "lost"
-        self.opp_name = "our recent proposal"
-        self.opp_amount = ""
+agent = guava.Agent(
+    name="Jordan",
+    organization="Northgate Solutions",
+    purpose=(
+        "to gather candid win/loss feedback from prospects or customers after a deal "
+        "closes — helping Northgate Solutions improve its sales process and product"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
+    deal_outcome = call.get_variable("deal_outcome").lower()  # "won" or "lost"
+
+    call.opp_name = "our recent proposal"
+    call.opp_amount = ""
+    call.deal_outcome = deal_outcome
+
+    try:
+        opp = get_opportunity(opp_id)
+        if opp:
+            call.opp_name = opp.get("Name") or "our recent proposal"
+            amount = opp.get("Amount")
+            call.opp_amount = f"${amount:,.0f}" if amount else ""
+    except Exception as e:
+        logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for win/loss survey on opp %s.", contact_name, opp_id)
         try:
-            opp = get_opportunity(opp_id)
-            if opp:
-                self.opp_name = opp.get("Name") or "our recent proposal"
-                amount = opp.get("Amount")
-                self.opp_amount = f"${amount:,.0f}" if amount else ""
+            log_task(
+                opp_id,
+                subject="Win/Loss Survey — contact unavailable",
+                description=(
+                    f"Win/loss survey attempted — {contact_name} unavailable.\n"
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+                ),
+            )
         except Exception as e:
-            logging.error("Failed to fetch Opportunity %s pre-call: %s", opp_id, e)
+            logging.error("Failed to log missed-call Task: %s", e)
 
-        self.set_persona(
-            organization_name="Northgate Solutions",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to gather candid win/loss feedback from prospects or customers after a deal "
-                "closes — helping Northgate Solutions improve its sales process and product"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, warm voicemail for {contact_name} from Northgate Solutions. "
+                "Let them know you're calling to gather some quick feedback and will try again. "
+                "Keep it light and non-pressuring."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_survey(self):
-        if self.deal_outcome == "won":
+    elif outcome == "available":
+        if call.deal_outcome == "won":
             opening = (
-                f"Hi {self.contact_name}, this is Jordan from Northgate Solutions. "
-                f"We're thrilled you chose us for {self.opp_name}, and I'm calling to ask a "
+                f"Hi {contact_name}, this is Jordan from Northgate Solutions. "
+                f"We're thrilled you chose us for {call.opp_name}, and I'm calling to ask a "
                 "few quick questions about what made you decide to move forward with us."
             )
         else:
             opening = (
-                f"Hi {self.contact_name}, this is Jordan from Northgate Solutions. "
-                f"I know you went in a different direction on {self.opp_name}, and I truly "
+                f"Hi {contact_name}, this is Jordan from Northgate Solutions. "
+                f"I know you went in a different direction on {call.opp_name}, and I truly "
                 "appreciate you taking a moment to share some honest feedback — it helps us improve."
             )
 
-        self.set_task(
+        call.set_task(
+            "record_feedback",
             objective=(
-                f"Conduct a brief win/loss survey with {self.contact_name} about the "
-                f"{'won' if self.deal_outcome == 'won' else 'lost'} deal '{self.opp_name}'. "
+                f"Conduct a brief win/loss survey with {contact_name} about the "
+                f"{'won' if call.deal_outcome == 'won' else 'lost'} deal '{call.opp_name}'. "
                 "Ask thoughtful questions and capture candid, detailed responses."
             ),
             checklist=[
@@ -190,86 +216,68 @@ class WinLossSurveyController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.record_feedback,
         )
 
-    def record_feedback(self):
-        decision_factor = self.get_field("primary_decision_factor") or ""
-        competitor = self.get_field("competitor_chosen") or ""
-        strengths = self.get_field("our_strengths") or ""
-        improvements = self.get_field("improvement_areas") or ""
-        future = self.get_field("would_consider_future") or ""
 
-        note_lines = [
-            f"Win/Loss Survey — {self.deal_outcome.title()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-            f"Contact: {self.contact_name}",
-            f"Opportunity: {self.opp_name}",
-            f"Primary decision factor: {decision_factor}",
-            f"Our strengths: {strengths}",
-            f"Improvement areas: {improvements}",
-            f"Would consider in future / recommend: {future}",
-        ]
-        if competitor:
-            note_lines.append(f"Competitor chosen: {competitor}")
+@agent.on_task_complete("record_feedback")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    opp_id = call.get_variable("opp_id")
 
-        logging.info(
-            "Win/loss survey complete for opp %s — outcome: %s, factor: %s",
-            self.opp_id, self.deal_outcome, decision_factor,
-        )
+    decision_factor = call.get_field("primary_decision_factor") or ""
+    competitor = call.get_field("competitor_chosen") or ""
+    strengths = call.get_field("our_strengths") or ""
+    improvements = call.get_field("improvement_areas") or ""
+    future = call.get_field("would_consider_future") or ""
 
+    note_lines = [
+        f"Win/Loss Survey — {call.deal_outcome.title()} — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        f"Contact: {contact_name}",
+        f"Opportunity: {call.opp_name}",
+        f"Primary decision factor: {decision_factor}",
+        f"Our strengths: {strengths}",
+        f"Improvement areas: {improvements}",
+        f"Would consider in future / recommend: {future}",
+    ]
+    if competitor:
+        note_lines.append(f"Competitor chosen: {competitor}")
+
+    logging.info(
+        "Win/loss survey complete for opp %s — outcome: %s, factor: %s",
+        opp_id, call.deal_outcome, decision_factor,
+    )
+
+    try:
+        log_note_on_opportunity(opp_id, "\n".join(note_lines))
+        logging.info("Note logged on opportunity %s.", opp_id)
+    except Exception as e:
+        logging.error("Failed to log Note: %s", e)
+
+    if call.deal_outcome == "lost" and decision_factor:
         try:
-            log_note_on_opportunity(self.opp_id, "\n".join(note_lines))
-            logging.info("Note logged on opportunity %s.", self.opp_id)
+            update_opportunity_loss_reason(opp_id, decision_factor)
+            logging.info("Updated Loss_Reason__c on opp %s.", opp_id)
         except Exception as e:
-            logging.error("Failed to log Note: %s", e)
+            logging.warning("Could not update Loss_Reason__c (field may not exist): %s", e)
 
-        if self.deal_outcome == "lost" and decision_factor:
-            try:
-                update_opportunity_loss_reason(self.opp_id, decision_factor)
-                logging.info("Updated Loss_Reason__c on opp %s.", self.opp_id)
-            except Exception as e:
-                logging.warning("Could not update Loss_Reason__c (field may not exist): %s", e)
-
-        try:
-            log_task(
-                self.opp_id,
-                subject=f"Win/Loss Survey — {self.deal_outcome.title()}",
-                description=f"Survey completed with {self.contact_name}.",
-            )
-        except Exception as e:
-            logging.error("Failed to log Task: %s", e)
-
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.contact_name} sincerely for their time and candid feedback. "
-                "Let them know the input is genuinely valuable and will be shared with the product "
-                "and sales leadership team. "
-                + ("Wish them great success with their chosen solution." if self.deal_outcome == "lost"
-                   else "Express excitement about working together and wish them a great day.")
-            )
+    try:
+        log_task(
+            opp_id,
+            subject=f"Win/Loss Survey — {call.deal_outcome.title()}",
+            description=f"Survey completed with {contact_name}.",
         )
+    except Exception as e:
+        logging.error("Failed to log Task: %s", e)
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for win/loss survey on opp %s.", self.contact_name, self.opp_id)
-        try:
-            log_task(
-                self.opp_id,
-                subject="Win/Loss Survey — contact unavailable",
-                description=(
-                    f"Win/loss survey attempted — {self.contact_name} unavailable.\n"
-                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-                ),
-            )
-        except Exception as e:
-            logging.error("Failed to log missed-call Task: %s", e)
-
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief, warm voicemail for {self.contact_name} from Northgate Solutions. "
-                "Let them know you're calling to gather some quick feedback and will try again. "
-                "Keep it light and non-pressuring."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} sincerely for their time and candid feedback. "
+            "Let them know the input is genuinely valuable and will be shared with the product "
+            "and sales leadership team. "
+            + ("Wish them great success with their chosen solution." if call.deal_outcome == "lost"
+               else "Express excitement about working together and wish them a great day.")
         )
+    )
 
 
 if __name__ == "__main__":
@@ -293,12 +301,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.opportunity_id, args.outcome,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=WinLossSurveyController(
-            opp_id=args.opportunity_id,
-            contact_name=args.name,
-            deal_outcome=args.outcome,
-        ),
+        variables={
+            "opp_id": args.opportunity_id,
+            "contact_name": args.name,
+            "deal_outcome": args.outcome,
+        },
     )

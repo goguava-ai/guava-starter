@@ -83,145 +83,146 @@ def parse_patient_summary(patient: dict) -> dict:
     }
 
 
-class PatientLookupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Riverside Health System",
+    purpose=(
+        "to assist Riverside Health System patients with account inquiries, including "
+        "appointment information and general account questions"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Riverside Health System",
-            agent_name="Sam",
-            agent_purpose=(
-                "to assist Riverside Health System patients with account inquiries, including "
-                "appointment information and general account questions"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "lookup_patient",
+        objective=(
+            "A patient has called Riverside Health System. Verify their identity, look up "
+            "their record in the EHR, and assist them with their inquiry."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Riverside Health System. I'm Sam. "
+                "I'll look up your record — may I start with your date of birth "
+                "and last name to verify your identity?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A patient has called Riverside Health System. Verify their identity, look up "
-                "their record in the EHR, and assist them with their inquiry."
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for their last name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Riverside Health System. I'm Sam. "
-                    "I'll look up your record — may I start with your date of birth "
-                    "and last name to verify your identity?"
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask for their first name.",
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description=(
+                    "Ask for their date of birth. Confirm it back in full (e.g. 'January 15, 1982')."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for their last name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="mrn",
+                field_type="text",
+                description=(
+                    "Ask if they have their medical record number (MRN) handy. "
+                    "Let them know it's on their patient portal or paperwork. Skip if they don't have it."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask for their first name.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description=(
-                        "Ask for their date of birth. Confirm it back in full (e.g. 'January 15, 1982')."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="mrn",
-                    field_type="text",
-                    description=(
-                        "Ask if they have their medical record number (MRN) handy. "
-                        "Let them know it's on their patient portal or paperwork. Skip if they don't have it."
-                    ),
-                    required=False,
-                ),
-                guava.Field(
-                    key="reason_for_call",
-                    field_type="multiple_choice",
-                    description="Ask what they're calling about today.",
-                    choices=[
-                        "appointment question",
-                        "medical records request",
-                        "billing question",
-                        "prescription question",
-                        "general question",
-                    ],
-                    required=True,
-                ),
-            ],
-            on_complete=self.lookup_patient,
-        )
+                required=False,
+            ),
+            guava.Field(
+                key="reason_for_call",
+                field_type="multiple_choice",
+                description="Ask what they're calling about today.",
+                choices=[
+                    "appointment question",
+                    "medical records request",
+                    "billing question",
+                    "prescription question",
+                    "general question",
+                ],
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def lookup_patient(self):
-        last_name = self.get_field("last_name") or ""
-        first_name = self.get_field("first_name") or ""
-        dob = self.get_field("date_of_birth") or ""
-        mrn = (self.get_field("mrn") or "").strip()
-        reason = self.get_field("reason_for_call") or "general question"
+@agent.on_task_complete("lookup_patient")
+def on_done(call: guava.Call) -> None:
+    last_name = call.get_field("last_name") or ""
+    first_name = call.get_field("first_name") or ""
+    dob = call.get_field("date_of_birth") or ""
+    mrn = (call.get_field("mrn") or "").strip()
+    reason = call.get_field("reason_for_call") or "general question"
 
-        patient = None
-        try:
-            if mrn:
-                logging.info("Looking up patient by MRN: %s", mrn)
-                patient = find_patient_by_mrn(mrn)
-            if not patient:
-                logging.info("Looking up patient by name/DOB: %s %s, %s", first_name, last_name, dob)
-                patient = find_patient_by_name_dob(last_name, first_name, dob)
-        except Exception as e:
-            logging.error("FHIR patient lookup failed: %s", e)
-
+    patient = None
+    try:
+        if mrn:
+            logging.info("Looking up patient by MRN: %s", mrn)
+            patient = find_patient_by_mrn(mrn)
         if not patient:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know you were unable to locate a patient record matching "
-                    f"{first_name} {last_name} with that date of birth. Ask them to verify the "
-                    "spelling or their date of birth, or offer to transfer them to the patient "
-                    "services team. Be empathetic and patient."
-                )
-            )
-            return
+            logging.info("Looking up patient by name/DOB: %s %s, %s", first_name, last_name, dob)
+            patient = find_patient_by_name_dob(last_name, first_name, dob)
+    except Exception as e:
+        logging.error("FHIR patient lookup failed: %s", e)
 
-        summary = parse_patient_summary(patient)
-        patient_id = summary["id"]
-        name = summary["name"] or f"{first_name} {last_name}"
-
-        logging.info("Patient found: %s (ID: %s)", name, patient_id)
-
-        appt_context = ""
-        if reason == "appointment question" and patient_id:
-            try:
-                appts = get_upcoming_appointments(patient_id)
-                if appts:
-                    appt_lines = []
-                    for a in appts[:3]:
-                        start = a.get("start", "")[:10]
-                        appt_type = a.get("appointmentType", {}).get("text", "appointment")
-                        status = a.get("status", "")
-                        appt_lines.append(f"{appt_type} on {start} ({status})")
-                    appt_context = "Upcoming appointments: " + "; ".join(appt_lines)
-                else:
-                    appt_context = "No upcoming appointments found in the system."
-            except Exception as e:
-                logging.error("Failed to fetch appointments for patient %s: %s", patient_id, e)
-
-        self.hangup(
+    if not patient:
+        call.hangup(
             final_instructions=(
-                f"Greet {name} by name — do not reveal sensitive medical details unprompted. "
-                f"Their record was found. Reason for call: {reason}. "
-                + (f"Appointment info: {appt_context} " if appt_context else "")
-                + "Assist them with their question professionally. For medical records, direct them "
-                "to the records department. For billing, to the billing team. "
-                "Thank them for calling Riverside Health System."
+                f"Let the caller know you were unable to locate a patient record matching "
+                f"{first_name} {last_name} with that date of birth. Ask them to verify the "
+                "spelling or their date of birth, or offer to transfer them to the patient "
+                "services team. Be empathetic and patient."
             )
         )
+        return
+
+    summary = parse_patient_summary(patient)
+    patient_id = summary["id"]
+    name = summary["name"] or f"{first_name} {last_name}"
+
+    logging.info("Patient found: %s (ID: %s)", name, patient_id)
+
+    appt_context = ""
+    if reason == "appointment question" and patient_id:
+        try:
+            appts = get_upcoming_appointments(patient_id)
+            if appts:
+                appt_lines = []
+                for a in appts[:3]:
+                    start = a.get("start", "")[:10]
+                    appt_type = a.get("appointmentType", {}).get("text", "appointment")
+                    status = a.get("status", "")
+                    appt_lines.append(f"{appt_type} on {start} ({status})")
+                appt_context = "Upcoming appointments: " + "; ".join(appt_lines)
+            else:
+                appt_context = "No upcoming appointments found in the system."
+        except Exception as e:
+            logging.error("Failed to fetch appointments for patient %s: %s", patient_id, e)
+
+    call.hangup(
+        final_instructions=(
+            f"Greet {name} by name — do not reveal sensitive medical details unprompted. "
+            f"Their record was found. Reason for call: {reason}. "
+            + (f"Appointment info: {appt_context} " if appt_context else "")
+            + "Assist them with their question professionally. For medical records, direct them "
+            "to the records department. For billing, to the billing team. "
+            "Thank them for calling Riverside Health System."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=PatientLookupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

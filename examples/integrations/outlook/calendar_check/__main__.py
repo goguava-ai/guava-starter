@@ -65,122 +65,123 @@ def resolve_date(date_choice: str) -> str:
     return mapping.get(date_choice.lower(), today).isoformat()
 
 
-class CalendarCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Meridian Partners",
+    purpose=(
+        "to help Meridian Partners employees quickly check their Outlook calendar "
+        "over the phone"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Meridian Partners",
-            agent_name="Alex",
-            agent_purpose=(
-                "to help Meridian Partners employees quickly check their Outlook calendar "
-                "over the phone"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "read_calendar",
+        objective=(
+            "A team member has called to check their calendar. Ask which day they want to "
+            "review and optionally whose calendar, then read back their schedule."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Meridian Partners. I'm Alex. "
+                "I can read your Outlook calendar for any day — what would you like to check?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A team member has called to check their calendar. Ask which day they want to "
-                "review and optionally whose calendar, then read back their schedule."
+            guava.Field(
+                key="date_choice",
+                field_type="multiple_choice",
+                description=(
+                    "Ask which day they want to check. "
+                    "If they say a specific date, capture it; otherwise map it to one of these."
+                ),
+                choices=["today", "tomorrow", "this monday", "next monday", "specific date"],
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Meridian Partners. I'm Alex. "
-                    "I can read your Outlook calendar for any day — what would you like to check?"
+            guava.Field(
+                key="specific_date",
+                field_type="date",
+                description=(
+                    "If they chose 'specific date', ask for the date. "
+                    "Skip this if they chose today or tomorrow."
                 ),
-                guava.Field(
-                    key="date_choice",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask which day they want to check. "
-                        "If they say a specific date, capture it; otherwise map it to one of these."
-                    ),
-                    choices=["today", "tomorrow", "this monday", "next monday", "specific date"],
-                    required=True,
+                required=False,
+            ),
+            guava.Field(
+                key="user_id",
+                field_type="text",
+                description=(
+                    "Ask if they want to check their own calendar or a colleague's. "
+                    "If a colleague's, ask for their email address. "
+                    "Leave blank for their own calendar."
                 ),
-                guava.Field(
-                    key="specific_date",
-                    field_type="date",
-                    description=(
-                        "If they chose 'specific date', ask for the date. "
-                        "Skip this if they chose today or tomorrow."
-                    ),
-                    required=False,
-                ),
-                guava.Field(
-                    key="user_id",
-                    field_type="text",
-                    description=(
-                        "Ask if they want to check their own calendar or a colleague's. "
-                        "If a colleague's, ask for their email address. "
-                        "Leave blank for their own calendar."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.read_calendar,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def read_calendar(self):
-        date_choice = self.get_field("date_choice") or "today"
-        specific_date = self.get_field("specific_date") or ""
-        user_id = (self.get_field("user_id") or "").strip()
+@agent.on_task_complete("read_calendar")
+def on_done(call: guava.Call) -> None:
+    date_choice = call.get_field("date_choice") or "today"
+    specific_date = call.get_field("specific_date") or ""
+    user_id = (call.get_field("user_id") or "").strip()
 
-        if date_choice == "specific date" and specific_date:
-            target_date = specific_date.strip()
-        else:
-            target_date = resolve_date(date_choice)
+    if date_choice == "specific date" and specific_date:
+        target_date = specific_date.strip()
+    else:
+        target_date = resolve_date(date_choice)
 
-        try:
-            dt = datetime.strptime(target_date, "%Y-%m-%d")
-            date_label = dt.strftime("%A, %B %-d")
-        except ValueError:
-            date_label = target_date
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+        date_label = dt.strftime("%A, %B %-d")
+    except ValueError:
+        date_label = target_date
 
-        whose = f"the calendar for {user_id}" if user_id else "your calendar"
-        logging.info("Fetching events for user='%s' date='%s'", user_id or "me", target_date)
+    whose = f"the calendar for {user_id}" if user_id else "your calendar"
+    logging.info("Fetching events for user='%s' date='%s'", user_id or "me", target_date)
 
-        try:
-            events = get_events_for_date(user_id, target_date)
-        except Exception as e:
-            logging.error("Calendar fetch failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize — there was a technical issue fetching {whose} for {date_label}. "
-                    "Ask the caller to check Outlook directly. Thank them for calling."
-                )
-            )
-            return
-
-        if not events:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know {whose} is clear for {date_label} — no events scheduled. "
-                    "Thank them for calling Meridian Partners."
-                )
-            )
-            return
-
-        count = len(events)
-        summaries = "; ".join(format_event_brief(e) for e in events)
-        logging.info("Found %d event(s) for %s on %s", count, user_id or "me", target_date)
-
-        self.hangup(
+    try:
+        events = get_events_for_date(user_id, target_date)
+    except Exception as e:
+        logging.error("Calendar fetch failed: %s", e)
+        call.hangup(
             final_instructions=(
-                f"Read back {whose} for {date_label}. "
-                f"There {'is' if count == 1 else 'are'} {count} "
-                f"event{'s' if count != 1 else ''}: {summaries}. "
-                "Read each one clearly, pausing between events. "
+                f"Apologize — there was a technical issue fetching {whose} for {date_label}. "
+                "Ask the caller to check Outlook directly. Thank them for calling."
+            )
+        )
+        return
+
+    if not events:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know {whose} is clear for {date_label} — no events scheduled. "
                 "Thank them for calling Meridian Partners."
             )
         )
+        return
+
+    count = len(events)
+    summaries = "; ".join(format_event_brief(e) for e in events)
+    logging.info("Found %d event(s) for %s on %s", count, user_id or "me", target_date)
+
+    call.hangup(
+        final_instructions=(
+            f"Read back {whose} for {date_label}. "
+            f"There {'is' if count == 1 else 'are'} {count} "
+            f"event{'s' if count != 1 else ''}: {summaries}. "
+            "Read each one clearly, pausing between events. "
+            "Thank them for calling Meridian Partners."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=CalendarCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

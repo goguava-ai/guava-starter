@@ -38,47 +38,52 @@ def add_tracking_note(slug: str, tracking_number: str, note: str) -> None:
         logging.warning("Could not update tracking note: %s", e)
 
 
-class ProactiveDeliveryUpdateController(guava.CallController):
-    def __init__(
-        self,
-        customer_name: str,
-        tracking_number: str,
-        slug: str,
-        order_description: str,
-    ):
-        super().__init__()
-        self.customer_name = customer_name
-        self.tracking_number = tracking_number
-        self.slug = slug
-        self.order_description = order_description
+agent = guava.Agent(
+    name="Alex",
+    organization="Meridian Commerce",
+    purpose=(
+        "to proactively notify Meridian Commerce customers that their package "
+        "is out for delivery today"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Meridian Commerce",
-            agent_name="Alex",
-            agent_purpose=(
-                "to proactively notify Meridian Commerce customers that their package "
-                "is out for delivery today"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach %s for out-for-delivery notification on %s",
+            call.get_variable("customer_name"), call.get_variable("tracking_number"),
         )
-
-        self.reach_person(
-            contact_full_name=customer_name,
-            on_success=self.deliver_notification,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, upbeat voicemail for {call.get_variable('customer_name')} from Meridian Commerce. "
+                f"Let them know their {call.get_variable('order_description')} is out for delivery today "
+                "and to keep an eye out. Keep it under 20 seconds."
+            )
         )
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        tracking_number = call.get_variable("tracking_number")
+        slug = call.get_variable("slug")
+        order_description = call.get_variable("order_description")
+        carrier = slug.replace("-", " ").title()
 
-    def deliver_notification(self):
-        carrier = self.slug.replace("-", " ").title()
-
-        self.set_task(
+        call.set_task(
+            "deliver_out_for_delivery_notification",
             objective=(
-                f"Notify {self.customer_name} that their package is out for delivery today "
+                f"Notify {customer_name} that their package is out for delivery today "
                 "and confirm any delivery instructions."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}! This is Alex calling from Meridian Commerce. "
-                    f"Great news — your {self.order_description} is out for delivery with "
+                    f"Hi {customer_name}! This is Alex calling from Meridian Commerce. "
+                    f"Great news — your {order_description} is out for delivery with "
                     f"{carrier} today. You can expect it to arrive sometime today."
                 ),
                 guava.Field(
@@ -106,57 +111,48 @@ class ProactiveDeliveryUpdateController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.record_and_close,
         )
 
-    def record_and_close(self):
-        instructions = self.get_field("delivery_instructions") or ""
-        will_be_home = self.get_field("will_be_home") or "yes, someone will be home"
 
-        logging.info(
-            "Delivery update for tracking %s: will_be_home=%s",
-            self.tracking_number, will_be_home,
-        )
+@agent.on_task_complete("deliver_out_for_delivery_notification")
+def on_done(call: guava.Call) -> None:
+    instructions = call.get_field("delivery_instructions") or ""
+    will_be_home = call.get_field("will_be_home") or "yes, someone will be home"
+    customer_name = call.get_variable("customer_name")
+    tracking_number = call.get_variable("tracking_number")
+    slug = call.get_variable("slug")
 
-        note = f"Out-for-delivery call: {will_be_home}."
-        if instructions:
-            note += f" Delivery instructions: {instructions}"
-        add_tracking_note(self.slug, self.tracking_number, note)
+    logging.info(
+        "Delivery update for tracking %s: will_be_home=%s",
+        tracking_number, will_be_home,
+    )
 
-        if will_be_home == "no — please have carrier hold for pickup":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know you'll note their preference to have the "
-                    "carrier hold the package. Explain that they should also contact "
-                    f"the carrier directly to arrange this, as we can't guarantee the carrier "
-                    "will intercept in time. Wish them a great day."
-                )
-            )
-        else:
-            closing = (
-                f" Their delivery instructions have been noted: {instructions}."
-                if instructions
-                else ""
-            )
-            self.hangup(
-                final_instructions=(
-                    f"Wrap up warmly with {self.customer_name}. Let them know to keep an eye "
-                    f"out for their delivery today.{closing} "
-                    "Remind them they can track their package on the Meridian Commerce website. "
-                    "Wish them a great day."
-                )
-            )
+    note = f"Out-for-delivery call: {will_be_home}."
+    if instructions:
+        note += f" Delivery instructions: {instructions}"
+    add_tracking_note(slug, tracking_number, note)
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Unable to reach %s for out-for-delivery notification on %s",
-            self.customer_name, self.tracking_number,
-        )
-        self.hangup(
+    if will_be_home == "no — please have carrier hold for pickup":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, upbeat voicemail for {self.customer_name} from Meridian Commerce. "
-                f"Let them know their {self.order_description} is out for delivery today "
-                "and to keep an eye out. Keep it under 20 seconds."
+                f"Let {customer_name} know you'll note their preference to have the "
+                "carrier hold the package. Explain that they should also contact "
+                f"the carrier directly to arrange this, as we can't guarantee the carrier "
+                "will intercept in time. Wish them a great day."
+            )
+        )
+    else:
+        closing = (
+            f" Their delivery instructions have been noted: {instructions}."
+            if instructions
+            else ""
+        )
+        call.hangup(
+            final_instructions=(
+                f"Wrap up warmly with {customer_name}. Let them know to keep an eye "
+                f"out for their delivery today.{closing} "
+                "Remind them they can track their package on the Meridian Commerce website. "
+                "Wish them a great day."
             )
         )
 
@@ -182,13 +178,13 @@ if __name__ == "__main__":
         args.name, args.phone, args.tracking_number,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ProactiveDeliveryUpdateController(
-            customer_name=args.name,
-            tracking_number=args.tracking_number,
-            slug=args.slug,
-            order_description=args.order_description,
-        ),
+        variables={
+            "customer_name": args.name,
+            "tracking_number": args.tracking_number,
+            "slug": args.slug,
+            "order_description": args.order_description,
+        },
     )

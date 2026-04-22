@@ -47,70 +47,75 @@ def mark_message_read(user_id: str, message_id: str) -> None:
     ).raise_for_status()
 
 
-class EmailFollowUpController(guava.CallController):
-    def __init__(
-        self,
-        contact_name: str,
-        user_id: str,
-        message_id: str,
-    ):
-        super().__init__()
-        self.contact_name = contact_name
-        self.user_id = user_id
-        self.message_id = message_id
-        self.subject = ""
-        self.body_preview = ""
-        self.received_date = ""
+agent = guava.Agent(
+    name="Sam",
+    organization="Meridian Partners",
+    purpose=(
+        "to follow up with contacts about emails that require a response or decision"
+    ),
+)
 
-        # Fetch the email details before the call so the agent has full context
-        try:
-            msg = get_message(user_id, message_id)
-            self.subject = msg.get("subject") or "(no subject)"
-            self.body_preview = msg.get("bodyPreview") or ""
-            received_raw = msg.get("receivedDateTime", "")
-            if received_raw:
-                try:
-                    dt = datetime.fromisoformat(received_raw.replace("Z", "+00:00"))
-                    self.received_date = dt.strftime("%B %-d")
-                except (ValueError, AttributeError):
-                    self.received_date = received_raw
-            logging.info(
-                "Email fetched — subject: '%s', received: %s", self.subject, self.received_date
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    user_id = call.get_variable("user_id")
+    message_id = call.get_variable("message_id")
+
+    call.subject = ""
+    call.body_preview = ""
+    call.received_date = ""
+    call.user_id = user_id
+    call.message_id = message_id
+    call.contact_name = contact_name
+
+    # Fetch the email details before reaching the person so the agent has full context
+    try:
+        msg = get_message(user_id, message_id)
+        call.subject = msg.get("subject") or "(no subject)"
+        call.body_preview = msg.get("bodyPreview") or ""
+        received_raw = msg.get("receivedDateTime", "")
+        if received_raw:
+            try:
+                dt = datetime.fromisoformat(received_raw.replace("Z", "+00:00"))
+                call.received_date = dt.strftime("%B %-d")
+            except (ValueError, AttributeError):
+                call.received_date = received_raw
+        logging.info(
+            "Email fetched — subject: '%s', received: %s", call.subject, call.received_date
+        )
+    except Exception as e:
+        logging.error("Failed to fetch email %s for user %s: %s", message_id, user_id, e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for email follow-up", call.contact_name)
+        subject_note = f" regarding '{call.subject}'" if call.subject else ""
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {call.contact_name} from Meridian Partners. "
+                f"Let them know you're calling to follow up on an email{subject_note} "
+                "and ask them to reply at their earliest convenience or call back. "
+                "Keep it professional and brief."
             )
-        except Exception as e:
-            logging.error("Failed to fetch email %s for user %s: %s", message_id, user_id, e)
-
-        self.set_persona(
-            organization_name="Meridian Partners",
-            agent_name="Sam",
-            agent_purpose=(
-                "to follow up with contacts about emails that require a response or decision"
-            ),
         )
+    elif outcome == "available":
+        subject_note = f" regarding '{call.subject}'" if call.subject else ""
+        date_note = f" that was sent on {call.received_date}" if call.received_date else ""
 
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_follow_up,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_follow_up(self):
-        subject_note = f" regarding '{self.subject}'" if self.subject else ""
-        date_note = f" that was sent on {self.received_date}" if self.received_date else ""
-        preview_note = (
-            f" The email reads: {self.body_preview[:300]}"
-            if self.body_preview
-            else ""
-        )
-
-        self.set_task(
+        call.set_task(
+            "handle_response",
             objective=(
-                f"Follow up with {self.contact_name} about an email{subject_note}{date_note}. "
+                f"Follow up with {call.contact_name} about an email{subject_note}{date_note}. "
                 "Understand their response and record any action items."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Sam calling from Meridian Partners. "
+                    f"Hi {call.contact_name}, this is Sam calling from Meridian Partners. "
                     f"I'm reaching out to follow up on an email{subject_note}{date_note}."
                 ),
                 guava.Field(
@@ -118,7 +123,7 @@ class EmailFollowUpController(guava.CallController):
                     field_type="multiple_choice",
                     description=(
                         f"Ask if they received and had a chance to review "
-                        f"the email about '{self.subject}'."
+                        f"the email about '{call.subject}'."
                     ),
                     choices=["yes, I've reviewed it", "I received it but haven't reviewed it", "I didn't receive it"],
                     required=True,
@@ -134,67 +139,56 @@ class EmailFollowUpController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        received = self.get_field("received_email") or ""
-        response = self.get_field("response_or_action") or ""
 
-        logging.info(
-            "Follow-up outcome for %s — received: %s, response: %s",
-            self.contact_name, received, response,
-        )
+@agent.on_task_complete("handle_response")
+def on_done(call: guava.Call) -> None:
+    received = call.get_field("received_email") or ""
+    response = call.get_field("response_or_action") or ""
 
-        # Mark the email as read since we've followed up
-        try:
-            mark_message_read(self.user_id, self.message_id)
-            logging.info("Message %s marked as read", self.message_id)
-        except Exception as e:
-            logging.warning("Could not mark message as read: %s", e)
+    logging.info(
+        "Follow-up outcome for %s — received: %s, response: %s",
+        call.contact_name, received, response,
+    )
 
-        if "reviewed" in received and response:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time. "
-                    f"Confirm you've noted their response: '{response}'. "
-                    "Let them know our team will follow up by email with next steps. "
-                    "Wish them a great day."
-                )
-            )
-        elif "haven't reviewed" in received:
-            # Flag the email for re-follow-up
-            try:
-                flag_message(self.user_id, self.message_id)
-                logging.info("Message %s flagged for re-follow-up", self.message_id)
-            except Exception as e:
-                logging.warning("Could not flag message: %s", e)
+    # Mark the email as read since we've followed up
+    try:
+        mark_message_read(call.user_id, call.message_id)
+        logging.info("Message %s marked as read", call.message_id)
+    except Exception as e:
+        logging.warning("Could not mark message as read: %s", e)
 
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for letting us know. "
-                    "Let them know our team will follow up again once they've had a chance to review. "
-                    "If they have any questions in the meantime, they can reply to the email. "
-                    "Wish them well."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know we'll resend the email and follow up again shortly. "
-                    "Apologize for any inconvenience. Thank them for their time."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for email follow-up", self.contact_name)
-        subject_note = f" regarding '{self.subject}'" if self.subject else ""
-        self.hangup(
+    if "reviewed" in received and response:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} from Meridian Partners. "
-                f"Let them know you're calling to follow up on an email{subject_note} "
-                "and ask them to reply at their earliest convenience or call back. "
-                "Keep it professional and brief."
+                f"Thank {call.contact_name} for their time. "
+                f"Confirm you've noted their response: '{response}'. "
+                "Let them know our team will follow up by email with next steps. "
+                "Wish them a great day."
+            )
+        )
+    elif "haven't reviewed" in received:
+        # Flag the email for re-follow-up
+        try:
+            flag_message(call.user_id, call.message_id)
+            logging.info("Message %s flagged for re-follow-up", call.message_id)
+        except Exception as e:
+            logging.warning("Could not flag message: %s", e)
+
+        call.hangup(
+            final_instructions=(
+                f"Thank {call.contact_name} for letting us know. "
+                "Let them know our team will follow up again once they've had a chance to review. "
+                "If they have any questions in the meantime, they can reply to the email. "
+                "Wish them well."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Let {call.contact_name} know we'll resend the email and follow up again shortly. "
+                "Apologize for any inconvenience. Thank them for their time."
             )
         )
 
@@ -215,12 +209,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.message_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=EmailFollowUpController(
-            contact_name=args.name,
-            user_id=args.user_id,
-            message_id=args.message_id,
-        ),
+        variables={
+            "contact_name": args.name,
+            "user_id": args.user_id,
+            "message_id": args.message_id,
+        },
     )

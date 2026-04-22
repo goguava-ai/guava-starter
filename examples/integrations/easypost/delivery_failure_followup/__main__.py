@@ -51,47 +51,58 @@ def create_address(street1: str, city: str, state: str, zip_code: str, country: 
         return None
 
 
-class DeliveryFailureFollowupController(guava.CallController):
-    def __init__(self, customer_name: str, tracking_code: str, order_number: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.tracking_code = tracking_code
-        self.order_number = order_number
+agent = guava.Agent(
+    name="Alex",
+    organization="Summit Outfitters",
+    purpose="to reach customers about delivery issues with their orders and arrange resolution",
+)
 
-        try:
-            self.tracker = fetch_tracker(tracking_code)
-        except Exception as e:
-            logging.error("Pre-fetch failed: %s", e)
-            self.tracker = None
 
-        status = self.tracker.get("status", "unknown") if self.tracker else "unknown"
-        carrier = self.tracker.get("carrier", "the carrier") if self.tracker else "the carrier"
-        self.status = status
-        self.carrier = carrier
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    tracking_code = call.get_variable("tracking_code")
+    try:
+        tracker = fetch_tracker(tracking_code)
+    except Exception as e:
+        logging.error("Pre-fetch failed: %s", e)
+        tracker = None
 
-        self.set_persona(
-            organization_name="Summit Outfitters",
-            agent_name="Alex",
-            agent_purpose="to reach customers about delivery issues with their orders and arrange resolution",
+    status = tracker.get("status", "unknown") if tracker else "unknown"
+    carrier = tracker.get("carrier", "the carrier") if tracker else "the carrier"
+    call.tracker = tracker
+    call.status = status
+    call.carrier = carrier
+
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        customer_name = call.get_variable("customer_name")
+        order_number = call.get_variable("order_number")
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {customer_name}. "
+                f"Mention you are calling from Summit Outfitters about order {order_number}, "
+                "which encountered a delivery issue. Ask them to call back at their earliest convenience "
+                "or visit the website to update their shipping address. Do not leave sensitive details."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_call,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_call(self):
-        self.set_task(
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        order_number = call.get_variable("order_number")
+        call.set_task(
+            "delivery_followup",
             objective=(
-                f"Inform {self.customer_name} that their package (order {self.order_number}) "
-                f"encountered a delivery issue and has a status of '{self.status}'. "
+                f"Inform {customer_name} that their package (order {order_number}) "
+                f"encountered a delivery issue and has a status of '{call.status}'. "
                 "Collect a corrected shipping address and confirm how they would like to proceed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Alex calling from Summit Outfitters regarding your recent order, number {self.order_number}. "
-                    f"I'm calling because we received a notification that your package had a delivery issue with {self.carrier} and could not be delivered as expected."
+                    f"Hi {customer_name}, this is Alex calling from Summit Outfitters regarding your recent order, number {order_number}. "
+                    f"I'm calling because we received a notification that your package had a delivery issue with {call.carrier} and could not be delivered as expected."
                 ),
                 guava.Field(
                     key="issue_acknowledged",
@@ -135,61 +146,54 @@ class DeliveryFailureFollowupController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        street = self.get_field("correct_street")
-        city = self.get_field("correct_city")
-        state = self.get_field("correct_state")
-        zip_code = self.get_field("correct_zip")
-        resolution = self.get_field("resolution_preference")
 
-        address_result = None
-        address_valid = False
+@agent.on_task_complete("delivery_followup")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    order_number = call.get_variable("order_number")
+    street = call.get_field("correct_street")
+    city = call.get_field("correct_city")
+    state = call.get_field("correct_state")
+    zip_code = call.get_field("correct_zip")
+    resolution = call.get_field("resolution_preference")
 
-        if resolution == "reship to new address":
-            address_result = create_address(street, city, state, zip_code)
-            if address_result:
-                verifications = address_result.get("verifications", {})
-                delivery = verifications.get("delivery", {})
-                address_valid = delivery.get("success", False)
-            else:
-                address_valid = False
+    address_result = None
+    address_valid = False
 
-        if resolution == "reship to new address" and address_valid:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} and confirm that their replacement shipment will be sent to "
-                    f"{street}, {city}, {state} {zip_code}. "
-                    "Let them know they will receive a new tracking number by email within one business day. "
-                    "Apologize for the inconvenience and express appreciation for their patience. Be warm and professional."
-                )
-            )
-        elif resolution == "reship to new address" and not address_valid:
-            self.hangup(
-                final_instructions=(
-                    f"Tell {self.customer_name} that the address they provided could not be verified. "
-                    "Ask them to double-check the address and call back, or visit the website to update their shipping address. "
-                    "Apologize for the inconvenience and assure them a team member will follow up. Be helpful and understanding."
-                )
-            )
+    if resolution == "reship to new address":
+        address_result = create_address(street, city, state, zip_code)
+        if address_result:
+            verifications = address_result.get("verifications", {})
+            delivery = verifications.get("delivery", {})
+            address_valid = delivery.get("success", False)
         else:
-            self.hangup(
-                final_instructions=(
-                    f"Confirm to {self.customer_name} that a full refund for order {self.order_number} will be processed "
-                    "to their original payment method within 5 to 7 business days. "
-                    "Apologize for the delivery issue and thank them for their understanding. Be warm and sincere."
-                )
-            )
+            address_valid = False
 
-    def recipient_unavailable(self):
-        self.hangup(
+    if resolution == "reship to new address" and address_valid:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name}. "
-                f"Mention you are calling from Summit Outfitters about order {self.order_number}, "
-                "which encountered a delivery issue. Ask them to call back at their earliest convenience "
-                "or visit the website to update their shipping address. Do not leave sensitive details."
+                f"Thank {customer_name} and confirm that their replacement shipment will be sent to "
+                f"{street}, {city}, {state} {zip_code}. "
+                "Let them know they will receive a new tracking number by email within one business day. "
+                "Apologize for the inconvenience and express appreciation for their patience. Be warm and professional."
+            )
+        )
+    elif resolution == "reship to new address" and not address_valid:
+        call.hangup(
+            final_instructions=(
+                f"Tell {customer_name} that the address they provided could not be verified. "
+                "Ask them to double-check the address and call back, or visit the website to update their shipping address. "
+                "Apologize for the inconvenience and assure them a team member will follow up. Be helpful and understanding."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Confirm to {customer_name} that a full refund for order {order_number} will be processed "
+                "to their original payment method within 5 to 7 business days. "
+                "Apologize for the delivery issue and thank them for their understanding. Be warm and sincere."
             )
         )
 
@@ -205,12 +209,12 @@ if __name__ == "__main__":
     parser.add_argument("--order-number", required=True, help="Internal order number")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DeliveryFailureFollowupController(
-            customer_name=args.name,
-            tracking_code=args.tracking_code,
-            order_number=args.order_number,
-        ),
+        variables={
+            "customer_name": args.name,
+            "tracking_code": args.tracking_code,
+            "order_number": args.order_number,
+        },
     )

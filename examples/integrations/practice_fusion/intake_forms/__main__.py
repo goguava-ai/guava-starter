@@ -60,41 +60,50 @@ def create_document_reference(patient_id: str, note_text: str, appointment_date:
     return resp.json()
 
 
-class IntakeFormsController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, appointment_date: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.appointment_date = appointment_date
+agent = guava.Agent(
+    name="Jamie",
+    organization="Sunrise Family Practice",
+    purpose=(
+        "to complete a pre-visit intake with patients before their appointment at "
+        "Sunrise Family Practice so their care team can prepare in advance"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Sunrise Family Practice",
-            agent_name="Jamie",
-            agent_purpose=(
-                "to complete a pre-visit intake with patients before their appointment at "
-                "Sunrise Family Practice so their care team can prepare in advance"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_date = call.get_variable("appointment_date")
+
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {patient_name} on behalf of Sunrise Family Practice. "
+                "Let them know we called to complete a quick pre-visit intake before their upcoming "
+                "appointment and ask them to call us back at their earliest convenience. "
+                "Keep it brief and professional."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_intake,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_intake(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "begin_intake",
             objective=(
-                f"Complete a pre-visit intake call with {self.patient_name} ahead of their "
-                f"appointment at Sunrise Family Practice on {self.appointment_date}. "
+                f"Complete a pre-visit intake call with {patient_name} ahead of their "
+                f"appointment at Sunrise Family Practice on {appointment_date}. "
                 "Collect their chief complaint, symptom duration, pain level, and current medications "
                 "so the care team can prepare."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.patient_name}, this is Jamie calling from Sunrise Family Practice. "
+                    f"Hello {patient_name}, this is Jamie calling from Sunrise Family Practice. "
                     f"I'm reaching out to collect a few details before your appointment on "
-                    f"{self.appointment_date}. This should only take a couple of minutes and will "
+                    f"{appointment_date}. This should only take a couple of minutes and will "
                     "help your provider prepare for your visit."
                 ),
                 guava.Field(
@@ -155,65 +164,60 @@ class IntakeFormsController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_intake,
         )
 
-    def save_intake(self):
-        chief_complaint = self.get_field("chief_complaint")
-        symptom_duration = self.get_field("symptom_duration")
-        pain_scale = self.get_field("pain_scale")
-        current_medications = self.get_field("current_medications")
-        allergies = self.get_field("allergies")
-        additional_concerns = self.get_field("additional_concerns")
 
-        # Build a plain-text note to be stored as a DocumentReference.
-        note_lines = [
-            f"Pre-visit intake — Sunrise Family Practice",
-            f"Patient: {self.patient_name}",
-            f"Appointment: {self.appointment_date}",
-            f"Collected: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            "",
-            f"Chief complaint: {chief_complaint}",
-            f"Symptom duration: {symptom_duration}",
-            f"Pain/discomfort level: {pain_scale}",
-            f"Current medications: {current_medications}",
-            f"Known allergies: {allergies}",
-        ]
-        if additional_concerns:
-            note_lines.append(f"Additional concerns: {additional_concerns}")
-        note_text = "\n".join(note_lines)
+@agent.on_task_complete("begin_intake")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    appointment_date = call.get_variable("appointment_date")
 
-        logging.info("Intake note assembled for patient %s:\n%s", self.patient_id, note_text)
+    chief_complaint = call.get_field("chief_complaint")
+    symptom_duration = call.get_field("symptom_duration")
+    pain_scale = call.get_field("pain_scale")
+    current_medications = call.get_field("current_medications")
+    allergies = call.get_field("allergies")
+    additional_concerns = call.get_field("additional_concerns")
 
-        # Save the intake responses as a DocumentReference in Practice Fusion so the
-        # care team can review them in the patient chart before the appointment.
-        try:
-            doc = create_document_reference(self.patient_id, note_text, self.appointment_date)
-            doc_id = doc.get("id", "unknown")
-            logging.info("DocumentReference created: %s", doc_id)
-        except Exception as exc:
-            logging.error(
-                "Failed to create DocumentReference for patient %s: %s", self.patient_id, exc
-            )
+    # Build a plain-text note to be stored as a DocumentReference.
+    note_lines = [
+        f"Pre-visit intake — Sunrise Family Practice",
+        f"Patient: {patient_name}",
+        f"Appointment: {appointment_date}",
+        f"Collected: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        f"Chief complaint: {chief_complaint}",
+        f"Symptom duration: {symptom_duration}",
+        f"Pain/discomfort level: {pain_scale}",
+        f"Current medications: {current_medications}",
+        f"Known allergies: {allergies}",
+    ]
+    if additional_concerns:
+        note_lines.append(f"Additional concerns: {additional_concerns}")
+    note_text = "\n".join(note_lines)
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.patient_name} for taking the time to complete the intake. "
-                "Let them know their responses have been sent to their care team at Sunrise Family "
-                f"Practice and will be reviewed before their appointment on {self.appointment_date}. "
-                "Remind them to arrive about 10 minutes early. Wish them a great day."
-            )
+    logging.info("Intake note assembled for patient %s:\n%s", patient_id, note_text)
+
+    # Save the intake responses as a DocumentReference in Practice Fusion so the
+    # care team can review them in the patient chart before the appointment.
+    try:
+        doc = create_document_reference(patient_id, note_text, appointment_date)
+        doc_id = doc.get("id", "unknown")
+        logging.info("DocumentReference created: %s", doc_id)
+    except Exception as exc:
+        logging.error(
+            "Failed to create DocumentReference for patient %s: %s", patient_id, exc
         )
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} on behalf of Sunrise Family Practice. "
-                "Let them know we called to complete a quick pre-visit intake before their upcoming "
-                "appointment and ask them to call us back at their earliest convenience. "
-                "Keep it brief and professional."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Thank {patient_name} for taking the time to complete the intake. "
+            "Let them know their responses have been sent to their care team at Sunrise Family "
+            f"Practice and will be reviewed before their appointment on {appointment_date}. "
+            "Remind them to arrive about 10 minutes early. Wish them a great day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -239,12 +243,12 @@ if __name__ == "__main__":
         args.appointment_date,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=IntakeFormsController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            appointment_date=args.appointment_date,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "appointment_date": args.appointment_date,
+        },
     )

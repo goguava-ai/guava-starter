@@ -53,71 +53,89 @@ def cancel_subscription(subscription_id: str) -> dict:
     return api_call(payload)
 
 
-class PaymentRecoveryController(guava.CallController):
-    def __init__(
-        self,
-        customer_name: str,
-        customer_email: str,
-        subscription_id: str,
-        amount: str,
-    ):
-        super().__init__()
-        self.customer_name = customer_name
-        self.customer_email = customer_email
-        self.subscription_id = subscription_id
-        self.amount = amount
-        self._subscription = {}
-        self._customer_profile_id = ""
+agent = guava.Agent(
+    name="Casey",
+    organization="Pinnacle Payments",
+    purpose=(
+        "to help Pinnacle Payments customers resolve failed subscription payments "
+        "and update their payment information"
+    ),
+)
 
-        # Pre-call: fetch subscription to confirm it's suspended and get profile info
-        try:
-            data = get_subscription(subscription_id)
-            sub = data.get("subscription", {})
-            self._subscription = sub
-            profile = sub.get("profile", {})
-            self._customer_profile_id = profile.get("customerProfileId", "")
-            status = sub.get("status", "")
-            logging.info(
-                "Pre-call subscription fetch — id: %s, status: %s, profileId: %s",
-                subscription_id, status, self._customer_profile_id,
-            )
-            if status != "suspended":
-                logging.warning(
-                    "Subscription %s is '%s', not suspended. Proceeding anyway.",
-                    subscription_id, status,
-                )
-        except Exception as e:
-            logging.error(
-                "Failed to fetch subscription %s before call: %s", subscription_id, e
-            )
 
-        self.set_persona(
-            organization_name="Pinnacle Payments",
-            agent_name="Casey",
-            agent_purpose=(
-                "to help Pinnacle Payments customers resolve failed subscription payments "
-                "and update their payment information"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    subscription_id = call.get_variable("subscription_id")
+
+    # Pre-call: fetch subscription to confirm it's suspended and get profile info
+    subscription = {}
+    customer_profile_id = ""
+    try:
+        data = get_subscription(subscription_id)
+        sub = data.get("subscription", {})
+        subscription = sub
+        profile = sub.get("profile", {})
+        customer_profile_id = profile.get("customerProfileId", "")
+        status = sub.get("status", "")
+        logging.info(
+            "Pre-call subscription fetch — id: %s, status: %s, profileId: %s",
+            subscription_id, status, customer_profile_id,
+        )
+        if status != "suspended":
+            logging.warning(
+                "Subscription %s is '%s', not suspended. Proceeding anyway.",
+                subscription_id, status,
+            )
+    except Exception as e:
+        logging.error(
+            "Failed to fetch subscription %s before call: %s", subscription_id, e
         )
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_recovery,
-            on_failure=self.leave_voicemail,
-        )
+    call.data = {
+        "subscription": subscription,
+        "customer_profile_id": customer_profile_id,
+    }
 
-    def begin_recovery(self):
-        self.set_task(
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        customer_name = call.get_variable("customer_name")
+        subscription_id = call.get_variable("subscription_id")
+        amount = call.get_variable("amount")
+        logging.info(
+            "Unable to reach %s — leaving voicemail for subscription %s",
+            customer_name, subscription_id,
+        )
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {customer_name} on behalf of "
+                "Pinnacle Payments. Let them know you're calling because a payment of "
+                f"${amount} on their subscription wasn't able to go through and their account "
+                "is currently on hold. "
+                f"Ask them to log in at {ACCOUNT_PORTAL_URL} to update their payment method, "
+                "or call us back at their convenience. Keep it concise and non-threatening."
+            )
+        )
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        subscription_id = call.get_variable("subscription_id")
+        amount = call.get_variable("amount")
+
+        call.set_task(
+            "payment_recovery",
             objective=(
-                f"You're calling {self.customer_name} about a failed payment of ${self.amount} "
-                f"on their Pinnacle Payments subscription (ID: {self.subscription_id}). "
+                f"You're calling {customer_name} about a failed payment of ${amount} "
+                f"on their Pinnacle Payments subscription (ID: {subscription_id}). "
                 "Let them know the situation, understand why the payment failed, "
                 "and help them get their account back in good standing."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Casey calling from Pinnacle Payments. "
-                    f"I'm reaching out because we noticed a payment of ${self.amount} on your "
+                    f"Hi {customer_name}, this is Casey calling from Pinnacle Payments. "
+                    f"I'm reaching out because we noticed a payment of ${amount} on your "
                     f"subscription wasn't able to go through, and your account is currently on hold. "
                     "I wanted to reach out personally to help get this resolved."
                 ),
@@ -159,90 +177,78 @@ class PaymentRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        cause = self.get_field("payment_issue_cause") or "not sure"
-        updated_payment = self.get_field("updated_payment") or ""
 
-        logging.info(
-            "Payment recovery outcome — subscriptionId: %s, cause: %s, updated: %s",
-            self.subscription_id, cause, updated_payment,
-        )
+@agent.on_task_complete("payment_recovery")
+def on_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
 
-        if "cancel" in updated_payment:
-            # Customer wants to cancel — call ARBCancelSubscriptionRequest
-            logging.info("Customer requested cancellation of subscription %s", self.subscription_id)
-            try:
-                cancel_subscription(self.subscription_id)
-                logging.info("Subscription %s cancelled at customer request", self.subscription_id)
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know their subscription has been successfully cancelled. "
-                        "No further charges will be made. "
-                        "Thank them for being a Pinnacle Payments customer and wish them well."
-                    )
-                )
-            except Exception as e:
-                logging.error(
-                    "Failed to cancel subscription %s: %s", self.subscription_id, e
-                )
-                self.hangup(
-                    final_instructions=(
-                        f"Apologize to {self.customer_name} — there was a technical issue processing "
-                        "the cancellation. Let them know the billing team will follow up within one "
-                        "business day to confirm. Thank them for their patience."
-                    )
-                )
+    cause = call.get_field("payment_issue_cause") or "not sure"
+    updated_payment = call.get_field("updated_payment") or ""
 
-        elif "yes" in updated_payment:
-            # Customer says they've updated their card — payment retry is automatic
-            logging.info(
-                "Customer reports card updated for subscription %s — advising automatic retry",
-                self.subscription_id,
-            )
-            self.hangup(
+    logging.info(
+        "Payment recovery outcome — subscriptionId: %s, cause: %s, updated: %s",
+        subscription_id, cause, updated_payment,
+    )
+
+    if "cancel" in updated_payment:
+        # Customer wants to cancel — call ARBCancelSubscriptionRequest
+        logging.info("Customer requested cancellation of subscription %s", subscription_id)
+        try:
+            cancel_subscription(subscription_id)
+            logging.info("Subscription %s cancelled at customer request", subscription_id)
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know that since they've updated their payment method, "
-                    "Authorize.net will automatically retry the charge within the next 24 to 48 hours. "
-                    "Once successful, their subscription will be reactivated immediately. "
-                    f"They can also log in to their account at {ACCOUNT_PORTAL_URL} "
-                    "to check their subscription status. "
-                    "Thank them for taking care of it so quickly and wish them a great day."
+                    f"Let {customer_name} know their subscription has been successfully cancelled. "
+                    "No further charges will be made. "
+                    "Thank them for being a Pinnacle Payments customer and wish them well."
                 )
             )
-
-        else:
-            # Customer hasn't updated their card yet
-            logging.info(
-                "Customer has not updated payment method for subscription %s — directing to portal",
-                self.subscription_id,
+        except Exception as e:
+            logging.error(
+                "Failed to cancel subscription %s: %s", subscription_id, e
             )
-            self.hangup(
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know they can update their payment method by logging "
-                    f"into their account at {ACCOUNT_PORTAL_URL}. "
-                    "Once they update their card, the payment will be retried automatically "
-                    "and their subscription will be reactivated. "
-                    "Let them know we'll also send a reminder email with a direct link. "
-                    "Thank them for their time and wish them a great day."
+                    f"Apologize to {customer_name} — there was a technical issue processing "
+                    "the cancellation. Let them know the billing team will follow up within one "
+                    "business day to confirm. Thank them for their patience."
                 )
             )
 
-    def leave_voicemail(self):
+    elif "yes" in updated_payment:
+        # Customer says they've updated their card — payment retry is automatic
         logging.info(
-            "Unable to reach %s — leaving voicemail for subscription %s",
-            self.customer_name, self.subscription_id,
+            "Customer reports card updated for subscription %s — advising automatic retry",
+            subscription_id,
         )
-        self.hangup(
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.customer_name} on behalf of "
-                "Pinnacle Payments. Let them know you're calling because a payment of "
-                f"${self.amount} on their subscription wasn't able to go through and their account "
-                "is currently on hold. "
-                f"Ask them to log in at {ACCOUNT_PORTAL_URL} to update their payment method, "
-                "or call us back at their convenience. Keep it concise and non-threatening."
+                f"Let {customer_name} know that since they've updated their payment method, "
+                "Authorize.net will automatically retry the charge within the next 24 to 48 hours. "
+                "Once successful, their subscription will be reactivated immediately. "
+                f"They can also log in to their account at {ACCOUNT_PORTAL_URL} "
+                "to check their subscription status. "
+                "Thank them for taking care of it so quickly and wish them a great day."
+            )
+        )
+
+    else:
+        # Customer hasn't updated their card yet
+        logging.info(
+            "Customer has not updated payment method for subscription %s — directing to portal",
+            subscription_id,
+        )
+        call.hangup(
+            final_instructions=(
+                f"Let {customer_name} know they can update their payment method by logging "
+                f"into their account at {ACCOUNT_PORTAL_URL}. "
+                "Once they update their card, the payment will be retried automatically "
+                "and their subscription will be reactivated. "
+                "Let them know we'll also send a reminder email with a direct link. "
+                "Thank them for their time and wish them a great day."
             )
         )
 
@@ -269,13 +275,13 @@ if __name__ == "__main__":
         args.name, args.phone, args.subscription_id, args.amount,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PaymentRecoveryController(
-            customer_name=args.name,
-            customer_email=args.email,
-            subscription_id=args.subscription_id,
-            amount=args.amount,
-        ),
+        variables={
+            "customer_name": args.name,
+            "customer_email": args.email,
+            "subscription_id": args.subscription_id,
+            "amount": args.amount,
+        },
     )

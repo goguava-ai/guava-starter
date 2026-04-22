@@ -35,132 +35,133 @@ def format_date(unix_ts: int) -> str:
     return datetime.utcfromtimestamp(unix_ts).strftime("%B %d, %Y")
 
 
-class SubscriptionCancellationController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Riley",
+    organization="Vault",
+    purpose=(
+        "to help Vault customers cancel their subscription and understand the cancellation process"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Vault",
-            agent_name="Riley",
-            agent_purpose=(
-                "to help Vault customers cancel their subscription and understand the cancellation process"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "process_cancellation",
+        objective=(
+            "A customer wants to cancel their Vault subscription. "
+            "Verify their identity, understand their reason, and process the cancellation."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Vault. This is Riley. "
+                "I'm sorry to hear you'd like to cancel — let me help you with that."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer wants to cancel their Vault subscription. "
-                "Verify their identity, understand their reason, and process the cancellation."
+            guava.Field(
+                key="subscription_id",
+                field_type="text",
+                description="Ask for their subscription ID from their billing email.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Vault. This is Riley. "
-                    "I'm sorry to hear you'd like to cancel — let me help you with that."
+            guava.Field(
+                key="cancel_reason",
+                field_type="multiple_choice",
+                description=(
+                    "Ask why they're cancelling. Listen empathetically before proceeding."
                 ),
-                guava.Field(
-                    key="subscription_id",
-                    field_type="text",
-                    description="Ask for their subscription ID from their billing email.",
-                    required=True,
+                choices=[
+                    "too expensive",
+                    "not using it enough",
+                    "switching to a competitor",
+                    "missing features",
+                    "technical issues",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="confirmed",
+                field_type="multiple_choice",
+                description=(
+                    "Confirm they'd like to proceed. Let them know their access continues until "
+                    "the end of the current billing period."
                 ),
-                guava.Field(
-                    key="cancel_reason",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask why they're cancelling. Listen empathetically before proceeding."
-                    ),
-                    choices=[
-                        "too expensive",
-                        "not using it enough",
-                        "switching to a competitor",
-                        "missing features",
-                        "technical issues",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="confirmed",
-                    field_type="multiple_choice",
-                    description=(
-                        "Confirm they'd like to proceed. Let them know their access continues until "
-                        "the end of the current billing period."
-                    ),
-                    choices=["yes, cancel my subscription", "no, keep my subscription"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.process_cancellation,
+                choices=["yes, cancel my subscription", "no, keep my subscription"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("process_cancellation")
+def on_process_cancellation(call: guava.Call) -> None:
+    subscription_id = (call.get_field("subscription_id") or "").strip()
+    reason = call.get_field("cancel_reason") or ""
+    confirmed = call.get_field("confirmed") or ""
+
+    if "keep" in confirmed or "no" in confirmed:
+        logging.info("Customer chose to keep subscription %s.", subscription_id)
+        call.hangup(
+            final_instructions=(
+                "Let the caller know we're glad they're staying. "
+                "If there's anything we can do to improve their experience, we're always here. "
+                "Thank them for calling and wish them a great day."
+            )
         )
+        return
 
-        self.accept_call()
+    logging.info("Cancelling subscription %s — reason: %s", subscription_id, reason)
 
-    def process_cancellation(self):
-        subscription_id = (self.get_field("subscription_id") or "").strip()
-        reason = self.get_field("cancel_reason") or ""
-        confirmed = self.get_field("confirmed") or ""
+    try:
+        sub = get_subscription(subscription_id)
+    except Exception as e:
+        logging.error("Subscription lookup failed: %s", e)
+        sub = None
 
-        if "keep" in confirmed or "no" in confirmed:
-            logging.info("Customer chose to keep subscription %s.", subscription_id)
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know we're glad they're staying. "
-                    "If there's anything we can do to improve their experience, we're always here. "
-                    "Thank them for calling and wish them a great day."
-                )
+    if not sub:
+        call.hangup(
+            final_instructions=(
+                f"Apologize — we couldn't find subscription '{subscription_id}'. "
+                "Ask them to check their billing email for the correct ID. "
+                "They can also email support to process the cancellation manually."
             )
-            return
+        )
+        return
 
-        logging.info("Cancelling subscription %s — reason: %s", subscription_id, reason)
+    current_term_end = sub.get("current_term_end")
+    end_date = format_date(current_term_end) if current_term_end else "the end of your current period"
 
-        try:
-            sub = get_subscription(subscription_id)
-        except Exception as e:
-            logging.error("Subscription lookup failed: %s", e)
-            sub = None
+    cancelled_sub = None
+    try:
+        cancelled_sub = cancel_subscription(subscription_id, end_of_term=True)
+        logging.info("Subscription %s cancelled at end of term.", subscription_id)
+    except Exception as e:
+        logging.error("Cancellation failed: %s", e)
 
-        if not sub:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize — we couldn't find subscription '{subscription_id}'. "
-                    "Ask them to check their billing email for the correct ID. "
-                    "They can also email support to process the cancellation manually."
-                )
+    if cancelled_sub:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know their Vault subscription has been cancelled. "
+                f"They'll continue to have access until {end_date}, after which they won't be charged. "
+                "Thank them for being a customer and let them know the door is always open if they return. "
+                "Wish them all the best."
             )
-            return
-
-        current_term_end = sub.get("current_term_end")
-        end_date = format_date(current_term_end) if current_term_end else "the end of your current period"
-
-        cancelled_sub = None
-        try:
-            cancelled_sub = cancel_subscription(subscription_id, end_of_term=True)
-            logging.info("Subscription %s cancelled at end of term.", subscription_id)
-        except Exception as e:
-            logging.error("Cancellation failed: %s", e)
-
-        if cancelled_sub:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know their Vault subscription has been cancelled. "
-                    f"They'll continue to have access until {end_date}, after which they won't be charged. "
-                    "Thank them for being a customer and let them know the door is always open if they return. "
-                    "Wish them all the best."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Apologize — the cancellation couldn't be processed automatically. "
+                "Let them know our team will complete the cancellation by end of day and they'll "
+                "receive a confirmation email. Thank them for their patience."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Apologize — the cancellation couldn't be processed automatically. "
-                    "Let them know our team will complete the cancellation by end of day and they'll "
-                    "receive a confirmation email. Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=SubscriptionCancellationController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

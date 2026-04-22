@@ -101,162 +101,163 @@ def parse_auth_response(response: dict) -> dict:
     return result
 
 
-class PriorAuthStatusController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Morgan",
+    organization="Valley Medical Group",
+    purpose=(
+        "to help patients and clinical staff check whether a prior authorization "
+        "has been approved for a procedure or service"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Valley Medical Group",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to help patients and clinical staff check whether a prior authorization "
-                "has been approved for a procedure or service"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "check_auth_status",
+        objective=(
+            "A caller wants to know the prior authorization status for a scheduled "
+            "procedure. Collect the necessary information and look up the auth status."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Valley Medical Group. I'm Morgan. "
+                "I can check prior authorization status for you."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A caller wants to know the prior authorization status for a scheduled "
-                "procedure. Collect the necessary information and look up the auth status."
+            guava.Field(
+                key="first_name",
+                field_type="text",
+                description="Ask for the patient's first name.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Valley Medical Group. I'm Morgan. "
-                    "I can check prior authorization status for you."
+            guava.Field(
+                key="last_name",
+                field_type="text",
+                description="Ask for the patient's last name.",
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description="Ask for the patient's date of birth in YYYY-MM-DD format.",
+                required=True,
+            ),
+            guava.Field(
+                key="member_id",
+                field_type="text",
+                description="Ask for the patient's insurance member ID.",
+                required=True,
+            ),
+            guava.Field(
+                key="procedure_description",
+                field_type="text",
+                description=(
+                    "Ask what procedure or service they need authorization for. "
+                    "Capture the procedure name or description as they describe it."
                 ),
-                guava.Field(
-                    key="first_name",
-                    field_type="text",
-                    description="Ask for the patient's first name.",
-                    required=True,
+                required=True,
+            ),
+            guava.Field(
+                key="procedure_code",
+                field_type="text",
+                description=(
+                    "Ask if they have the CPT or procedure code. It's optional — "
+                    "capture it if they have it, otherwise skip."
                 ),
-                guava.Field(
-                    key="last_name",
-                    field_type="text",
-                    description="Ask for the patient's last name.",
-                    required=True,
+                required=False,
+            ),
+            guava.Field(
+                key="service_date",
+                field_type="text",
+                description=(
+                    "Ask for the planned date of service. Capture in YYYY-MM-DD format."
                 ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description="Ask for the patient's date of birth in YYYY-MM-DD format.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="member_id",
-                    field_type="text",
-                    description="Ask for the patient's insurance member ID.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="procedure_description",
-                    field_type="text",
-                    description=(
-                        "Ask what procedure or service they need authorization for. "
-                        "Capture the procedure name or description as they describe it."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="procedure_code",
-                    field_type="text",
-                    description=(
-                        "Ask if they have the CPT or procedure code. It's optional — "
-                        "capture it if they have it, otherwise skip."
-                    ),
-                    required=False,
-                ),
-                guava.Field(
-                    key="service_date",
-                    field_type="text",
-                    description=(
-                        "Ask for the planned date of service. Capture in YYYY-MM-DD format."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.check_auth_status,
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("check_auth_status")
+def on_check_auth_status(call: guava.Call) -> None:
+    first_name = call.get_field("first_name")
+    last_name = call.get_field("last_name")
+    dob = call.get_field("date_of_birth")
+    member_id = call.get_field("member_id")
+    procedure_desc = call.get_field("procedure_description")
+    procedure_code = call.get_field("procedure_code") or "99213"  # default to E&M if not given
+    service_date = call.get_field("service_date")
+
+    payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
+    provider_npi = os.environ["PROVIDER_NPI"]
+
+    logging.info(
+        "Checking prior auth for %s %s — procedure: %s (%s), service date: %s",
+        first_name, last_name, procedure_desc, procedure_code, service_date,
+    )
+
+    try:
+        response = check_prior_auth(
+            payer_id=payer_id,
+            provider_npi=provider_npi,
+            member_id=member_id,
+            first_name=first_name,
+            last_name=last_name,
+            date_of_birth=dob,
+            procedure_code=procedure_code,
+            service_date=service_date,
         )
+        auth_info = parse_auth_response(response)
+        logging.info("Prior auth result for %s: %s", member_id, auth_info)
 
-        self.accept_call()
+        result = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "agent": "Morgan",
+            "use_case": "prior_auth_status",
+            "patient": {"first_name": first_name, "last_name": last_name},
+            "member_id": member_id,
+            "procedure": procedure_desc,
+            "service_date": service_date,
+            "auth": auth_info,
+        }
+        print(json.dumps(result, indent=2))
 
-    def check_auth_status(self):
-        first_name = self.get_field("first_name")
-        last_name = self.get_field("last_name")
-        dob = self.get_field("date_of_birth")
-        member_id = self.get_field("member_id")
-        procedure_desc = self.get_field("procedure_description")
-        procedure_code = self.get_field("procedure_code") or "99213"  # default to E&M if not given
-        service_date = self.get_field("service_date")
+        status = auth_info.get("status", "unknown")
+        auth_num = auth_info.get("auth_number", "")
+        exp_date = auth_info.get("expiration_date", "")
+        notes = auth_info.get("notes", "")
 
-        payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
-        provider_npi = os.environ["PROVIDER_NPI"]
+        auth_ref = f" The authorization number is {auth_num}." if auth_num else ""
+        exp_note = f" This authorization is valid through {exp_date}." if exp_date else ""
+        extra = f" Note: {notes}" if notes else ""
 
-        logging.info(
-            "Checking prior auth for %s %s — procedure: %s (%s), service date: %s",
-            first_name, last_name, procedure_desc, procedure_code, service_date,
+        call.hangup(
+            final_instructions=(
+                f"Let {first_name} know that the prior authorization status for "
+                f"'{procedure_desc}' scheduled on {service_date} is: {status}.{auth_ref}{exp_note}{extra} "
+                "If the authorization is approved, remind them to bring their insurance card "
+                "to their appointment. If additional information is required, let them know "
+                "that a member of our clinical team will be in touch. "
+                "Thank them for calling Valley Medical Group."
+            )
         )
-
-        try:
-            response = check_prior_auth(
-                payer_id=payer_id,
-                provider_npi=provider_npi,
-                member_id=member_id,
-                first_name=first_name,
-                last_name=last_name,
-                date_of_birth=dob,
-                procedure_code=procedure_code,
-                service_date=service_date,
+    except Exception as e:
+        logging.error("Prior auth check failed: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {first_name} for a technical issue and let them know we "
+                "were unable to retrieve the authorization status at this time. "
+                "Let them know our billing team will follow up by phone or ask them to "
+                "call back. Thank them for their patience."
             )
-            auth_info = parse_auth_response(response)
-            logging.info("Prior auth result for %s: %s", member_id, auth_info)
-
-            result = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "agent": "Morgan",
-                "use_case": "prior_auth_status",
-                "patient": {"first_name": first_name, "last_name": last_name},
-                "member_id": member_id,
-                "procedure": procedure_desc,
-                "service_date": service_date,
-                "auth": auth_info,
-            }
-            print(json.dumps(result, indent=2))
-
-            status = auth_info.get("status", "unknown")
-            auth_num = auth_info.get("auth_number", "")
-            exp_date = auth_info.get("expiration_date", "")
-            notes = auth_info.get("notes", "")
-
-            auth_ref = f" The authorization number is {auth_num}." if auth_num else ""
-            exp_note = f" This authorization is valid through {exp_date}." if exp_date else ""
-            extra = f" Note: {notes}" if notes else ""
-
-            self.hangup(
-                final_instructions=(
-                    f"Let {first_name} know that the prior authorization status for "
-                    f"'{procedure_desc}' scheduled on {service_date} is: {status}.{auth_ref}{exp_note}{extra} "
-                    "If the authorization is approved, remind them to bring their insurance card "
-                    "to their appointment. If additional information is required, let them know "
-                    "that a member of our clinical team will be in touch. "
-                    "Thank them for calling Valley Medical Group."
-                )
-            )
-        except Exception as e:
-            logging.error("Prior auth check failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {first_name} for a technical issue and let them know we "
-                    "were unable to retrieve the authorization status at this time. "
-                    "Let them know our billing team will follow up by phone or ask them to "
-                    "call back. Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=PriorAuthStatusController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

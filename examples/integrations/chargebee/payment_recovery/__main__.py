@@ -46,51 +46,62 @@ def format_amount(cents: int, currency: str = "USD") -> str:
     return f"${cents / 100:,.2f} {currency.upper()}"
 
 
-class PaymentRecoveryController(guava.CallController):
-    def __init__(self, customer_name: str, subscription_id: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.subscription_id = subscription_id
-        self.subscription = None
-        self.total_owed_str = ""
+agent = guava.Agent(
+    name="Riley",
+    organization="Vault",
+    purpose="to help Vault customers resolve outstanding payment issues",
+)
 
-        try:
-            self.subscription = get_subscription(subscription_id)
-            if self.subscription:
-                due_invoices = self.subscription.get("due_invoices_count", 0)
-                due_since = self.subscription.get("due_since")
-                total_dues = self.subscription.get("total_dues", 0)
-                currency = self.subscription.get("currency_code", "USD")
-                if total_dues:
-                    self.total_owed_str = format_amount(total_dues, currency)
-        except Exception as e:
-            logging.error("Failed to load subscription %s: %s", subscription_id, e)
 
-        self.set_persona(
-            organization_name="Vault",
-            agent_name="Riley",
-            agent_purpose="to help Vault customers resolve outstanding payment issues",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
+
+    subscription = None
+    total_owed_str = ""
+    try:
+        subscription = get_subscription(subscription_id)
+        if subscription:
+            total_dues = subscription.get("total_dues", 0)
+            currency = subscription.get("currency_code", "USD")
+            if total_dues:
+                total_owed_str = format_amount(total_dues, currency)
+    except Exception as e:
+        logging.error("Failed to load subscription %s: %s", subscription_id, e)
+
+    call.data = {"total_owed_str": total_owed_str}
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for payment recovery.", customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {customer_name} from Vault. "
+                "Let them know you're calling about a payment issue on their account and ask them "
+                "to log in and update their payment method, or call us back. "
+                "Keep it professional and non-threatening."
+            )
         )
+    elif outcome == "available":
+        total_owed_str = call.data.get("total_owed_str", "")
+        amount_note = f" totaling {total_owed_str}" if total_owed_str else ""
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.begin_recovery,
-            on_failure=self.leave_voicemail,
-        )
-
-    def begin_recovery(self):
-        amount_note = f" totaling {self.total_owed_str}" if self.total_owed_str else ""
-
-        self.set_task(
+        call.set_task(
+            "handle_outcome",
             objective=(
-                f"Reach {self.customer_name} about a payment issue on their Vault subscription{amount_note}. "
+                f"Reach {customer_name} about a payment issue on their Vault subscription{amount_note}. "
                 "Understand why payment failed and retry if they've updated their payment method."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Riley calling from Vault. "
+                    f"Hi {customer_name}, this is Riley calling from Vault. "
                     f"I'm reaching out because we had a payment issue on your subscription"
-                    + (f" — there's an outstanding balance of {self.total_owed_str}" if self.total_owed_str else "")
+                    + (f" — there's an outstanding balance of {total_owed_str}" if total_owed_str else "")
                     + ". I wanted to connect personally to help get this sorted quickly."
                 ),
                 guava.Field(
@@ -118,68 +129,60 @@ class PaymentRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_outcome,
         )
 
-    def handle_outcome(self):
-        cause = self.get_field("cause") or ""
-        updated = self.get_field("updated_payment") or ""
 
-        logging.info(
-            "Payment recovery for subscription %s — cause: %s, updated: %s",
-            self.subscription_id, cause, updated,
-        )
+@agent.on_task_complete("handle_outcome")
+def on_handle_outcome(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    subscription_id = call.get_variable("subscription_id")
+    cause = call.get_field("cause") or ""
+    updated = call.get_field("updated_payment") or ""
 
-        if "cancel" in updated:
-            self.hangup(
-                final_instructions=(
-                    f"Acknowledge {self.customer_name}'s wish to cancel. Let them know they can cancel "
-                    "by logging into their Vault account or calling back. Thank them for being a customer."
-                )
-            )
-            return
+    logging.info(
+        "Payment recovery for subscription %s — cause: %s, updated: %s",
+        subscription_id, cause, updated,
+    )
 
-        if "retry" in updated:
-            success = False
-            try:
-                success = collect_now(self.subscription_id)
-                logging.info("Collect now result for %s: %s", self.subscription_id, success)
-            except Exception as e:
-                logging.error("Collect now failed: %s", e)
-
-            if success:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know the payment was collected successfully — "
-                        "their account is now fully up to date. "
-                        "Thank them for resolving this quickly and wish them a great day."
-                    )
-                )
-            else:
-                self.hangup(
-                    final_instructions=(
-                        f"Let {self.customer_name} know the payment retry wasn't successful. "
-                        "Ask them to log into their Vault account and update their payment method — "
-                        "we'll retry automatically once it's updated. Thank them for their patience."
-                    )
-                )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time. Let them know they can update their "
-                    "payment method by logging into their Vault account, and we'll retry the charge automatically. "
-                    "We'll also send a reminder email. Wish them a great day."
-                )
-            )
-
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for payment recovery.", self.customer_name)
-        self.hangup(
+    if "cancel" in updated:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.customer_name} from Vault. "
-                "Let them know you're calling about a payment issue on their account and ask them "
-                "to log in and update their payment method, or call us back. "
-                "Keep it professional and non-threatening."
+                f"Acknowledge {customer_name}'s wish to cancel. Let them know they can cancel "
+                "by logging into their Vault account or calling back. Thank them for being a customer."
+            )
+        )
+        return
+
+    if "retry" in updated:
+        success = False
+        try:
+            success = collect_now(subscription_id)
+            logging.info("Collect now result for %s: %s", subscription_id, success)
+        except Exception as e:
+            logging.error("Collect now failed: %s", e)
+
+        if success:
+            call.hangup(
+                final_instructions=(
+                    f"Let {customer_name} know the payment was collected successfully — "
+                    "their account is now fully up to date. "
+                    "Thank them for resolving this quickly and wish them a great day."
+                )
+            )
+        else:
+            call.hangup(
+                final_instructions=(
+                    f"Let {customer_name} know the payment retry wasn't successful. "
+                    "Ask them to log into their Vault account and update their payment method — "
+                    "we'll retry automatically once it's updated. Thank them for their patience."
+                )
+            )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. Let them know they can update their "
+                "payment method by logging into their Vault account, and we'll retry the charge automatically. "
+                "We'll also send a reminder email. Wish them a great day."
             )
         )
 
@@ -192,11 +195,11 @@ if __name__ == "__main__":
     parser.add_argument("--subscription-id", required=True)
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PaymentRecoveryController(
-            customer_name=args.name,
-            subscription_id=args.subscription_id,
-        ),
+        variables={
+            "customer_name": args.name,
+            "subscription_id": args.subscription_id,
+        },
     )

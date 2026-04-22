@@ -64,104 +64,104 @@ def format_kpi_row(row: dict) -> str:
     return ". ".join(parts)
 
 
-class KPIDailyBriefingController(guava.CallController):
-    def __init__(self, recipient_name: str):
-        super().__init__()
-        self.recipient_name = recipient_name
-        self._kpi_summary = ""
+agent = guava.Agent(
+    name="Quinn",
+    organization="Apex Analytics",
+    purpose=(
+        "to deliver the daily KPI briefing to Apex Analytics team members "
+        "by reading key metrics from Power BI"
+    ),
+)
 
-        try:
-            token = get_access_token()
-            rows = get_latest_kpi_rows(token)
-            if rows:
-                self._kpi_summary = format_kpi_row(rows[0])
-        except Exception as e:
-            logging.error("Failed to fetch KPI data from Power BI: %s", e)
 
-        self.set_persona(
-            organization_name="Apex Analytics",
-            agent_name="Quinn",
-            agent_purpose=(
-                "to deliver the daily KPI briefing to Apex Analytics team members "
-                "by reading key metrics from Power BI"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    recipient_name = call.get_variable("recipient_name")
+
+    call.kpi_summary = ""
+    try:
+        token = get_access_token()
+        rows = get_latest_kpi_rows(token)
+        if rows:
+            call.kpi_summary = format_kpi_row(rows[0])
+    except Exception as e:
+        logging.error("Failed to fetch KPI data from Power BI: %s", e)
+
+    call.reach_person(contact_full_name=recipient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    recipient_name = call.get_variable("recipient_name")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for daily KPI briefing", recipient_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {recipient_name} from Apex Analytics. "
+                "Let them know you called with their daily KPI briefing and that the metrics "
+                "are available in their Power BI dashboard. Keep it under 15 seconds."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=recipient_name,
-            on_success=self.deliver_briefing,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_briefing(self):
-        if not self._kpi_summary:
-            self.set_task(
-                objective=f"Inform {self.recipient_name} that today's KPI data is unavailable.",
+    elif outcome == "available":
+        if not call.kpi_summary:
+            call.set_task(
+                "deliver_briefing",
+                objective=f"Inform {recipient_name} that today's KPI data is unavailable.",
                 checklist=[
                     guava.Say(
-                        f"Hi {self.recipient_name}, this is Quinn from Apex Analytics. "
+                        f"Hi {recipient_name}, this is Quinn from Apex Analytics. "
                         "I'm calling with your daily briefing, but unfortunately I wasn't able "
                         "to retrieve today's metrics from Power BI. Our team will look into it. "
                         "Have a great day."
                     ),
                 ],
-                on_complete=lambda: self.hangup(
-                    final_instructions=f"Say goodbye to {self.recipient_name}."
-                ),
             )
-            return
-
-        self.set_task(
-            objective=f"Deliver today's KPI briefing to {self.recipient_name}.",
-            checklist=[
-                guava.Say(
-                    f"Good morning {self.recipient_name}! This is Quinn from Apex Analytics "
-                    "with your daily KPI briefing from Power BI. "
-                    f"Here are today's numbers: {self._kpi_summary}."
-                ),
-                guava.Field(
-                    key="questions",
-                    field_type="text",
-                    description=(
-                        "Ask if they have any questions about today's numbers or "
-                        "if they'd like to flag anything for the analytics team."
+        else:
+            call.set_task(
+                "deliver_briefing",
+                objective=f"Deliver today's KPI briefing to {recipient_name}.",
+                checklist=[
+                    guava.Say(
+                        f"Good morning {recipient_name}! This is Quinn from Apex Analytics "
+                        "with your daily KPI briefing from Power BI. "
+                        f"Here are today's numbers: {call.kpi_summary}."
                     ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.close_briefing,
-        )
-
-    def close_briefing(self):
-        questions = self.get_field("questions") or ""
-
-        if questions:
-            logging.info(
-                "KPI briefing questions from %s: %s", self.recipient_name, questions
+                    guava.Field(
+                        key="questions",
+                        field_type="text",
+                        description=(
+                            "Ask if they have any questions about today's numbers or "
+                            "if they'd like to flag anything for the analytics team."
+                        ),
+                        required=False,
+                    ),
+                ],
             )
 
-        self.hangup(
-            final_instructions=(
-                f"Wrap up the briefing with {self.recipient_name}. "
-                + (
-                    f"Acknowledge their question or feedback — '{questions}' — "
-                    "and let them know the analytics team will follow up by email. "
-                    if questions
-                    else ""
-                )
-                + "Wish them a productive day."
-            )
+
+@agent.on_task_complete("deliver_briefing")
+def on_done(call: guava.Call) -> None:
+    recipient_name = call.get_variable("recipient_name")
+    questions = call.get_field("questions") or ""
+
+    if questions:
+        logging.info(
+            "KPI briefing questions from %s: %s", recipient_name, questions
         )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for daily KPI briefing", self.recipient_name)
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief voicemail for {self.recipient_name} from Apex Analytics. "
-                "Let them know you called with their daily KPI briefing and that the metrics "
-                "are available in their Power BI dashboard. Keep it under 15 seconds."
+    call.hangup(
+        final_instructions=(
+            f"Wrap up the briefing with {recipient_name}. "
+            + (
+                f"Acknowledge their question or feedback — '{questions}' — "
+                "and let them know the analytics team will follow up by email. "
+                if questions
+                else ""
             )
+            + "Wish them a productive day."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -173,8 +173,8 @@ if __name__ == "__main__":
 
     logging.info("Initiating daily KPI briefing call to %s (%s)", args.name, args.phone)
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=KPIDailyBriefingController(recipient_name=args.name),
+        variables={"recipient_name": args.name},
     )

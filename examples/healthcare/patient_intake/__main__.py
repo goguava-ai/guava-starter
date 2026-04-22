@@ -7,32 +7,39 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Morgan",
+    organization="Summit Health Clinic",
+    purpose=(
+        "to conduct pre-visit intake calls to collect patient symptoms, current medications, "
+        "allergies, insurance information, and emergency contact details before their appointment"
+    ),
+)
 
-class PatientIntakeController(guava.CallController):
-    def __init__(self, patient_name: str, appointment: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment = appointment
 
-        self.set_persona(
-            organization_name="Summit Health Clinic",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to conduct pre-visit intake calls to collect patient symptoms, current medications, "
-                "allergies, insurance information, and emergency contact details before their appointment"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf of "
+                "Summit Health Clinic letting them know we called to complete a pre-visit intake ahead "
+                f"of {call.get_variable('appointment')} and asking them to call us back at their earliest convenience. "
+                "Let them know this will only take a few minutes and will help us prepare for their visit."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_intake,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_intake(self):
-        self.set_task(
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        appointment = call.get_variable("appointment")
+        call.set_task(
+            "intake",
             objective=(
-                f"Complete a pre-visit intake for {self.patient_name} ahead of {self.appointment} "
+                f"Complete a pre-visit intake for {patient_name} ahead of {appointment} "
                 "at Summit Health Clinic. Collect the patient's primary reason for the visit, "
                 "current medications, any known allergies, insurance provider and member ID, "
                 "and emergency contact information. Be warm, patient, and professional — this "
@@ -40,8 +47,8 @@ class PatientIntakeController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.patient_name}, this is Morgan calling from Summit Health Clinic. "
-                    f"I'm calling ahead of {self.appointment} to complete a quick intake so our care "
+                    f"Hello {patient_name}, this is Morgan calling from Summit Health Clinic. "
+                    f"I'm calling ahead of {appointment} to complete a quick intake so our care "
                     "team is fully prepared for your visit. This should only take a few minutes."
                 ),
                 guava.Say(
@@ -112,43 +119,34 @@ class PatientIntakeController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "patient_name": self.patient_name,
-            "appointment": self.appointment,
-            "chief_complaint": self.get_field("chief_complaint"),
-            "current_medications": self.get_field("current_medications"),
-            "known_allergies": self.get_field("known_allergies"),
-            "insurance_provider": self.get_field("insurance_provider"),
-            "insurance_member_id": self.get_field("insurance_member_id"),
-            "emergency_contact_name": self.get_field("emergency_contact_name"),
-            "emergency_contact_phone": self.get_field("emergency_contact_phone"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Patient intake results saved.")
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.patient_name} for completing the intake. Let them know their information "
-                "has been securely recorded and will be reviewed by the care team at Summit Health Clinic "
-                f"before {self.appointment}. Remind them to bring their insurance card and a photo ID to "
-                "the appointment, and to arrive 10 minutes early. Wish them a great visit."
-            )
-        )
+@agent.on_task_complete("intake")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "patient_name": call.get_variable("patient_name"),
+        "appointment": call.get_variable("appointment"),
+        "chief_complaint": call.get_field("chief_complaint"),
+        "current_medications": call.get_field("current_medications"),
+        "known_allergies": call.get_field("known_allergies"),
+        "insurance_provider": call.get_field("insurance_provider"),
+        "insurance_member_id": call.get_field("insurance_member_id"),
+        "emergency_contact_name": call.get_field("emergency_contact_name"),
+        "emergency_contact_phone": call.get_field("emergency_contact_phone"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Patient intake results saved.")
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf of "
-                "Summit Health Clinic letting them know we called to complete a pre-visit intake ahead "
-                f"of {self.appointment} and asking them to call us back at their earliest convenience. "
-                "Let them know this will only take a few minutes and will help us prepare for their visit."
-            )
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('patient_name')} for completing the intake. Let them know their information "
+            "has been securely recorded and will be reviewed by the care team at Summit Health Clinic "
+            f"before {call.get_variable('appointment')}. Remind them to bring their insurance card and a photo ID to "
+            "the appointment, and to arrive 10 minutes early. Wish them a great visit."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -172,11 +170,11 @@ if __name__ == "__main__":
         args.appointment,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PatientIntakeController(
-            patient_name=args.name,
-            appointment=args.appointment,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment": args.appointment,
+        },
     )

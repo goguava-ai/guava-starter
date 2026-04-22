@@ -7,41 +7,52 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Taylor",
+    organization="Lakeside Auto Group",
+    purpose=(
+        "call customers who are due for routine maintenance and help them "
+        "book a service bay appointment for their vehicle"
+    ),
+)
 
-class ServiceReminderController(guava.CallController):
-    def __init__(self, customer_name, vehicle, service_type, mileage):
-        super().__init__()
-        self.customer_name = customer_name
-        self.vehicle = vehicle
-        self.service_type = service_type
-        self.mileage = mileage
 
-        self.set_persona(
-            organization_name="Lakeside Auto Group",
-            agent_name="Taylor",
-            agent_purpose=(
-                f"call customers who are due for routine maintenance and help them "
-                f"book a service bay appointment for their vehicle"
-            ),
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("customer_name"))
 
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.start_service_reminder,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def start_service_reminder(self):
-        self.set_task(
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    vehicle = call.get_variable("vehicle")
+    service_type = call.get_variable("service_type")
+    mileage = call.get_variable("mileage")
+
+    if outcome == "unavailable":
+        logging.warning("Could not reach %s for service reminder call.", customer_name)
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "customer_name": customer_name,
+            "vehicle": vehicle,
+            "service_type": service_type,
+            "mileage": mileage,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup()
+    elif outcome == "available":
+        call.set_task(
+            "service_reminder",
             objective=(
-                f"Remind {self.customer_name} that their {self.vehicle} is due for "
-                f"{self.service_type} at {self.mileage} miles, and schedule a "
+                f"Remind {customer_name} that their {vehicle} is due for "
+                f"{service_type} at {mileage} miles, and schedule a "
                 f"service bay appointment at Lakeside Auto Group."
             ),
             checklist=[
                 guava.Say(
-                    f"Let {self.customer_name} know their {self.vehicle} is due for "
-                    f"{self.service_type} based on their current mileage of {self.mileage}."
+                    f"Let {customer_name} know their {vehicle} is due for "
+                    f"{service_type} based on their current mileage of {mileage}."
                 ),
                 guava.Field(
                     key="service_acknowledged",
@@ -74,45 +85,35 @@ class ServiceReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "service_type": self.service_type,
-            "mileage": self.mileage,
-            "service_acknowledged": self.get_field("service_acknowledged"),
-            "appointment_date_preference": self.get_field("appointment_date_preference"),
-            "appointment_time_preference": self.get_field("appointment_time_preference"),
-            "loaner_car_needed": self.get_field("loaner_car_needed"),
-            "additional_service_requests": self.get_field("additional_service_requests"),
-        }
 
-        print(json.dumps(results, indent=2))
-        logging.info("Service reminder results collected for %s", self.customer_name)
+@agent.on_task_complete("service_reminder")
+def on_service_reminder_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "customer_name": customer_name,
+        "vehicle": call.get_variable("vehicle"),
+        "service_type": call.get_variable("service_type"),
+        "mileage": call.get_variable("mileage"),
+        "service_acknowledged": call.get_field("service_acknowledged"),
+        "appointment_date_preference": call.get_field("appointment_date_preference"),
+        "appointment_time_preference": call.get_field("appointment_time_preference"),
+        "loaner_car_needed": call.get_field("loaner_car_needed"),
+        "additional_service_requests": call.get_field("additional_service_requests"),
+    }
 
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.customer_name} for their time, confirm their appointment "
-                f"details, and let them know that Lakeside Auto Group will send a "
-                f"confirmation. Wish them a great day."
-            )
+    print(json.dumps(results, indent=2))
+    logging.info("Service reminder results collected for %s", customer_name)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} for their time, confirm their appointment "
+            f"details, and let them know that Lakeside Auto Group will send a "
+            f"confirmation. Wish them a great day."
         )
-
-    def recipient_unavailable(self):
-        logging.warning("Could not reach %s for service reminder call.", self.customer_name)
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": self.customer_name,
-            "vehicle": self.vehicle,
-            "service_type": self.service_type,
-            "mileage": self.mileage,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
+    )
 
 
 if __name__ == "__main__":
@@ -135,13 +136,13 @@ if __name__ == "__main__":
     parser.add_argument("--mileage", required=True, help="Current vehicle mileage")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ServiceReminderController(
-            customer_name=args.name,
-            vehicle=args.vehicle,
-            service_type=args.service_type,
-            mileage=args.mileage,
-        ),
+        variables={
+            "customer_name": args.name,
+            "vehicle": args.vehicle,
+            "service_type": args.service_type,
+            "mileage": args.mileage,
+        },
     )

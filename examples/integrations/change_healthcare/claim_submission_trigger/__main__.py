@@ -104,37 +104,49 @@ def build_claim_payload(
     }
 
 
-class ClaimSubmissionTriggerController(guava.CallController):
-    def __init__(self, patient_name: str, appointment_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment_id = appointment_id
+agent = guava.Agent(
+    name="Casey",
+    organization="Valley Medical Group Billing",
+    purpose=(
+        "to confirm clinical and billing details with providers before submitting "
+        "an insurance claim on their behalf"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Valley Medical Group Billing",
-            agent_name="Casey",
-            agent_purpose=(
-                "to confirm clinical and billing details with providers before submitting "
-                "an insurance claim on their behalf"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Unable to reach contact for appointment %s",
+            call.get_variable("appointment_id"),
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_confirmation,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                "Leave a brief voicemail on behalf of Valley Medical Group billing. "
+                "Let them know we were calling to confirm visit details before submitting "
+                "an insurance claim, and that we'll attempt to reach them again. "
+                "Provide the billing department callback number."
+            )
         )
-
-    def begin_confirmation(self):
-        self.set_task(
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        appointment_id = call.get_variable("appointment_id")
+        call.set_task(
+            "confirm_and_submit_claim",
             objective=(
-                f"Confirm billing information for a recent visit by {self.patient_name} "
-                f"(appointment {self.appointment_id}) before submitting the claim."
+                f"Confirm billing information for a recent visit by {patient_name} "
+                f"(appointment {appointment_id}) before submitting the claim."
             ),
             checklist=[
                 guava.Say(
                     f"Hi, this is Casey calling from Valley Medical Group billing. "
-                    f"I'm reaching out to confirm a few details for {self.patient_name}'s "
+                    f"I'm reaching out to confirm a few details for {patient_name}'s "
                     f"recent visit before we submit the insurance claim. This will only take "
                     "a moment — I just have a few quick questions."
                 ),
@@ -169,103 +181,95 @@ class ClaimSubmissionTriggerController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.submit_claim,
         )
 
-    def submit_claim(self):
-        confirmed = self.get_field("diagnosis_confirmed")
-        insurance_active = self.get_field("insurance_active")
-        notes = self.get_field("additional_notes") or ""
 
-        if confirmed != "yes, confirmed" or insurance_active == "no":
-            logging.warning(
-                "Claim submission held for appointment %s — confirmation issue: %s, insurance: %s",
-                self.appointment_id, confirmed, insurance_active,
-            )
-            print(json.dumps({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "appointment_id": self.appointment_id,
-                "action": "held_for_review",
-                "reason": f"confirmation={confirmed}, insurance_active={insurance_active}",
-                "notes": notes,
-            }, indent=2))
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know that we've put the claim for {self.patient_name} "
-                    "on hold for review by our billing team. A billing specialist will follow "
-                    "up within one business day to resolve the discrepancy. "
-                    "Thank them for their time."
-                )
-            )
-            return
+@agent.on_task_complete("confirm_and_submit_claim")
+def on_confirm_and_submit_claim(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+    confirmed = call.get_field("diagnosis_confirmed")
+    insurance_active = call.get_field("insurance_active")
+    notes = call.get_field("additional_notes") or ""
 
-        provider_npi = os.environ["PROVIDER_NPI"]
-        provider_tax_id = os.environ["PROVIDER_TAX_ID"]
-        payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
-        # These would normally come from the appointment/EHR record
-        member_id = os.environ.get("DEMO_MEMBER_ID", "MBR123456")
-        patient_first = self.patient_name.split()[0] if self.patient_name else "Patient"
-        patient_last = self.patient_name.split()[-1] if self.patient_name else "Unknown"
-        diagnosis_code = os.environ.get("DEMO_DIAGNOSIS_CODE", "Z00.00")
-        procedure_code = os.environ.get("DEMO_PROCEDURE_CODE", "99213")
-        service_date = os.environ.get("DEMO_SERVICE_DATE", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-        charge_amount = os.environ.get("DEMO_CHARGE_AMOUNT", "150.00")
-
-        payload = build_claim_payload(
-            provider_npi=provider_npi,
-            provider_tax_id=provider_tax_id,
-            payer_id=payer_id,
-            member_id=member_id,
-            patient_first=patient_first,
-            patient_last=patient_last,
-            patient_dob=os.environ.get("DEMO_PATIENT_DOB", "1985-06-15"),
-            diagnosis_code=diagnosis_code,
-            procedure_code=procedure_code,
-            service_date=service_date,
-            charge_amount=charge_amount,
+    if confirmed != "yes, confirmed" or insurance_active == "no":
+        logging.warning(
+            "Claim submission held for appointment %s — confirmation issue: %s, insurance: %s",
+            appointment_id, confirmed, insurance_active,
         )
-
-        try:
-            response = submit_professional_claim(payload)
-            claim_id = response.get("claimReference", {}).get("correlationId", "")
-            logging.info("Claim submitted for appointment %s — ID: %s", self.appointment_id, claim_id)
-
-            print(json.dumps({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "appointment_id": self.appointment_id,
-                "patient_name": self.patient_name,
-                "action": "claim_submitted",
-                "claim_id": claim_id,
-                "notes": notes,
-            }, indent=2))
-
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know that the insurance claim for {self.patient_name}'s "
-                    f"visit has been submitted successfully. The claim reference ID is {claim_id}. "
-                    "Processing typically takes 5 to 10 business days. "
-                    "Thank them for their time and for helping us keep billing accurate."
-                )
-            )
-        except Exception as e:
-            logging.error("Claim submission failed for appointment %s: %s", self.appointment_id, e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize for a technical issue and let the caller know the claim for "
-                    f"{self.patient_name} could not be submitted at this time. "
-                    "Our billing team will retry submission and follow up if any action is needed. "
-                    "Thank them for their time."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach contact for appointment %s", self.appointment_id)
-        self.hangup(
+        print(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "appointment_id": appointment_id,
+            "action": "held_for_review",
+            "reason": f"confirmation={confirmed}, insurance_active={insurance_active}",
+            "notes": notes,
+        }, indent=2))
+        call.hangup(
             final_instructions=(
-                "Leave a brief voicemail on behalf of Valley Medical Group billing. "
-                "Let them know we were calling to confirm visit details before submitting "
-                "an insurance claim, and that we'll attempt to reach them again. "
-                "Provide the billing department callback number."
+                f"Let the caller know that we've put the claim for {patient_name} "
+                "on hold for review by our billing team. A billing specialist will follow "
+                "up within one business day to resolve the discrepancy. "
+                "Thank them for their time."
+            )
+        )
+        return
+
+    provider_npi = os.environ["PROVIDER_NPI"]
+    provider_tax_id = os.environ["PROVIDER_TAX_ID"]
+    payer_id = os.environ.get("CHANGE_HEALTHCARE_TRADING_PARTNER_ID", "000050")
+    # These would normally come from the appointment/EHR record
+    member_id = os.environ.get("DEMO_MEMBER_ID", "MBR123456")
+    patient_first = patient_name.split()[0] if patient_name else "Patient"
+    patient_last = patient_name.split()[-1] if patient_name else "Unknown"
+    diagnosis_code = os.environ.get("DEMO_DIAGNOSIS_CODE", "Z00.00")
+    procedure_code = os.environ.get("DEMO_PROCEDURE_CODE", "99213")
+    service_date = os.environ.get("DEMO_SERVICE_DATE", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    charge_amount = os.environ.get("DEMO_CHARGE_AMOUNT", "150.00")
+
+    payload = build_claim_payload(
+        provider_npi=provider_npi,
+        provider_tax_id=provider_tax_id,
+        payer_id=payer_id,
+        member_id=member_id,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_dob=os.environ.get("DEMO_PATIENT_DOB", "1985-06-15"),
+        diagnosis_code=diagnosis_code,
+        procedure_code=procedure_code,
+        service_date=service_date,
+        charge_amount=charge_amount,
+    )
+
+    try:
+        response = submit_professional_claim(payload)
+        claim_id = response.get("claimReference", {}).get("correlationId", "")
+        logging.info("Claim submitted for appointment %s — ID: %s", appointment_id, claim_id)
+
+        print(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "appointment_id": appointment_id,
+            "patient_name": patient_name,
+            "action": "claim_submitted",
+            "claim_id": claim_id,
+            "notes": notes,
+        }, indent=2))
+
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know that the insurance claim for {patient_name}'s "
+                f"visit has been submitted successfully. The claim reference ID is {claim_id}. "
+                "Processing typically takes 5 to 10 business days. "
+                "Thank them for their time and for helping us keep billing accurate."
+            )
+        )
+    except Exception as e:
+        logging.error("Claim submission failed for appointment %s: %s", appointment_id, e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize for a technical issue and let the caller know the claim for "
+                f"{patient_name} could not be submitted at this time. "
+                "Our billing team will retry submission and follow up if any action is needed. "
+                "Thank them for their time."
             )
         )
 
@@ -285,11 +289,11 @@ if __name__ == "__main__":
         args.name, args.appointment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ClaimSubmissionTriggerController(
-            patient_name=args.name,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment_id": args.appointment_id,
+        },
     )

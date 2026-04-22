@@ -57,132 +57,132 @@ def format_charge(charge: dict) -> str:
     return f"${amount:,.2f} {currency} on {created} for '{description}'"
 
 
-class RefundRequestController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self._charges = []
+agent = guava.Agent(
+    name="Morgan",
+    organization="Luminary",
+    purpose=(
+        "to help Luminary customers request refunds for recent charges on their account"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Luminary",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to help Luminary customers request refunds for recent charges on their account"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "find_charge_and_refund",
+        objective=(
+            "A customer has called to request a refund. Verify their identity via email, "
+            "look up their recent charges, confirm which charge they want refunded "
+            "and the reason, then process the refund."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Luminary. I'm Morgan. I can help you with a refund. "
+                "Let me pull up your account."
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A customer has called to request a refund. Verify their identity via email, "
-                "look up their recent charges, confirm which charge they want refunded "
-                "and the reason, then process the refund."
+            guava.Field(
+                key="caller_email",
+                field_type="text",
+                description="Ask for their email address on file.",
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Luminary. I'm Morgan. I can help you with a refund. "
-                    "Let me pull up your account."
+            guava.Field(
+                key="refund_reason",
+                field_type="multiple_choice",
+                description=(
+                    "Ask why they're requesting a refund. "
+                    "Map their answer to one of these options."
                 ),
-                guava.Field(
-                    key="caller_email",
-                    field_type="text",
-                    description="Ask for their email address on file.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="refund_reason",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask why they're requesting a refund. "
-                        "Map their answer to one of these options."
-                    ),
-                    choices=["duplicate charge", "fraudulent charge", "other"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.find_charge_and_refund,
+                choices=["duplicate charge", "fraudulent charge", "other"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("find_charge_and_refund")
+def find_charge_and_refund(call: guava.Call) -> None:
+    email = call.get_field("caller_email") or ""
+    reason_spoken = call.get_field("refund_reason") or "other"
+
+    reason_map = {
+        "duplicate charge": "duplicate",
+        "fraudulent charge": "fraudulent",
+        "other": "requested_by_customer",
+    }
+    stripe_reason = reason_map.get(reason_spoken, "requested_by_customer")
+
+    logging.info("Processing refund request for email: %s, reason: %s", email, reason_spoken)
+
+    try:
+        customer = search_customer_by_email(email)
+    except Exception as e:
+        logging.error("Stripe search failed for %s: %s", email, e)
+        customer = None
+
+    if not customer:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know you couldn't find an account with that email address. "
+                "Apologize and offer to transfer them to a billing specialist."
+            )
         )
+        return
 
-        self.accept_call()
+    try:
+        charges = list_recent_charges(customer["id"])
+    except Exception as e:
+        logging.error("Failed to list charges for %s: %s", customer["id"], e)
+        charges = []
 
-    def find_charge_and_refund(self):
-        email = self.get_field("caller_email") or ""
-        reason_spoken = self.get_field("refund_reason") or "other"
-
-        reason_map = {
-            "duplicate charge": "duplicate",
-            "fraudulent charge": "fraudulent",
-            "other": "requested_by_customer",
-        }
-        stripe_reason = reason_map.get(reason_spoken, "requested_by_customer")
-
-        logging.info("Processing refund request for email: %s, reason: %s", email, reason_spoken)
-
-        try:
-            customer = search_customer_by_email(email)
-        except Exception as e:
-            logging.error("Stripe search failed for %s: %s", email, e)
-            customer = None
-
-        if not customer:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you couldn't find an account with that email address. "
-                    "Apologize and offer to transfer them to a billing specialist."
-                )
+    if not charges:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know there are no recent refundable charges on their account. "
+                "If they believe this is incorrect, offer to escalate to a billing specialist. "
+                "Be apologetic and helpful."
             )
-            return
+        )
+        return
 
-        try:
-            charges = list_recent_charges(customer["id"])
-        except Exception as e:
-            logging.error("Failed to list charges for %s: %s", customer["id"], e)
-            charges = []
+    # Always refund the most recent eligible charge
+    charge = charges[0]
+    charge_id = charge["id"]
+    charge_description = format_charge(charge)
 
-        if not charges:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know there are no recent refundable charges on their account. "
-                    "If they believe this is incorrect, offer to escalate to a billing specialist. "
-                    "Be apologetic and helpful."
-                )
+    logging.info("Issuing refund for charge %s (%s)", charge_id, charge_description)
+
+    try:
+        refund = create_refund(charge_id, stripe_reason)
+        refund_id = refund["id"]
+        name = customer.get("name") or "there"
+        logging.info("Refund %s created for charge %s", refund_id, charge_id)
+        call.hangup(
+            final_instructions=(
+                f"Let {name} know their refund has been processed successfully. "
+                f"The refund is for {charge_description}. "
+                "Let them know it typically takes 5–10 business days to appear on their statement, "
+                "depending on their bank. "
+                "Thank them for their patience and for being a Luminary customer."
             )
-            return
-
-        # Always refund the most recent eligible charge
-        charge = charges[0]
-        charge_id = charge["id"]
-        charge_description = format_charge(charge)
-
-        logging.info("Issuing refund for charge %s (%s)", charge_id, charge_description)
-
-        try:
-            refund = create_refund(charge_id, stripe_reason)
-            refund_id = refund["id"]
-            name = customer.get("name") or "there"
-            logging.info("Refund %s created for charge %s", refund_id, charge_id)
-            self.hangup(
-                final_instructions=(
-                    f"Let {name} know their refund has been processed successfully. "
-                    f"The refund is for {charge_description}. "
-                    "Let them know it typically takes 5–10 business days to appear on their statement, "
-                    "depending on their bank. "
-                    "Thank them for their patience and for being a Luminary customer."
-                )
+        )
+    except Exception as e:
+        logging.error("Failed to create refund for charge %s: %s", charge_id, e)
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue processing the refund. "
+                "Let the caller know their request has been escalated to our billing team "
+                "and they'll receive a confirmation email within one business day. "
+                "Thank them for their patience."
             )
-        except Exception as e:
-            logging.error("Failed to create refund for charge %s: %s", charge_id, e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize for a technical issue processing the refund. "
-                    "Let the caller know their request has been escalated to our billing team "
-                    "and they'll receive a confirmation email within one business day. "
-                    "Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=RefundRequestController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

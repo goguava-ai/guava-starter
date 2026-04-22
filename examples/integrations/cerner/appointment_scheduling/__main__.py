@@ -96,168 +96,169 @@ def create_appointment(
     return resp.json()
 
 
-class AppointmentSchedulingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Riverside Health System",
+    purpose=(
+        "to help Riverside Health System patients schedule medical appointments "
+        "quickly and conveniently"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Riverside Health System",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help Riverside Health System patients schedule medical appointments "
-                "quickly and conveniently"
+
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "book_appointment",
+        objective=(
+            "A patient has called to schedule an appointment. Verify their identity, "
+            "understand the type of appointment needed, capture their preferred time, "
+            "and book it in the EHR."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Riverside Health System. I'm Sam, and I can help "
+                "you schedule an appointment. Let me pull up your record first."
             ),
+            guava.Field(
+                key="mrn",
+                field_type="text",
+                description=(
+                    "Ask for their medical record number (MRN). Let them know it's on their "
+                    "patient portal or any previous paperwork."
+                ),
+                required=True,
+            ),
+            guava.Field(
+                key="date_of_birth",
+                field_type="text",
+                description="Ask for their date of birth to verify their identity.",
+                required=True,
+            ),
+            guava.Field(
+                key="appointment_type",
+                field_type="multiple_choice",
+                description="Ask what type of appointment they need.",
+                choices=[
+                    "primary care",
+                    "specialist",
+                    "urgent care",
+                    "follow-up",
+                    "lab / blood draw",
+                    "imaging",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="reason_for_visit",
+                field_type="text",
+                description=(
+                    "Ask for a brief description of the reason for the visit. "
+                    "Keep it high-level — this helps route to the right provider."
+                ),
+                required=True,
+            ),
+            guava.Field(
+                key="preferred_slot",
+                field_type="multiple_choice",
+                description="Ask when they'd like to come in.",
+                choices=[
+                    "tomorrow morning",
+                    "tomorrow afternoon",
+                    "day after tomorrow morning",
+                    "day after tomorrow afternoon",
+                    "next available",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="insurance_confirmed",
+                field_type="multiple_choice",
+                description=(
+                    "Ask if their insurance information is up to date in our system, "
+                    "or if they need to update it."
+                ),
+                choices=["yes, it's current", "no, I need to update it"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("book_appointment")
+def on_done(call: guava.Call) -> None:
+    mrn = (call.get_field("mrn") or "").strip()
+    dob = call.get_field("date_of_birth") or ""
+    appt_type = call.get_field("appointment_type") or "primary care"
+    reason = call.get_field("reason_for_visit") or "general visit"
+    slot = call.get_field("preferred_slot") or "next available"
+    insurance = call.get_field("insurance_confirmed") or "yes, it's current"
+
+    logging.info("Looking up patient MRN: %s", mrn)
+    patient = None
+    try:
+        patient = find_patient_by_mrn(mrn)
+    except Exception as e:
+        logging.error("Patient lookup failed: %s", e)
+
+    if not patient:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know you couldn't locate their record with that MRN and date of birth. "
+                "Ask them to double-check their MRN from their patient portal, or offer to transfer "
+                "them to the front desk. Be patient and empathetic."
+            )
+        )
+        return
+
+    patient_id = patient.get("id", "")
+    name_entry = (patient.get("name") or [{}])[0]
+    given = " ".join(name_entry.get("given", []))
+    family = name_entry.get("family", "")
+    patient_name = f"{given} {family}".strip() or "the patient"
+
+    practitioner_id = PRACTITIONER_MAP.get(appt_type, "")
+
+    logging.info("Booking %s appointment for patient %s — slot: %s", appt_type, patient_id, slot)
+    try:
+        appt = create_appointment(patient_id, practitioner_id, appt_type, reason, slot)
+        appt_id = appt.get("id", "")
+        appt_start = appt.get("start", "")[:16].replace("T", " ") + " UTC"
+        logging.info("Appointment created: %s at %s", appt_id, appt_start)
+
+        insurance_note = (
+            " We'll also note that their insurance information needs to be updated — "
+            "ask them to bring their current insurance card to the appointment."
+            if insurance == "no, I need to update it" else ""
         )
 
-        self.set_task(
-            objective=(
-                "A patient has called to schedule an appointment. Verify their identity, "
-                "understand the type of appointment needed, capture their preferred time, "
-                "and book it in the EHR."
-            ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Riverside Health System. I'm Sam, and I can help "
-                    "you schedule an appointment. Let me pull up your record first."
-                ),
-                guava.Field(
-                    key="mrn",
-                    field_type="text",
-                    description=(
-                        "Ask for their medical record number (MRN). Let them know it's on their "
-                        "patient portal or any previous paperwork."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="date_of_birth",
-                    field_type="text",
-                    description="Ask for their date of birth to verify their identity.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="appointment_type",
-                    field_type="multiple_choice",
-                    description="Ask what type of appointment they need.",
-                    choices=[
-                        "primary care",
-                        "specialist",
-                        "urgent care",
-                        "follow-up",
-                        "lab / blood draw",
-                        "imaging",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="reason_for_visit",
-                    field_type="text",
-                    description=(
-                        "Ask for a brief description of the reason for the visit. "
-                        "Keep it high-level — this helps route to the right provider."
-                    ),
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_slot",
-                    field_type="multiple_choice",
-                    description="Ask when they'd like to come in.",
-                    choices=[
-                        "tomorrow morning",
-                        "tomorrow afternoon",
-                        "day after tomorrow morning",
-                        "day after tomorrow afternoon",
-                        "next available",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="insurance_confirmed",
-                    field_type="multiple_choice",
-                    description=(
-                        "Ask if their insurance information is up to date in our system, "
-                        "or if they need to update it."
-                    ),
-                    choices=["yes, it's current", "no, I need to update it"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.book_appointment,
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know their {appt_type} appointment has been scheduled. "
+                f"The time is {appt_start}. "
+                + (f"Appointment ID: {appt_id}. " if appt_id else "")
+                + "Let them know they'll receive a confirmation via the patient portal. "
+                "Ask them to arrive 15 minutes early and bring a photo ID."
+                + insurance_note
+                + " Thank them for calling Riverside Health System."
+            )
         )
-
-        self.accept_call()
-
-    def book_appointment(self):
-        mrn = (self.get_field("mrn") or "").strip()
-        dob = self.get_field("date_of_birth") or ""
-        appt_type = self.get_field("appointment_type") or "primary care"
-        reason = self.get_field("reason_for_visit") or "general visit"
-        slot = self.get_field("preferred_slot") or "next available"
-        insurance = self.get_field("insurance_confirmed") or "yes, it's current"
-
-        logging.info("Looking up patient MRN: %s", mrn)
-        patient = None
-        try:
-            patient = find_patient_by_mrn(mrn)
-        except Exception as e:
-            logging.error("Patient lookup failed: %s", e)
-
-        if not patient:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know you couldn't locate their record with that MRN and date of birth. "
-                    "Ask them to double-check their MRN from their patient portal, or offer to transfer "
-                    "them to the front desk. Be patient and empathetic."
-                )
+    except Exception as e:
+        logging.error("Failed to create FHIR Appointment: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {patient_name} for a technical issue. Let them know the scheduling "
+                "team will call them back within two hours to complete the booking. "
+                "Thank them for their patience."
             )
-            return
-
-        patient_id = patient.get("id", "")
-        name_entry = (patient.get("name") or [{}])[0]
-        given = " ".join(name_entry.get("given", []))
-        family = name_entry.get("family", "")
-        patient_name = f"{given} {family}".strip() or "the patient"
-
-        practitioner_id = PRACTITIONER_MAP.get(appt_type, "")
-
-        logging.info("Booking %s appointment for patient %s — slot: %s", appt_type, patient_id, slot)
-        try:
-            appt = create_appointment(patient_id, practitioner_id, appt_type, reason, slot)
-            appt_id = appt.get("id", "")
-            appt_start = appt.get("start", "")[:16].replace("T", " ") + " UTC"
-            logging.info("Appointment created: %s at %s", appt_id, appt_start)
-
-            insurance_note = (
-                " We'll also note that their insurance information needs to be updated — "
-                "ask them to bring their current insurance card to the appointment."
-                if insurance == "no, I need to update it" else ""
-            )
-
-            self.hangup(
-                final_instructions=(
-                    f"Let {patient_name} know their {appt_type} appointment has been scheduled. "
-                    f"The time is {appt_start}. "
-                    + (f"Appointment ID: {appt_id}. " if appt_id else "")
-                    + "Let them know they'll receive a confirmation via the patient portal. "
-                    "Ask them to arrive 15 minutes early and bring a photo ID."
-                    + insurance_note
-                    + " Thank them for calling Riverside Health System."
-                )
-            )
-        except Exception as e:
-            logging.error("Failed to create FHIR Appointment: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {patient_name} for a technical issue. Let them know the scheduling "
-                    "team will call them back within two hours to complete the booking. "
-                    "Thank them for their patience."
-                )
-            )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=AppointmentSchedulingController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

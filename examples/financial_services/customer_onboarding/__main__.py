@@ -8,32 +8,39 @@ from datetime import datetime, timezone
 
 
 
-class CustomerOnboardingController(guava.CallController):
-    def __init__(self, contact_name: str, account_type: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.account_type = account_type
+agent = guava.Agent(
+    name="Jamie",
+    organization="First National Bank",
+    purpose=(
+        "to walk a new customer through the setup of their account, "
+        "deliver required disclosures, and configure initial account preferences"
+    ),
+)
 
-        self.set_persona(
-            organization_name="First National Bank",
-            agent_name="Jamie",
-            agent_purpose=(
-                f"to walk a new customer through the setup of their {self.account_type}, "
-                f"deliver required disclosures, and configure initial account preferences"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                f"You were unable to reach {call.get_variable('contact_name')}. Leave a warm, welcoming voicemail "
+                f"identifying yourself as Jamie from First National Bank. Congratulate them on "
+                f"opening their new {call.get_variable('account_type')} and let them know you were calling to help "
+                f"complete their account setup. Ask them to call back at their convenience or visit "
+                f"the bank's website to complete the setup steps online."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.begin_onboarding,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_onboarding(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "intake",
             objective=(
-                f"You are onboarding {self.contact_name} as a new First National Bank customer. "
-                f"They have just opened a {self.account_type}. Your goal is to welcome them, "
+                f"You are onboarding {call.get_variable('contact_name')} as a new First National Bank customer. "
+                f"They have just opened a {call.get_variable('account_type')}. Your goal is to welcome them, "
                 f"walk them through required regulatory disclosures, collect their preferences for "
                 f"paperless statements and overdraft protection, confirm their debit card delivery "
                 f"address, and optionally set up a security question for their online banking "
@@ -42,8 +49,8 @@ class CustomerOnboardingController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {self.contact_name}, congratulations on opening your new "
-                    f"{self.account_type} with First National Bank! My name is Jamie and I am "
+                    f"Hello {call.get_variable('contact_name')}, congratulations on opening your new "
+                    f"{call.get_variable('account_type')} with First National Bank! My name is Jamie and I am "
                     f"here to help you get everything set up today. This should only take a few "
                     f"minutes, and I will walk you through each step."
                 ),
@@ -122,45 +129,35 @@ class CustomerOnboardingController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "contact_name": self.contact_name,
-            "account_type": self.account_type,
-            "disclosures_acknowledged": self.get_field("disclosures_acknowledged"),
-            "paperless_statements_opted_in": self.get_field("paperless_statements_opted_in"),
-            "overdraft_protection_opted_in": self.get_field("overdraft_protection_opted_in"),
-            "debit_card_delivery_address_confirmed": self.get_field(
-                "debit_card_delivery_address_confirmed"
-            ),
-            "security_question_set": self.get_field("security_question_set"),
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Congratulate {self.contact_name} on completing their account setup. Provide a "
-                f"brief summary of their selections: disclosures acknowledged, paperless statement "
-                f"preference, overdraft protection choice, and debit card delivery address. Let "
-                f"them know their debit card will arrive within 5 to 7 business days and that they "
-                f"can begin using online and mobile banking immediately. Share the customer service "
-                f"number for any questions and close the call warmly, welcoming them to First "
-                f"National Bank."
-            )
-        )
 
-    def recipient_unavailable(self):
-        self.hangup(
-            final_instructions=(
-                f"You were unable to reach {self.contact_name}. Leave a warm, welcoming voicemail "
-                f"identifying yourself as Jamie from First National Bank. Congratulate them on "
-                f"opening their new {self.account_type} and let them know you were calling to help "
-                f"complete their account setup. Ask them to call back at their convenience or visit "
-                f"the bank's website to complete the setup steps online."
-            )
+@agent.on_task_complete("intake")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "account_type": call.get_variable("account_type"),
+        "disclosures_acknowledged": call.get_field("disclosures_acknowledged"),
+        "paperless_statements_opted_in": call.get_field("paperless_statements_opted_in"),
+        "overdraft_protection_opted_in": call.get_field("overdraft_protection_opted_in"),
+        "debit_card_delivery_address_confirmed": call.get_field(
+            "debit_card_delivery_address_confirmed"
+        ),
+        "security_question_set": call.get_field("security_question_set"),
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Congratulate {call.get_variable('contact_name')} on completing their account setup. Provide a "
+            f"brief summary of their selections: disclosures acknowledged, paperless statement "
+            f"preference, overdraft protection choice, and debit card delivery address. Let "
+            f"them know their debit card will arrive within 5 to 7 business days and that they "
+            f"can begin using online and mobile banking immediately. Share the customer service "
+            f"number for any questions and close the call warmly, welcoming them to First "
+            f"National Bank."
         )
+    )
 
 
 if __name__ == "__main__":
@@ -177,13 +174,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    controller = CustomerOnboardingController(
-        contact_name=args.name,
-        account_type=args.account_type,
-    )
-
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=controller,
+        variables={
+            "contact_name": args.name,
+            "account_type": args.account_type,
+        },
     )

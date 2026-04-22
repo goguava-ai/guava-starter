@@ -46,53 +46,80 @@ def add_work_note(change_id: str, note: str) -> None:
     resp.raise_for_status()
 
 
-class ChangeNotificationController(guava.CallController):
-    def __init__(self, contact_name: str, change_number: str, change_summary: str, window: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.change_number = change_number
-        self.change_summary = change_summary
-        self.window = window
-        self.change_sys_id = ""
+agent = guava.Agent(
+    name="Alex",
+    organization="Vertex Corp IT",
+    purpose=(
+        "to notify customers and stakeholders about upcoming planned maintenance windows "
+        "and changes that may affect their services"
+    ),
+)
 
-        try:
-            cr = get_change_request(change_number)
-            if cr:
-                self.change_sys_id = cr.get("sys_id", "")
-        except Exception as e:
-            logging.error("Failed to fetch change request %s pre-call: %s", change_number, e)
 
-        self.set_persona(
-            organization_name="Vertex Corp IT",
-            agent_name="Alex",
-            agent_purpose=(
-                "to notify customers and stakeholders about upcoming planned maintenance windows "
-                "and changes that may affect their services"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    change_number = call.get_variable("change_number")
+
+    try:
+        cr = get_change_request(change_number)
+        if cr:
+            call.change_sys_id = cr.get("sys_id", "")
+        else:
+            call.change_sys_id = ""
+    except Exception as e:
+        logging.error("Failed to fetch change request %s pre-call: %s", change_number, e)
+        call.change_sys_id = ""
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    change_number = call.get_variable("change_number")
+    window = call.get_variable("window")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for change notification %s.", contact_name, change_number)
+
+        if call.change_sys_id:
+            try:
+                add_work_note(
+                    call.change_sys_id,
+                    f"Change notification attempted — {contact_name} unavailable, voicemail left. "
+                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+                )
+            except Exception as e:
+                logging.error("Failed to add voicemail work note: %s", e)
+
+        call.hangup(
+            final_instructions=(
+                f"Leave a professional voicemail for {contact_name} from Vertex Corp IT. "
+                f"Let them know you're calling about a scheduled maintenance window "
+                f"({change_number}) that may affect their services. "
+                f"Mention the window: {window}. Ask them to call back or watch for an "
+                "email with full details. Keep it concise."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.deliver_notification,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_notification(self):
-        self.set_task(
+    elif outcome == "available":
+        change_summary = call.get_variable("change_summary")
+        call.set_task(
+            "log_outcome",
             objective=(
-                f"Notify {self.contact_name} about a planned change window ({self.change_number}) "
+                f"Notify {contact_name} about a planned change window ({change_number}) "
                 "that may affect their services. Confirm they received the information."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Alex from Vertex Corp IT. "
+                    f"Hi {contact_name}, this is Alex from Vertex Corp IT. "
                     "I'm calling to give you advance notice of a scheduled maintenance window "
                     "that may affect your services."
                 ),
                 guava.Say(
-                    f"Change reference: {self.change_number}. "
-                    f"Summary: {self.change_summary}. "
-                    f"Scheduled window: {self.window}. "
+                    f"Change reference: {change_number}. "
+                    f"Summary: {change_summary}. "
+                    f"Scheduled window: {window}. "
                     "During this time you may experience brief service interruptions."
                 ),
                 guava.Field(
@@ -122,80 +149,61 @@ class ChangeNotificationController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.log_outcome,
         )
 
-    def log_outcome(self):
-        acknowledged = self.get_field("acknowledged") or "yes, understood"
-        concerns = self.get_field("concerns") or ""
-        reschedule = self.get_field("needs_reschedule") or "window is fine"
 
-        note_lines = [
-            f"Change notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Notified: {self.contact_name}",
-            f"Acknowledged: {acknowledged}",
-            f"Window preference: {reschedule}",
-        ]
-        if concerns:
-            note_lines.append(f"Concerns raised: {concerns}")
+@agent.on_task_complete("log_outcome")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    change_number = call.get_variable("change_number")
 
-        logging.info(
-            "Change notification delivered to %s — acknowledged: %s, reschedule: %s",
-            self.contact_name, acknowledged, reschedule,
-        )
+    acknowledged = call.get_field("acknowledged") or "yes, understood"
+    concerns = call.get_field("concerns") or ""
+    reschedule = call.get_field("needs_reschedule") or "window is fine"
 
-        if self.change_sys_id:
-            try:
-                add_work_note(self.change_sys_id, "\n".join(note_lines))
-                logging.info("Work note added to change request %s.", self.change_number)
-            except Exception as e:
-                logging.error("Failed to add work note to change %s: %s", self.change_number, e)
+    note_lines = [
+        f"Change notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Notified: {contact_name}",
+        f"Acknowledged: {acknowledged}",
+        f"Window preference: {reschedule}",
+    ]
+    if concerns:
+        note_lines.append(f"Concerns raised: {concerns}")
 
-        if reschedule == "need to discuss alternative":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know their request to discuss an alternative window "
-                    "has been noted. Let them know the change manager will contact them within "
-                    "one business day to discuss options. Thank them for their time."
-                )
-            )
-        elif acknowledged == "has questions or concerns":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for raising their concerns. Let them know "
-                    "the IT team has been notified and will follow up before the change window. "
-                    "Wish them a good day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for their time and for confirming the notification. "
-                    "Let them know Vertex Corp IT will send an email summary as well. "
-                    "Wish them a good day."
-                )
-            )
+    logging.info(
+        "Change notification delivered to %s — acknowledged: %s, reschedule: %s",
+        contact_name, acknowledged, reschedule,
+    )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for change notification %s.", self.contact_name, self.change_number)
+    if call.change_sys_id:
+        try:
+            add_work_note(call.change_sys_id, "\n".join(note_lines))
+            logging.info("Work note added to change request %s.", change_number)
+        except Exception as e:
+            logging.error("Failed to add work note to change %s: %s", change_number, e)
 
-        if self.change_sys_id:
-            try:
-                add_work_note(
-                    self.change_sys_id,
-                    f"Change notification attempted — {self.contact_name} unavailable, voicemail left. "
-                    f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-                )
-            except Exception as e:
-                logging.error("Failed to add voicemail work note: %s", e)
-
-        self.hangup(
+    if reschedule == "need to discuss alternative":
+        call.hangup(
             final_instructions=(
-                f"Leave a professional voicemail for {self.contact_name} from Vertex Corp IT. "
-                f"Let them know you're calling about a scheduled maintenance window "
-                f"({self.change_number}) that may affect their services. "
-                f"Mention the window: {self.window}. Ask them to call back or watch for an "
-                "email with full details. Keep it concise."
+                f"Let {contact_name} know their request to discuss an alternative window "
+                "has been noted. Let them know the change manager will contact them within "
+                "one business day to discuss options. Thank them for their time."
+            )
+        )
+    elif acknowledged == "has questions or concerns":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for raising their concerns. Let them know "
+                "the IT team has been notified and will follow up before the change window. "
+                "Wish them a good day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time and for confirming the notification. "
+                "Let them know Vertex Corp IT will send an email summary as well. "
+                "Wish them a good day."
             )
         )
 
@@ -217,13 +225,13 @@ if __name__ == "__main__":
         args.name, args.phone, args.change_number,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ChangeNotificationController(
-            contact_name=args.name,
-            change_number=args.change_number,
-            change_summary=args.summary,
-            window=args.window,
-        ),
+        variables={
+            "contact_name": args.name,
+            "change_number": args.change_number,
+            "change_summary": args.summary,
+            "window": args.window,
+        },
     )

@@ -19,80 +19,95 @@ HEADERS = {
 }
 
 
-class AbandonedCartRecoveryController(guava.CallController):
-    def __init__(
-        self,
-        customer_name: str,
-        customer_email: str,
-        cart_id: str,
-        cart_total: str,
-    ):
-        super().__init__()
-        self.customer_name = customer_name
-        self.customer_email = customer_email
-        self.cart_id = cart_id
-        self.cart_total = cart_total
-        self.line_items_summary = ""
+agent = guava.Agent(
+    name="Riley",
+    organization="Harbor House",
+    purpose="to reconnect with Harbor House customers who left items in their cart and help them complete their purchase",
+)
 
-        # Attempt to fetch cart line items so the agent can mention specific products
-        try:
-            resp = requests.get(
-                f"{V3_BASE}/abandoned-carts/{cart_id}",
-                headers=HEADERS,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            cart_data = resp.json()
-            line_items = (
-                cart_data.get("data", {}).get("cart", {}).get("line_items", {})
-                or cart_data.get("data", {}).get("line_items", {})
-                or {}
-            )
-            physical = line_items.get("physical_items", [])
-            digital = line_items.get("digital_items", [])
-            all_items = physical + digital
-            if all_items:
-                parts = []
-                for item in all_items[:5]:
-                    name = item.get("name", "item")
-                    qty = item.get("quantity", 1)
-                    parts.append(f"{qty}x {name}")
-                self.line_items_summary = ", ".join(parts)
-                logging.info("Cart line items fetched: %s", self.line_items_summary)
-        except Exception as e:
-            logging.warning("Could not fetch cart details for cart %s: %s", cart_id, e)
 
-        self.set_persona(
-            organization_name="Harbor House",
-            agent_name="Riley",
-            agent_purpose="to reconnect with Harbor House customers who left items in their cart and help them complete their purchase",
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    cart_id = call.get_variable("cart_id")
+    cart_total = call.get_variable("cart_total")
+
+    # Attempt to fetch cart line items so the agent can mention specific products
+    line_items_summary = ""
+    try:
+        resp = requests.get(
+            f"{V3_BASE}/abandoned-carts/{cart_id}",
+            headers=HEADERS,
+            timeout=10,
         )
-
-        self.reach_person(
-            contact_full_name=customer_name,
-            on_success=self.begin_recovery,
-            on_failure=self.leave_voicemail,
+        resp.raise_for_status()
+        cart_data = resp.json()
+        line_items = (
+            cart_data.get("data", {}).get("cart", {}).get("line_items", {})
+            or cart_data.get("data", {}).get("line_items", {})
+            or {}
         )
+        physical = line_items.get("physical_items", [])
+        digital = line_items.get("digital_items", [])
+        all_items = physical + digital
+        if all_items:
+            parts = []
+            for item in all_items[:5]:
+                name = item.get("name", "item")
+                qty = item.get("quantity", 1)
+                parts.append(f"{qty}x {name}")
+            line_items_summary = ", ".join(parts)
+            logging.info("Cart line items fetched: %s", line_items_summary)
+    except Exception as e:
+        logging.warning("Could not fetch cart details for cart %s: %s", cart_id, e)
 
-    def begin_recovery(self):
+    call.data = {"line_items_summary": line_items_summary}
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        customer_name = call.get_variable("customer_name")
+        cart_total = call.get_variable("cart_total")
+        logging.info(
+            "Could not reach %s for cart recovery. Leaving voicemail.",
+            customer_name,
+        )
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {customer_name}. "
+                "Introduce yourself as Riley from Harbor House. Let them know they left some "
+                f"great items worth {cart_total} in their cart and that it's still saved "
+                "for them at harborhouse.com whenever they're ready. "
+                "Let them know they can call back with any questions. Keep it short and upbeat."
+            )
+        )
+    elif outcome == "available":
+        customer_name = call.get_variable("customer_name")
+        cart_total = call.get_variable("cart_total")
+        line_items_summary = call.data.get("line_items_summary", "")
+
         items_mention = (
-            f" — including {self.line_items_summary} —"
-            if self.line_items_summary
+            f" — including {line_items_summary} —"
+            if line_items_summary
             else ""
         )
 
-        self.set_task(
+        call.set_task(
+            "cart_recovery",
             objective=(
-                f"You've reached {self.customer_name}, a Harbor House customer who left "
-                f"{self.cart_total} worth of items{items_mention} in their cart. "
+                f"You've reached {customer_name}, a Harbor House customer who left "
+                f"{cart_total} worth of items{items_mention} in their cart. "
                 "Greet them warmly, mention the cart, and find out how you can help them "
                 "complete the purchase or address any concerns."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Riley calling from Harbor House. "
+                    f"Hi {customer_name}, this is Riley calling from Harbor House. "
                     f"I'm reaching out because it looks like you left some great items{items_mention} "
-                    f"worth {self.cart_total} in your cart. I just wanted to check in and see if "
+                    f"worth {cart_total} in your cart. I just wanted to check in and see if "
                     "there's anything I can help you with to complete your order."
                 ),
                 guava.Field(
@@ -113,44 +128,33 @@ class AbandonedCartRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        response = self.get_field("customer_response")
-        label = (response or "").strip().lower()
 
-        if "complete it" in label:
-            self._handle_wants_to_complete()
-        elif "questions" in label:
-            self._handle_product_questions()
-        elif "changed" in label:
-            self._handle_changed_mind()
-        elif "payment" in label:
-            self._handle_payment_issue()
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Thank the customer for their time and let them know their cart is saved "
-                    "at harborhouse.com whenever they're ready. Wish them a great day."
-                )
-            )
+@agent.on_task_complete("cart_recovery")
+def on_cart_recovery_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    customer_email = call.get_variable("customer_email")
+    cart_id = call.get_variable("cart_id")
 
-    def _handle_wants_to_complete(self):
-        self.hangup(
+    response = call.get_field("customer_response")
+    label = (response or "").strip().lower()
+
+    if "complete it" in label:
+        call.hangup(
             final_instructions=(
-                f"Let {self.customer_name} know that their cart is saved and ready for them. "
+                f"Let {customer_name} know that their cart is saved and ready for them. "
                 "Offer to transfer them to the Harbor House sales team so they can complete "
                 "the order by phone, or let them know they can finish checkout by visiting "
                 "harborhouse.com — their cart will still be there. "
                 "Thank them for shopping with Harbor House and wish them a great day."
             )
         )
-
-    def _handle_product_questions(self):
-        self.set_task(
+    elif "questions" in label:
+        call.set_task(
+            "cart_product_questions",
             objective=(
-                f"{self.customer_name} has questions about one of the items in their cart. "
+                f"{customer_name} has questions about one of the items in their cart. "
                 "Find out what they'd like to know and answer if possible, or arrange to connect "
                 "them with a product specialist."
             ),
@@ -166,33 +170,12 @@ class AbandonedCartRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self._finalize_questions,
         )
-
-    def _finalize_questions(self):
-        question = self.get_field("question_about")
-        print(json.dumps({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "customer_name": self.customer_name,
-            "customer_email": self.customer_email,
-            "cart_id": self.cart_id,
-            "outcome": "product_question",
-            "question": question,
-        }, indent=2))
-        logging.info("Cart recovery — product question logged for %s.", self.customer_name)
-        self.hangup(
-            final_instructions=(
-                f"Address {self.customer_name}'s question about '{question}' based on product details. "
-                "If unable to fully address the question, transfer them to a Harbor House "
-                "product specialist who can provide complete details. "
-                "Thank them for calling and let them know their cart is saved."
-            )
-        )
-
-    def _handle_changed_mind(self):
-        self.set_task(
+    elif "changed" in label:
+        call.set_task(
+            "cart_changed_mind",
             objective=(
-                f"{self.customer_name} has changed their mind about the purchase. "
+                f"{customer_name} has changed their mind about the purchase. "
                 "Understand why and — if price was the issue — offer a discount code."
             ),
             checklist=[
@@ -208,46 +191,11 @@ class AbandonedCartRecoveryController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self._finalize_changed_mind,
         )
-
-    def _finalize_changed_mind(self):
-        reason = self.get_field("changed_mind_reason")
-        print(json.dumps({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "customer_name": self.customer_name,
-            "customer_email": self.customer_email,
-            "cart_id": self.cart_id,
-            "outcome": "changed_mind",
-            "reason": reason,
-        }, indent=2))
-        logging.info("Cart recovery — customer changed mind, reason: %s.", reason)
-
-        reason_lower = (reason or "").lower()
-        if "expensive" in reason_lower or "price" in reason_lower:
-            self.hangup(
-                final_instructions=(
-                    f"Empathize with {self.customer_name} about the price. "
-                    "Let them know you'd like to offer them a discount on their order — "
-                    "share the code SAVE10 which gives them 10% off their cart. "
-                    "Let them know the code can be entered at checkout on harborhouse.com "
-                    "and that their cart is still saved. "
-                    "Thank them warmly for giving Harbor House another chance."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.customer_name} for their time and for letting you know. "
-                    "Let them know that Harbor House always has new arrivals and that they're "
-                    "welcome to visit harborhouse.com any time. Wish them a great day."
-                )
-            )
-
-    def _handle_payment_issue(self):
-        self.hangup(
+    elif "payment" in label:
+        call.hangup(
             final_instructions=(
-                f"Apologize to {self.customer_name} for the trouble and let them know you can "
+                f"Apologize to {customer_name} for the trouble and let them know you can "
                 "help them complete the order over the phone right now if they'd like — offer "
                 "to transfer them to the Harbor House sales team to process payment securely. "
                 "Alternatively, direct them to harborhouse.com/help/payments for guidance on "
@@ -256,19 +204,76 @@ class AbandonedCartRecoveryController(guava.CallController):
                 "Thank them for their patience."
             )
         )
-
-    def leave_voicemail(self):
-        logging.info(
-            "Could not reach %s for cart recovery. Leaving voicemail.",
-            self.customer_name,
-        )
-        self.hangup(
+    else:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.customer_name}. "
-                "Introduce yourself as Riley from Harbor House. Let them know they left some "
-                f"great items worth {self.cart_total} in their cart and that it's still saved "
-                "for them at harborhouse.com whenever they're ready. "
-                "Let them know they can call back with any questions. Keep it short and upbeat."
+                "Thank the customer for their time and let them know their cart is saved "
+                "at harborhouse.com whenever they're ready. Wish them a great day."
+            )
+        )
+
+
+@agent.on_task_complete("cart_product_questions")
+def on_product_questions_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    customer_email = call.get_variable("customer_email")
+    cart_id = call.get_variable("cart_id")
+
+    question = call.get_field("question_about")
+    print(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "cart_id": cart_id,
+        "outcome": "product_question",
+        "question": question,
+    }, indent=2))
+    logging.info("Cart recovery — product question logged for %s.", customer_name)
+    call.hangup(
+        final_instructions=(
+            f"Address {customer_name}'s question about '{question}' based on product details. "
+            "If unable to fully address the question, transfer them to a Harbor House "
+            "product specialist who can provide complete details. "
+            "Thank them for calling and let them know their cart is saved."
+        )
+    )
+
+
+@agent.on_task_complete("cart_changed_mind")
+def on_changed_mind_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    customer_email = call.get_variable("customer_email")
+    cart_id = call.get_variable("cart_id")
+
+    reason = call.get_field("changed_mind_reason")
+    print(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "cart_id": cart_id,
+        "outcome": "changed_mind",
+        "reason": reason,
+    }, indent=2))
+    logging.info("Cart recovery — customer changed mind, reason: %s.", reason)
+
+    reason_lower = (reason or "").lower()
+    if "expensive" in reason_lower or "price" in reason_lower:
+        call.hangup(
+            final_instructions=(
+                f"Empathize with {customer_name} about the price. "
+                "Let them know you'd like to offer them a discount on their order — "
+                "share the code SAVE10 which gives them 10% off their cart. "
+                "Let them know the code can be entered at checkout on harborhouse.com "
+                "and that their cart is still saved. "
+                "Thank them warmly for giving Harbor House another chance."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time and for letting you know. "
+                "Let them know that Harbor House always has new arrivals and that they're "
+                "welcome to visit harborhouse.com any time. Wish them a great day."
             )
         )
 
@@ -289,13 +294,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AbandonedCartRecoveryController(
-            customer_name=args.name,
-            customer_email=args.email,
-            cart_id=args.cart_id,
-            cart_total=args.cart_total,
-        ),
+        variables={
+            "customer_name": args.name,
+            "customer_email": args.email,
+            "cart_id": args.cart_id,
+            "cart_total": args.cart_total,
+        },
     )

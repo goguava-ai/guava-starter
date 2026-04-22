@@ -7,40 +7,46 @@ import argparse
 from datetime import datetime
 
 
+agent = guava.Agent(
+    name="Jordan",
+    organization="Bright Smile Dental",
+    purpose=(
+        "to remind patients of their upcoming dental appointments, "
+        "confirm attendance, and assist with rescheduling if needed"
+    ),
+)
 
-class AppointmentReminderController(guava.CallController):
-    def __init__(self, patient_name: str, appointment: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment = appointment
 
-        self.set_persona(
-            organization_name="Bright Smile Dental",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to remind patients of their upcoming dental appointments, "
-                "confirm attendance, and assist with rescheduling if needed"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf "
+                "of Bright Smile Dental asking them to call back to confirm or reschedule their "
+                f"appointment on {call.get_variable('appointment')}. Provide the office number if available."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_reminder,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_reminder(self):
-        self.set_task(
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        appointment = call.get_variable("appointment")
+        call.set_task(
+            "reminder",
             objective=(
-                f"Remind {self.patient_name} of their dental appointment at Bright Smile Dental "
-                f"scheduled for {self.appointment}. Confirm whether they will attend or need to "
+                f"Remind {patient_name} of their dental appointment at Bright Smile Dental "
+                f"scheduled for {appointment}. Confirm whether they will attend or need to "
                 "reschedule. If rescheduling is needed, collect their preferred day and time. "
                 "Be friendly, professional, and concise."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Jordan calling from Bright Smile Dental. "
-                    f"I'm reaching out to confirm your upcoming appointment scheduled for {self.appointment}."
+                    f"Hi {patient_name}, this is Jordan calling from Bright Smile Dental. "
+                    f"I'm reaching out to confirm your upcoming appointment scheduled for {appointment}."
                 ),
                 guava.Say(
                     "We want to make sure we have you on the schedule and that the time still works for you."
@@ -64,44 +70,36 @@ class AppointmentReminderController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "patient_name": self.patient_name,
-            "appointment": self.appointment,
-            "appointment_confirmed": self.get_field("appointment_confirmed"),
-            "reschedule_requested": self.get_field("reschedule_requested"),
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Appointment reminder results saved.")
 
-        confirmed = self.get_field("appointment_confirmed")
-        if confirmed and confirmed.strip().lower() == "reschedule":
-            self.hangup(
-                final_instructions=(
-                    "Thank the patient for letting us know. Let them know that a team member from "
-                    "Bright Smile Dental will follow up shortly to confirm a new appointment time. "
-                    "Wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Thank the patient for confirming their appointment. Remind them to arrive "
-                    "10 minutes early to complete any necessary paperwork, and let them know we "
-                    "look forward to seeing them. Wish them a great day."
-                )
-            )
+@agent.on_task_complete("reminder")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "patient_name": call.get_variable("patient_name"),
+        "appointment": call.get_variable("appointment"),
+        "appointment_confirmed": call.get_field("appointment_confirmed"),
+        "reschedule_requested": call.get_field("reschedule_requested"),
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Appointment reminder results saved.")
 
-    def recipient_unavailable(self):
-        self.hangup(
+    confirmed = call.get_field("appointment_confirmed")
+    if confirmed and confirmed.strip().lower() == "reschedule":
+        call.hangup(
             final_instructions=(
-                "We were unable to reach the patient. Leave a brief, friendly voicemail on behalf "
-                "of Bright Smile Dental asking them to call back to confirm or reschedule their "
-                f"appointment on {self.appointment}. Provide the office number if available."
+                "Thank the patient for letting us know. Let them know that a team member from "
+                "Bright Smile Dental will follow up shortly to confirm a new appointment time. "
+                "Wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Thank the patient for confirming their appointment. Remind them to arrive "
+                "10 minutes early to complete any necessary paperwork, and let them know we "
+                "look forward to seeing them. Wish them a great day."
             )
         )
 
@@ -127,11 +125,11 @@ if __name__ == "__main__":
         args.appointment,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentReminderController(
-            patient_name=args.name,
-            appointment=args.appointment,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment": args.appointment,
+        },
     )

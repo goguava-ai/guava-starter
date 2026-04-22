@@ -58,120 +58,126 @@ def summarize_transactions(transactions: list[dict]) -> dict:
     }
 
 
-class TransactionReviewController(guava.CallController):
-    def __init__(self, user_id: str):
-        super().__init__()
+agent = guava.Agent(
+    name="Jordan",
+    organization="ClearPath Banking",
+    purpose="to help ClearPath Banking customers review their recent transactions",
+)
 
-        self._user_id = user_id
-        self._transactions: list[dict] = []
-        self._summary: dict = {}
-        self._days = 30
 
-        try:
-            access_token = lookup_access_token(user_id)
-            if access_token:
-                self._transactions = get_transactions(access_token, days=self._days)
-                self._summary = summarize_transactions(self._transactions)
-                logging.info("Loaded %d transactions for user %s", len(self._transactions), user_id)
-        except Exception as e:
-            logging.error("Failed to load transactions: %s", e)
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        summary = self._summary
-        context = (
-            f"The customer has {summary.get('count', 0)} transactions in the past {self._days} days. "
-            f"Total spent: ${summary.get('total_spent', 0):.2f}. "
-            f"Largest transaction: ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
-            f"Top spending category: {summary.get('top_category', 'N/A')}."
-            if summary
-            else "Transaction data could not be loaded."
-        )
 
-        self.set_persona(
-            organization_name="ClearPath Banking",
-            agent_name="Jordan",
-            agent_purpose="to help ClearPath Banking customers review their recent transactions",
-        )
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    user_id = call.get_variable("user_id")
+    call.user_id = user_id
+    call.transactions = []
+    call.summary = {}
+    call.days = 30
 
-        self.set_task(
-            objective=(
-                "A customer has called to review their recent transaction history. "
-                f"Here is a summary of their activity: {context} "
-                "Walk them through their spending summary and answer any questions they have."
+    try:
+        access_token = lookup_access_token(user_id)
+        if access_token:
+            call.transactions = get_transactions(access_token, days=call.days)
+            call.summary = summarize_transactions(call.transactions)
+            logging.info("Loaded %d transactions for user %s", len(call.transactions), user_id)
+    except Exception as e:
+        logging.error("Failed to load transactions: %s", e)
+
+    summary = call.summary
+    context = (
+        f"The customer has {summary.get('count', 0)} transactions in the past {call.days} days. "
+        f"Total spent: ${summary.get('total_spent', 0):.2f}. "
+        f"Largest transaction: ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
+        f"Top spending category: {summary.get('top_category', 'N/A')}."
+        if summary
+        else "Transaction data could not be loaded."
+    )
+
+    call.set_task(
+        "review_transactions",
+        objective=(
+            "A customer has called to review their recent transaction history. "
+            f"Here is a summary of their activity: {context} "
+            "Walk them through their spending summary and answer any questions they have."
+        ),
+        checklist=[
+            guava.Say(
+                "Welcome to ClearPath Banking. This is Jordan. I can walk you through your recent transactions."
             ),
-            checklist=[
-                guava.Say(
-                    "Welcome to ClearPath Banking. This is Jordan. I can walk you through your recent transactions."
+            guava.Field(
+                key="review_period",
+                field_type="multiple_choice",
+                description="Ask if they'd like to hear their summary for the past 30 days, or if they have a specific concern.",
+                choices=["summary", "specific transaction", "dispute a charge"],
+                required=True,
+            ),
+            guava.Field(
+                key="specific_concern",
+                field_type="text",
+                description=(
+                    "If they have a specific concern or want to find a particular transaction, "
+                    "ask them to describe it (merchant name, approximate amount, or date)."
                 ),
-                guava.Field(
-                    key="review_period",
-                    field_type="multiple_choice",
-                    description="Ask if they'd like to hear their summary for the past 30 days, or if they have a specific concern.",
-                    choices=["summary", "specific transaction", "dispute a charge"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="specific_concern",
-                    field_type="text",
-                    description=(
-                        "If they have a specific concern or want to find a particular transaction, "
-                        "ask them to describe it (merchant name, approximate amount, or date)."
-                    ),
-                    required=False,
-                ),
-            ],
-            on_complete=self.review_transactions,
-        )
+                required=False,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def review_transactions(self):
-        review_period = self.get_field("review_period") or "summary"
-        specific_concern = self.get_field("specific_concern") or ""
-        summary = self._summary
+@agent.on_task_complete("review_transactions")
+def on_done(call: guava.Call) -> None:
+    review_period = call.get_field("review_period") or "summary"
+    specific_concern = call.get_field("specific_concern") or ""
+    summary = call.summary
 
-        if review_period == "dispute a charge":
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know that to dispute a charge, they should visit the ClearPath Banking app "
-                    "or call back and say 'dispute' to reach the disputes team directly. "
-                    "Thank them for calling."
-                )
+    if review_period == "dispute a charge":
+        call.hangup(
+            final_instructions=(
+                "Let the customer know that to dispute a charge, they should visit the ClearPath Banking app "
+                "or call back and say 'dispute' to reach the disputes team directly. "
+                "Thank them for calling."
             )
-            return
+        )
+        return
 
-        if specific_concern and self._transactions:
-            concern_lower = specific_concern.lower()
-            matches = [
-                t for t in self._transactions
-                if concern_lower in t.get("name", "").lower()
-                or concern_lower in (t.get("category") or [""])[0].lower()
-            ]
-            match_text = ""
-            if matches:
-                top = matches[:3]
-                match_text = " Matching transactions found: " + "; ".join(
-                    f"{t['name']} ${t['amount']:.2f} on {t['date']}" for t in top
-                )
-            else:
-                match_text = " No transactions matching that description were found in the past 30 days."
-
-            self.hangup(
-                final_instructions=(
-                    f"Tell the customer: {match_text} "
-                    "Thank them for banking with ClearPath."
-                )
+    if specific_concern and call.transactions:
+        concern_lower = specific_concern.lower()
+        matches = [
+            t for t in call.transactions
+            if concern_lower in t.get("name", "").lower()
+            or concern_lower in (t.get("category") or [""])[0].lower()
+        ]
+        match_text = ""
+        if matches:
+            top = matches[:3]
+            match_text = " Matching transactions found: " + "; ".join(
+                f"{t['name']} ${t['amount']:.2f} on {t['date']}" for t in top
             )
         else:
-            self.hangup(
-                final_instructions=(
-                    f"Read the following transaction summary to the customer: "
-                    f"In the past {self._days} days you had {summary.get('count', 0)} transactions. "
-                    f"Total spent: ${summary.get('total_spent', 0):.2f}. "
-                    f"Your largest purchase was ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
-                    f"Your top spending category was {summary.get('top_category', 'N/A')}. "
-                    "Ask if there's anything else they'd like to review. Thank them for banking with ClearPath."
-                )
+            match_text = " No transactions matching that description were found in the past 30 days."
+
+        call.hangup(
+            final_instructions=(
+                f"Tell the customer: {match_text} "
+                "Thank them for banking with ClearPath."
             )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Read the following transaction summary to the customer: "
+                f"In the past {call.days} days you had {summary.get('count', 0)} transactions. "
+                f"Total spent: ${summary.get('total_spent', 0):.2f}. "
+                f"Your largest purchase was ${summary.get('largest_amount', 0):.2f} at {summary.get('largest_name', 'N/A')}. "
+                f"Your top spending category was {summary.get('top_category', 'N/A')}. "
+                "Ask if there's anything else they'd like to review. Thank them for banking with ClearPath."
+            )
+        )
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

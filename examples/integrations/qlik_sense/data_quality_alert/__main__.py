@@ -42,50 +42,54 @@ def cancel_or_stop_reload(reload_id: str) -> None:
         logging.warning("Could not stop reload %s: %s", reload_id, e)
 
 
-class DataQualityAlertController(guava.CallController):
-    def __init__(
-        self,
-        recipient_name: str,
-        app_name: str,
-        app_id: str,
-        reload_id: str,
-        alert_type: str,
-        alert_detail: str,
-    ):
-        super().__init__()
-        self.recipient_name = recipient_name
-        self.app_name = app_name
-        self.app_id = app_id
-        self.reload_id = reload_id
-        self.alert_type = alert_type  # e.g. "reload failure", "row count anomaly", "null threshold exceeded"
-        self.alert_detail = alert_detail
+agent = guava.Agent(
+    name="Morgan",
+    organization="Apex Analytics",
+    purpose=(
+        "to alert data stewards when a Qlik app reload fails or data quality "
+        "issues are detected, and coordinate a response"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Apex Analytics",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to alert data stewards when a Qlik app reload fails or data quality "
-                "issues are detected, and coordinate a response"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    recipient_name = call.get_variable("recipient_name")
+    call.reach_person(contact_full_name=recipient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    recipient_name = call.get_variable("recipient_name")
+    app_name = call.get_variable("app_name")
+    alert_type = call.get_variable("alert_type")
+    alert_detail = call.get_variable("alert_detail")
+
+    if outcome == "unavailable":
+        logging.warning(
+            "Unable to reach %s for data quality alert on app '%s'",
+            recipient_name, app_name,
         )
-
-        self.reach_person(
-            contact_full_name=recipient_name,
-            on_success=self.deliver_alert,
-            on_failure=self.recipient_unavailable,
+        call.hangup(
+            final_instructions=(
+                f"Leave an urgent but professional voicemail for {recipient_name} from Apex Analytics. "
+                f"Let them know there is a {alert_type} on the '{app_name}' Qlik app "
+                "and they should check their email immediately for details. "
+                "Ask them to call back or reply to the alert email as soon as possible."
+            )
         )
-
-    def deliver_alert(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "handle_response",
             objective=(
-                f"Alert {self.recipient_name} to a data quality issue in the "
-                f"'{self.app_name}' Qlik app and capture their response."
+                f"Alert {recipient_name} to a data quality issue in the "
+                f"'{app_name}' Qlik app and capture their response."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.recipient_name}, this is Morgan from Apex Analytics. "
-                    f"I'm calling about a data quality alert on the '{self.app_name}' Qlik app. "
-                    f"We detected a {self.alert_type}: {self.alert_detail}. "
+                    f"Hi {recipient_name}, this is Morgan from Apex Analytics. "
+                    f"I'm calling about a data quality alert on the '{app_name}' Qlik app. "
+                    f"We detected a {alert_type}: {alert_detail}. "
                     "I wanted to flag this so you can take a look."
                 ),
                 guava.Field(
@@ -121,76 +125,68 @@ class DataQualityAlertController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_response,
         )
 
-    def handle_response(self):
-        aware = self.get_field("aware") or "no, this is new to me"
-        action = self.get_field("action") or "no action needed from the Qlik side"
-        context = self.get_field("additional_context") or ""
 
-        logging.info(
-            "Data quality alert response from %s for app '%s': aware=%s, action=%s",
-            self.recipient_name, self.app_name, aware, action,
-        )
+@agent.on_task_complete("handle_response")
+def on_done(call: guava.Call) -> None:
+    recipient_name = call.get_variable("recipient_name")
+    app_name = call.get_variable("app_name")
+    app_id = call.get_variable("app_id")
+    reload_id = call.get_variable("reload_id")
 
-        if "stop any running reload" in action and self.reload_id:
-            try:
-                cancel_or_stop_reload(self.reload_id)
-                logging.info("Stopped reload %s for app %s", self.reload_id, self.app_id)
-            except Exception as e:
-                logging.error("Failed to stop reload %s: %s", self.reload_id, e)
+    aware = call.get_field("aware") or "no, this is new to me"
+    action = call.get_field("action") or "no action needed from the Qlik side"
+    context = call.get_field("additional_context") or ""
 
-        if "escalate" in action:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.recipient_name} know you've noted the escalation request "
-                    "and the data engineering team will be looped in right away via a Slack alert "
-                    "and email. "
-                    + (f"Context noted: {context}." if context else "")
-                    + " Thank them for the quick response."
-                )
-            )
-        elif "stop" in action:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.recipient_name} know the reload has been stopped. "
-                    "Once the source data is corrected, they can trigger a new reload from "
-                    f"the Qlik Cloud console or by calling back. "
-                    + (f"Context noted: {context}." if context else "")
-                    + " Thank them for their time."
-                )
-            )
-        elif "expected behavior" in aware:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.recipient_name} for the clarification. "
-                    "Let them know the alert has been noted and the team will review "
-                    "whether the threshold needs to be adjusted. Wish them a good day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.recipient_name} for their response. "
-                    "Let them know the analytics team will monitor the situation and "
-                    "follow up by email with next steps. "
-                    + (f"Context noted: {context}." if context else "")
-                    + " Wish them a good day."
-                )
-            )
+    logging.info(
+        "Data quality alert response from %s for app '%s': aware=%s, action=%s",
+        recipient_name, app_name, aware, action,
+    )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Unable to reach %s for data quality alert on app '%s'",
-            self.recipient_name, self.app_name,
-        )
-        self.hangup(
+    if "stop any running reload" in action and reload_id:
+        try:
+            cancel_or_stop_reload(reload_id)
+            logging.info("Stopped reload %s for app %s", reload_id, app_id)
+        except Exception as e:
+            logging.error("Failed to stop reload %s: %s", reload_id, e)
+
+    if "escalate" in action:
+        call.hangup(
             final_instructions=(
-                f"Leave an urgent but professional voicemail for {self.recipient_name} from Apex Analytics. "
-                f"Let them know there is a {self.alert_type} on the '{self.app_name}' Qlik app "
-                "and they should check their email immediately for details. "
-                "Ask them to call back or reply to the alert email as soon as possible."
+                f"Let {recipient_name} know you've noted the escalation request "
+                "and the data engineering team will be looped in right away via a Slack alert "
+                "and email. "
+                + (f"Context noted: {context}." if context else "")
+                + " Thank them for the quick response."
+            )
+        )
+    elif "stop" in action:
+        call.hangup(
+            final_instructions=(
+                f"Let {recipient_name} know the reload has been stopped. "
+                "Once the source data is corrected, they can trigger a new reload from "
+                f"the Qlik Cloud console or by calling back. "
+                + (f"Context noted: {context}." if context else "")
+                + " Thank them for their time."
+            )
+        )
+    elif "expected behavior" in aware:
+        call.hangup(
+            final_instructions=(
+                f"Thank {recipient_name} for the clarification. "
+                "Let them know the alert has been noted and the team will review "
+                "whether the threshold needs to be adjusted. Wish them a good day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {recipient_name} for their response. "
+                "Let them know the analytics team will monitor the situation and "
+                "follow up by email with next steps. "
+                + (f"Context noted: {context}." if context else "")
+                + " Wish them a good day."
             )
         )
 
@@ -222,15 +218,15 @@ if __name__ == "__main__":
         args.name, args.phone, args.alert_type, args.app_name,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DataQualityAlertController(
-            recipient_name=args.name,
-            app_name=args.app_name,
-            app_id=args.app_id,
-            reload_id=args.reload_id,
-            alert_type=args.alert_type,
-            alert_detail=args.alert_detail,
-        ),
+        variables={
+            "recipient_name": args.name,
+            "app_name": args.app_name,
+            "app_id": args.app_id,
+            "reload_id": args.reload_id,
+            "alert_type": args.alert_type,
+            "alert_detail": args.alert_detail,
+        },
     )

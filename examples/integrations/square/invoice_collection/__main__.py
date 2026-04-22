@@ -49,78 +49,92 @@ def format_amount(amount_money: dict) -> str:
     return f"${amount / 100:,.2f} {currency}"
 
 
-class InvoiceCollectionController(guava.CallController):
-    def __init__(self, customer_name: str, invoice_id: str):
-        super().__init__()
-        self.customer_name = customer_name
-        self.invoice_id = invoice_id
-        self.invoice = None
+agent = guava.Agent(
+    name="Drew",
+    organization="Harbor Market",
+    purpose=(
+        "to help Harbor Market collect payment on outstanding invoices"
+    ),
+)
 
-        try:
-            self.invoice = get_invoice(invoice_id)
-            logging.info(
-                "Invoice %s loaded: status=%s",
-                invoice_id,
-                self.invoice.get("status") if self.invoice else "not found",
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    invoice_id = call.get_variable("invoice_id")
+
+    invoice = None
+    try:
+        invoice = get_invoice(invoice_id)
+        logging.info(
+            "Invoice %s loaded: status=%s",
+            invoice_id,
+            invoice.get("status") if invoice else "not found",
+        )
+    except Exception as e:
+        logging.error("Failed to load invoice %s: %s", invoice_id, e)
+
+    call.invoice = invoice
+
+    call.reach_person(contact_full_name=customer_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    customer_name = call.get_variable("customer_name")
+    invoice_id = call.get_variable("invoice_id")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for invoice collection.", customer_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a professional voicemail for {customer_name} from Harbor Market. "
+                f"Let them know you're calling about invoice {invoice_id} and ask them "
+                "to check their email for the invoice link or call back. Keep it concise."
             )
-        except Exception as e:
-            logging.error("Failed to load invoice %s: %s", invoice_id, e)
-
-        self.set_persona(
-            organization_name="Harbor Market",
-            agent_name="Drew",
-            agent_purpose=(
-                "to help Harbor Market collect payment on outstanding invoices"
-            ),
         )
-
-        self.reach_person(
-            contact_full_name=self.customer_name,
-            on_success=self.present_invoice,
-            on_failure=self.leave_voicemail,
-        )
-
-    def present_invoice(self):
-        if not self.invoice:
-            self.hangup(
+    elif outcome == "available":
+        if not call.invoice:
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know you're calling from Harbor Market about an "
+                    f"Let {customer_name} know you're calling from Harbor Market about an "
                     "outstanding invoice, but the details aren't loading right now. "
                     "Ask them to check their email for the invoice or call back during business hours."
                 )
             )
             return
 
-        status = self.invoice.get("status", "UNKNOWN")
+        status = call.invoice.get("status", "UNKNOWN")
         if status == "PAID":
-            logging.info("Invoice %s is already paid.", self.invoice_id)
-            self.hangup(
+            logging.info("Invoice %s is already paid.", invoice_id)
+            call.hangup(
                 final_instructions=(
-                    f"Let {self.customer_name} know you were calling about invoice {self.invoice_id} "
+                    f"Let {customer_name} know you were calling about invoice {invoice_id} "
                     "from Harbor Market, but it looks like it's already been paid. "
                     "Thank them and wish them a great day."
                 )
             )
             return
 
-        payment_requests = self.invoice.get("payment_requests", [])
+        payment_requests = call.invoice.get("payment_requests", [])
         amount_str = ""
         if payment_requests:
             computed_amount = payment_requests[0].get("computed_amount_money", {})
             amount_str = format_amount(computed_amount) if computed_amount else ""
-        due_date = self.invoice.get("payment_requests", [{}])[0].get("due_date", "") if payment_requests else ""
-        invoice_number = self.invoice.get("invoice_number", self.invoice_id)
+        due_date = call.invoice.get("payment_requests", [{}])[0].get("due_date", "") if payment_requests else ""
+        invoice_number = call.invoice.get("invoice_number", invoice_id)
 
-        self.set_task(
+        call.set_task(
+            "handle_intent",
             objective=(
-                f"Reach {self.customer_name} about unpaid Harbor Market invoice #{invoice_number}"
+                f"Reach {customer_name} about unpaid Harbor Market invoice #{invoice_number}"
                 + (f" for {amount_str}" if amount_str else "")
                 + (f" due {due_date}" if due_date else "")
                 + ". Prompt payment and re-send the invoice link if they're ready to pay."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.customer_name}, this is Drew calling from Harbor Market. "
+                    f"Hi {customer_name}, this is Drew calling from Harbor Market. "
                     f"I'm reaching out about invoice #{invoice_number}"
                     + (f" for {amount_str}" if amount_str else "")
                     + (f" which was due {due_date}" if due_date else "")
@@ -141,73 +155,74 @@ class InvoiceCollectionController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=lambda: self.handle_intent(invoice_number, amount_str),
         )
 
-    def handle_intent(self, invoice_number: str, amount_str: str):
-        aware = self.get_field("aware") or ""
-        intent = self.get_field("payment_intent") or ""
 
-        logging.info(
-            "Invoice collection outcome for %s — aware: %s, intent: %s",
-            self.invoice_id, aware, intent,
-        )
+@agent.on_task_complete("handle_intent")
+def handle_intent(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    invoice_id = call.get_variable("invoice_id")
+    aware = call.get_field("aware") or ""
+    intent = call.get_field("payment_intent") or ""
 
-        if "already paid" in aware:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize for the confusion and let {self.customer_name} know you'll verify "
-                    "the payment on your end. Thank them for their time and wish them a great day."
-                )
-            )
-            return
+    # Reconstruct invoice_number and amount_str from stored invoice
+    invoice_number = call.invoice.get("invoice_number", invoice_id) if call.invoice else invoice_id
+    payment_requests = call.invoice.get("payment_requests", []) if call.invoice else []
+    amount_str = ""
+    if payment_requests:
+        computed_amount = payment_requests[0].get("computed_amount_money", {})
+        amount_str = format_amount(computed_amount) if computed_amount else ""
 
-        if "resend" in intent or "didn't receive" in aware:
-            published = None
-            try:
-                version = self.invoice.get("version", 0) if self.invoice else 0
-                published = publish_invoice(self.invoice_id, version)
-                logging.info("Invoice %s republished: %s", self.invoice_id, bool(published))
-            except Exception as e:
-                logging.error("Failed to republish invoice %s: %s", self.invoice_id, e)
+    logging.info(
+        "Invoice collection outcome for %s — aware: %s, intent: %s",
+        invoice_id, aware, intent,
+    )
 
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know the invoice has been resent to their email on file. "
-                    "They can click the link in the email to pay securely. "
-                    "Thank them and wish them a great day."
-                )
-            )
-            return
-
-        if "dispute" in intent:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.customer_name} know you've noted their dispute. "
-                    "Our billing team will review and follow up by email within one business day. "
-                    "Thank them for letting us know."
-                )
-            )
-            return
-
-        self.hangup(
+    if "already paid" in aware:
+        call.hangup(
             final_instructions=(
-                f"Thank {self.customer_name} for their time and their commitment to pay invoice #{invoice_number}"
-                + (f" for {amount_str}" if amount_str else "")
-                + ". Let them know they can use the link in their invoice email to pay securely. "
-                "Wish them a great day."
+                f"Apologize for the confusion and let {customer_name} know you'll verify "
+                "the payment on your end. Thank them for their time and wish them a great day."
             )
         )
+        return
 
-    def leave_voicemail(self):
-        logging.info("Unable to reach %s for invoice collection.", self.customer_name)
-        self.hangup(
+    if "resend" in intent or "didn't receive" in aware:
+        published = None
+        try:
+            version = call.invoice.get("version", 0) if call.invoice else 0
+            published = publish_invoice(invoice_id, version)
+            logging.info("Invoice %s republished: %s", invoice_id, bool(published))
+        except Exception as e:
+            logging.error("Failed to republish invoice %s: %s", invoice_id, e)
+
+        call.hangup(
             final_instructions=(
-                f"Leave a professional voicemail for {self.customer_name} from Harbor Market. "
-                f"Let them know you're calling about invoice {self.invoice_id} and ask them "
-                "to check their email for the invoice link or call back. Keep it concise."
+                f"Let {customer_name} know the invoice has been resent to their email on file. "
+                "They can click the link in the email to pay securely. "
+                "Thank them and wish them a great day."
             )
         )
+        return
+
+    if "dispute" in intent:
+        call.hangup(
+            final_instructions=(
+                f"Let {customer_name} know you've noted their dispute. "
+                "Our billing team will review and follow up by email within one business day. "
+                "Thank them for letting us know."
+            )
+        )
+        return
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} for their time and their commitment to pay invoice #{invoice_number}"
+            + (f" for {amount_str}" if amount_str else "")
+            + ". Let them know they can use the link in their invoice email to pay securely. "
+            "Wish them a great day."
+        )
+    )
 
 
 if __name__ == "__main__":
@@ -218,11 +233,11 @@ if __name__ == "__main__":
     parser.add_argument("--invoice-id", required=True, help="Square invoice ID")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=InvoiceCollectionController(
-            customer_name=args.name,
-            invoice_id=args.invoice_id,
-        ),
+        variables={
+            "customer_name": args.name,
+            "invoice_id": args.invoice_id,
+        },
     )

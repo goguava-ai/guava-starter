@@ -8,63 +8,71 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Maya",
+    organization="Cedar Health",
+    purpose=(
+        "to confirm or cancel upcoming appointments on behalf of Cedar Health "
+        "and update the appointment record in Epic accordingly"
+    ),
+)
 
-class AppointmentConfirmationController(guava.CallController):
-    def __init__(self, patient_name: str, appointment_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.appointment_id = appointment_id
-        self.appointment_display = "your upcoming appointment"
 
-        # Pre-call: fetch the appointment from Epic so the agent can speak the exact
-        # date and time.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-            resp = requests.get(
-                f"{base_url}/Appointment/{appointment_id}",
-                headers=headers,
-                timeout=10,
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+
+    appointment_display = "your upcoming appointment"
+    # Pre-call: fetch the appointment from Epic so the agent can speak the exact
+    # date and time.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.get(
+            f"{base_url}/Appointment/{appointment_id}",
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        appt = resp.json()
+        start = appt.get("start", "")
+        if start:
+            # Format the ISO timestamp into a natural-language string for the agent to speak
+            dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            appointment_display = dt.strftime("%A, %B %-d at %-I:%M %p")
+    except Exception as e:
+        logging.error("Failed to fetch Epic Appointment: %s", e)
+
+    call.appointment_display = appointment_display
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
+                f"asking them to call back to confirm or cancel their appointment on {call.appointment_display}."
             )
-            resp.raise_for_status()
-            appt = resp.json()
-            start = appt.get("start", "")
-            if start:
-                # Format the ISO timestamp into a natural-language string for the agent to speak
-                dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
-                self.appointment_display = dt.strftime("%A, %B %-d at %-I:%M %p")
-        except Exception as e:
-            logging.error("Failed to fetch Epic Appointment: %s", e)
-
-        self.set_persona(
-            organization_name="Cedar Health",
-            agent_name="Maya",
-            agent_purpose=(
-                "to confirm or cancel upcoming appointments on behalf of Cedar Health "
-                "and update the appointment record in Epic accordingly"
-            ),
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_confirmation,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_confirmation(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "appointment_confirmation",
             objective=(
-                f"Confirm or cancel {self.patient_name}'s appointment at Cedar Health "
-                f"scheduled for {self.appointment_display}. Be warm, concise, and respectful."
+                f"Confirm or cancel {patient_name}'s appointment at Cedar Health "
+                f"scheduled for {call.appointment_display}. Be warm, concise, and respectful."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Maya calling from Cedar Health. "
-                    f"I'm reaching out to confirm your appointment scheduled for {self.appointment_display}."
+                    f"Hi {patient_name}, this is Maya calling from Cedar Health. "
+                    f"I'm reaching out to confirm your appointment scheduled for {call.appointment_display}."
                 ),
                 guava.Field(
                     key="confirmation",
@@ -85,79 +93,74 @@ class AppointmentConfirmationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        confirmation = self.get_field("confirmation")
-        cancellation_reason = self.get_field("cancellation_reason")
 
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Maya",
-            "organization": "Cedar Health",
-            "use_case": "appointment_confirmation",
-            "patient_name": self.patient_name,
-            "appointment_id": self.appointment_id,
-            "fields": {
-                "confirmation": confirmation,
-                "cancellation_reason": cancellation_reason,
-            },
+@agent.on_task_complete("appointment_confirmation")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    appointment_id = call.get_variable("appointment_id")
+    confirmation = call.get_field("confirmation")
+    cancellation_reason = call.get_field("cancellation_reason")
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Maya",
+        "organization": "Cedar Health",
+        "use_case": "appointment_confirmation",
+        "patient_name": patient_name,
+        "appointment_id": appointment_id,
+        "fields": {
+            "confirmation": confirmation,
+            "cancellation_reason": cancellation_reason,
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Appointment confirmation results saved locally.")
+
+    # Post-call: patch the appointment status in Epic based on the patient's choice.
+    # PATCH rather than PUT so we only touch the status field without overwriting
+    # other appointment data. Cancellation reason is included in comment when provided.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
         }
-        print(json.dumps(results, indent=2))
-        logging.info("Appointment confirmation results saved locally.")
 
-        # Post-call: patch the appointment status in Epic based on the patient's choice.
-        # PATCH rather than PUT so we only touch the status field without overwriting
-        # other appointment data. Cancellation reason is included in comment when provided.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
+        cancelled = confirmation and confirmation.strip().lower() == "cancel"
+        new_status = "cancelled" if cancelled else "booked"
 
-            cancelled = confirmation and confirmation.strip().lower() == "cancel"
-            new_status = "cancelled" if cancelled else "booked"
+        patch_payload = {"resourceType": "Appointment", "id": appointment_id, "status": new_status}
+        if cancelled and cancellation_reason:
+            patch_payload["comment"] = f"Patient cancellation reason: {cancellation_reason}"
 
-            patch_payload = {"resourceType": "Appointment", "id": self.appointment_id, "status": new_status}
-            if cancelled and cancellation_reason:
-                patch_payload["comment"] = f"Patient cancellation reason: {cancellation_reason}"
+        resp = requests.patch(
+            f"{base_url}/Appointment/{appointment_id}",
+            headers=headers,
+            json=patch_payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logging.info("Epic Appointment %s updated to status: %s", appointment_id, new_status)
+    except Exception as e:
+        logging.error("Failed to update Epic Appointment: %s", e)
 
-            resp = requests.patch(
-                f"{base_url}/Appointment/{self.appointment_id}",
-                headers=headers,
-                json=patch_payload,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            logging.info("Epic Appointment %s updated to status: %s", self.appointment_id, new_status)
-        except Exception as e:
-            logging.error("Failed to update Epic Appointment: %s", e)
-
-        # Close the call with a message that matches the patient's outcome
-        if confirmation and confirmation.strip().lower() == "cancel":
-            self.hangup(
-                final_instructions=(
-                    "Let the patient know their appointment has been cancelled and that Cedar Health "
-                    "will reach out to help them reschedule when they are ready. Thank them and "
-                    "wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Thank the patient for confirming. Remind them to arrive 10 minutes early "
-                    "and bring their insurance card and a valid photo ID. Wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        self.hangup(
+    # Close the call with a message that matches the patient's outcome
+    if confirmation and confirmation.strip().lower() == "cancel":
+        call.hangup(
             final_instructions=(
-                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
-                f"asking them to call back to confirm or cancel their appointment on {self.appointment_display}."
+                "Let the patient know their appointment has been cancelled and that Cedar Health "
+                "will reach out to help them reschedule when they are ready. Thank them and "
+                "wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Thank the patient for confirming. Remind them to arrive 10 minutes early "
+                "and bring their insurance card and a valid photo ID. Wish them a great day."
             )
         )
 
@@ -179,11 +182,11 @@ if __name__ == "__main__":
         args.appointment_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=AppointmentConfirmationController(
-            patient_name=args.name,
-            appointment_id=args.appointment_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "appointment_id": args.appointment_id,
+        },
     )

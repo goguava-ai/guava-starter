@@ -48,147 +48,148 @@ def create_refund(capture_id: str, note: str, headers: dict) -> dict | None:
     return resp.json()
 
 
-class RefundRequestController(guava.CallController):
-    def __init__(self):
-        super().__init__()
-        self.headers = {}
+agent = guava.Agent(
+    name="Alex",
+    organization="Northgate Commerce",
+    purpose="to help Northgate Commerce customers request refunds on PayPal orders",
+)
 
-        try:
-            token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        except Exception as e:
-            logging.error("Failed to get PayPal token: %s", e)
 
-        self.set_persona(
-            organization_name="Northgate Commerce",
-            agent_name="Alex",
-            agent_purpose="to help Northgate Commerce customers request refunds on PayPal orders",
-        )
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        self.set_task(
-            objective=(
-                "A customer has called to request a refund on a PayPal order. "
-                "Collect their order ID, verify it's eligible for a refund, and process it."
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    try:
+        token = get_access_token()
+        call.paypal_headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    except Exception as e:
+        logging.error("Failed to get PayPal token: %s", e)
+        call.paypal_headers = {}
+
+    call.set_task(
+        "process_refund",
+        objective=(
+            "A customer has called to request a refund on a PayPal order. "
+            "Collect their order ID, verify it's eligible for a refund, and process it."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Northgate Commerce. This is Alex. "
+                "I can help you with a refund request today."
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Northgate Commerce. This is Alex. "
-                    "I can help you with a refund request today."
-                ),
-                guava.Field(
-                    key="order_id",
-                    field_type="text",
-                    description="Ask for their PayPal order ID.",
-                    required=True,
-                ),
-                guava.Field(
-                    key="refund_reason",
-                    field_type="multiple_choice",
-                    description="Ask why they're requesting the refund.",
-                    choices=[
-                        "item not received",
-                        "item not as described",
-                        "duplicate charge",
-                        "changed my mind",
-                        "other",
-                    ],
-                    required=True,
-                ),
-                guava.Field(
-                    key="refund_confirmed",
-                    field_type="multiple_choice",
-                    description="Confirm they'd like to proceed with the full refund.",
-                    choices=["yes, proceed", "no, cancel"],
-                    required=True,
-                ),
-            ],
-            on_complete=self.process_refund,
+            guava.Field(
+                key="order_id",
+                field_type="text",
+                description="Ask for their PayPal order ID.",
+                required=True,
+            ),
+            guava.Field(
+                key="refund_reason",
+                field_type="multiple_choice",
+                description="Ask why they're requesting the refund.",
+                choices=[
+                    "item not received",
+                    "item not as described",
+                    "duplicate charge",
+                    "changed my mind",
+                    "other",
+                ],
+                required=True,
+            ),
+            guava.Field(
+                key="refund_confirmed",
+                field_type="multiple_choice",
+                description="Confirm they'd like to proceed with the full refund.",
+                choices=["yes, proceed", "no, cancel"],
+                required=True,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("process_refund")
+def on_done(call: guava.Call) -> None:
+    order_id = (call.get_field("order_id") or "").strip()
+    reason = call.get_field("refund_reason") or ""
+    confirmed = call.get_field("refund_confirmed") or ""
+
+    if "cancel" in confirmed or "no" in confirmed:
+        call.hangup(
+            final_instructions=(
+                "Let the caller know the refund request has been cancelled and no action was taken. "
+                "Thank them for calling and wish them a great day."
+            )
         )
+        return
 
-        self.accept_call()
+    logging.info("Processing refund for order %s, reason: %s", order_id, reason)
 
-    def process_refund(self):
-        order_id = (self.get_field("order_id") or "").strip()
-        reason = self.get_field("refund_reason") or ""
-        confirmed = self.get_field("refund_confirmed") or ""
+    try:
+        order = get_order(order_id, call.paypal_headers)
+    except Exception as e:
+        logging.error("Order lookup failed for %s: %s", order_id, e)
+        order = None
 
-        if "cancel" in confirmed or "no" in confirmed:
-            self.hangup(
-                final_instructions=(
-                    "Let the caller know the refund request has been cancelled and no action was taken. "
-                    "Thank them for calling and wish them a great day."
-                )
+    if not order:
+        call.hangup(
+            final_instructions=(
+                f"Apologize — we couldn't find an order with ID '{order_id}'. "
+                "Ask the customer to double-check the ID from their PayPal confirmation email. "
+                "If they need more help, they can contact PayPal directly."
             )
-            return
+        )
+        return
 
-        logging.info("Processing refund for order %s, reason: %s", order_id, reason)
-
-        try:
-            order = get_order(order_id, self.headers)
-        except Exception as e:
-            logging.error("Order lookup failed for %s: %s", order_id, e)
-            order = None
-
-        if not order:
-            self.hangup(
-                final_instructions=(
-                    f"Apologize — we couldn't find an order with ID '{order_id}'. "
-                    "Ask the customer to double-check the ID from their PayPal confirmation email. "
-                    "If they need more help, they can contact PayPal directly."
-                )
+    status = order.get("status", "")
+    if status != "COMPLETED":
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know their order has a status of '{status}' and cannot be refunded "
+                "at this time. Only completed, captured orders are eligible. "
+                "Ask them to contact support if they believe this is an error."
             )
-            return
+        )
+        return
 
-        status = order.get("status", "")
-        if status != "COMPLETED":
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know their order has a status of '{status}' and cannot be refunded "
-                    "at this time. Only completed, captured orders are eligible. "
-                    "Ask them to contact support if they believe this is an error."
-                )
+    capture_id = get_capture_id(order)
+    if not capture_id:
+        call.hangup(
+            final_instructions=(
+                "Apologize — we couldn't find a completed payment on this order to refund. "
+                "Ask the customer to contact customer support for manual review. "
+                "Thank them for their patience."
             )
-            return
+        )
+        return
 
-        capture_id = get_capture_id(order)
-        if not capture_id:
-            self.hangup(
-                final_instructions=(
-                    "Apologize — we couldn't find a completed payment on this order to refund. "
-                    "Ask the customer to contact customer support for manual review. "
-                    "Thank them for their patience."
-                )
-            )
-            return
+    refund = None
+    try:
+        refund = create_refund(capture_id, f"Customer refund: {reason}", call.paypal_headers)
+        logging.info("Refund created: %s", refund.get("id") if refund else None)
+    except Exception as e:
+        logging.error("Refund creation failed for capture %s: %s", capture_id, e)
 
-        refund = None
-        try:
-            refund = create_refund(capture_id, f"Customer refund: {reason}", self.headers)
-            logging.info("Refund created: %s", refund.get("id") if refund else None)
-        except Exception as e:
-            logging.error("Refund creation failed for capture %s: %s", capture_id, e)
-
-        if refund and refund.get("status") in ("COMPLETED", "PENDING"):
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know their refund for order {order_id} has been successfully submitted. "
-                    "PayPal typically processes refunds within 3–5 business days back to the original payment method. "
-                    "They'll receive a confirmation email from PayPal. Thank them and wish them a great day."
-                )
+    if refund and refund.get("status") in ("COMPLETED", "PENDING"):
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know their refund for order {order_id} has been successfully submitted. "
+                "PayPal typically processes refunds within 3–5 business days back to the original payment method. "
+                "They'll receive a confirmation email from PayPal. Thank them and wish them a great day."
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    "Apologize — the refund couldn't be processed automatically. "
-                    "Let them know our support team will review the request and follow up by email within one business day. "
-                    "Thank them for their patience."
-                )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Apologize — the refund couldn't be processed automatically. "
+                "Let them know our support team will review the request and follow up by email within one business day. "
+                "Thank them for their patience."
             )
+        )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=RefundRequestController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

@@ -44,56 +44,69 @@ def update_onboarding_status(employee_id: str, completed_items: list, notes: str
     resp.raise_for_status()
 
 
-class EmployeeOnboardingCheckController(guava.CallController):
-    def __init__(self, employee_name: str, employee_id: str, start_date: str):
-        super().__init__()
-        self.employee_name = employee_name
-        self.employee_id = employee_id
-        self.start_date = start_date
-        self.pending_items: list[str] = []
+agent = guava.Agent(
+    name="Jordan",
+    organization="Acme Corp People Ops",
+    purpose=(
+        "to check in with new Acme Corp employees about their onboarding progress "
+        "and make sure they have everything they need"
+    ),
+)
 
-        # Fetch their checklist before the call connects.
-        try:
-            status = get_onboarding_status(employee_id)
-            self.pending_items = status.get("pending_items") or []
-        except Exception as e:
-            logging.warning("Could not fetch onboarding status for %s: %s", employee_id, e)
-            self.pending_items = [
-                "laptop setup",
-                "ID badge pickup",
-                "benefits enrollment",
-                "security training",
-                "first-day manager meeting",
-            ]
 
-        self.set_persona(
-            organization_name="Acme Corp People Ops",
-            agent_name="Jordan",
-            agent_purpose=(
-                "to check in with new Acme Corp employees about their onboarding progress "
-                "and make sure they have everything they need"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    employee_name = call.get_variable("employee_name")
+    employee_id = call.get_variable("employee_id")
+    start_date = call.get_variable("start_date")
+
+    # Fetch their checklist before the call connects.
+    call.pending_items = []
+    try:
+        status = get_onboarding_status(employee_id)
+        call.pending_items = status.get("pending_items") or []
+    except Exception as e:
+        logging.warning("Could not fetch onboarding status for %s: %s", employee_id, e)
+        call.pending_items = [
+            "laptop setup",
+            "ID badge pickup",
+            "benefits enrollment",
+            "security training",
+            "first-day manager meeting",
+        ]
+
+    call.reach_person(contact_full_name=employee_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    employee_name = call.get_variable("employee_name")
+    start_date = call.get_variable("start_date")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for onboarding check", employee_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {employee_name} from Acme Corp People Ops. "
+                "Let them know you were calling to check in on their onboarding and that they can "
+                "call back or reply to the onboarding email with any questions. "
+                "Keep it warm and brief."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=employee_name,
-            on_success=self.begin_check_in,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_check_in(self):
+    elif outcome == "available":
         pending_list = (
-            ", ".join(self.pending_items) if self.pending_items else "all items"
+            ", ".join(call.pending_items) if call.pending_items else "all items"
         )
 
-        self.set_task(
+        call.set_task(
+            "record_and_close",
             objective=(
-                f"Check in with {self.employee_name}, a new hire who started on {self.start_date}. "
+                f"Check in with {employee_name}, a new hire who started on {start_date}. "
                 f"Verify completion of their outstanding onboarding items: {pending_list}."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.employee_name}! This is Jordan calling from Acme Corp People Ops. "
+                    f"Hi {employee_name}! This is Jordan calling from Acme Corp People Ops. "
                     f"I'm doing a quick check-in to see how your first few days are going and "
                     "make sure everything on your onboarding checklist is taken care of. "
                     "Do you have just a couple minutes?"
@@ -111,7 +124,7 @@ class EmployeeOnboardingCheckController(guava.CallController):
                     key="completed_items",
                     field_type="text",
                     description=(
-                        f"Walk through their pending onboarding items one by one: {', '.join(self.pending_items)}. "
+                        f"Walk through their pending onboarding items one by one: {', '.join(call.pending_items)}. "
                         "Ask which ones they've completed. Note any that are still outstanding."
                     ),
                     required=True,
@@ -126,64 +139,57 @@ class EmployeeOnboardingCheckController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_and_close,
         )
 
-    def record_and_close(self):
-        experience = self.get_field("overall_experience") or "good"
-        completed_text = self.get_field("completed_items") or ""
-        blockers = self.get_field("blockers") or ""
 
+@agent.on_task_complete("record_and_close")
+def on_done(call: guava.Call) -> None:
+    employee_name = call.get_variable("employee_name")
+    employee_id = call.get_variable("employee_id")
+
+    experience = call.get_field("overall_experience") or "good"
+    completed_text = call.get_field("completed_items") or ""
+    blockers = call.get_field("blockers") or ""
+
+    logging.info(
+        "Onboarding check-in complete for %s (ID: %s) — experience: %s",
+        employee_name, employee_id, experience,
+    )
+
+    notes = f"Experience: {experience}. Completed: {completed_text}."
+    if blockers:
+        notes += f" Blockers: {blockers}"
+
+    completed_items = [
+        item for item in call.pending_items
+        if item.lower() in completed_text.lower()
+    ]
+
+    try:
+        update_onboarding_status(employee_id, completed_items, notes)
         logging.info(
-            "Onboarding check-in complete for %s (ID: %s) — experience: %s",
-            self.employee_name, self.employee_id, experience,
+            "Updated onboarding status for %s — %d items confirmed complete",
+            employee_id, len(completed_items),
         )
+    except Exception as e:
+        logging.error("Failed to update onboarding status for %s: %s", employee_id, e)
 
-        notes = f"Experience: {experience}. Completed: {completed_text}."
-        if blockers:
-            notes += f" Blockers: {blockers}"
-
-        completed_items = [
-            item for item in self.pending_items
-            if item.lower() in completed_text.lower()
-        ]
-
-        try:
-            update_onboarding_status(self.employee_id, completed_items, notes)
-            logging.info(
-                "Updated onboarding status for %s — %d items confirmed complete",
-                self.employee_id, len(completed_items),
-            )
-        except Exception as e:
-            logging.error("Failed to update onboarding status for %s: %s", self.employee_id, e)
-
-        if experience == "having some difficulties" or blockers:
-            self.hangup(
-                final_instructions=(
-                    f"Empathize with {self.employee_name} and let them know that a People Ops "
-                    "team member will follow up to help resolve any outstanding items. "
-                    "Let them know they can always reach us at the IT helpdesk or via email. "
-                    "Encourage them — starting a new job is a lot, and the team is here to help."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Wrap up warmly with {self.employee_name}. Let them know their checklist "
-                    "has been updated and they're in great shape. "
-                    "Remind them that People Ops is always available if anything comes up. "
-                    "Welcome them to the team and wish them a great rest of their first week."
-                )
-            )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for onboarding check", self.employee_name)
-        self.hangup(
+    if experience == "having some difficulties" or blockers:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.employee_name} from Acme Corp People Ops. "
-                "Let them know you were calling to check in on their onboarding and that they can "
-                "call back or reply to the onboarding email with any questions. "
-                "Keep it warm and brief."
+                f"Empathize with {employee_name} and let them know that a People Ops "
+                "team member will follow up to help resolve any outstanding items. "
+                "Let them know they can always reach us at the IT helpdesk or via email. "
+                "Encourage them — starting a new job is a lot, and the team is here to help."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Wrap up warmly with {employee_name}. Let them know their checklist "
+                "has been updated and they're in great shape. "
+                "Remind them that People Ops is always available if anything comes up. "
+                "Welcome them to the team and wish them a great rest of their first week."
             )
         )
 
@@ -203,12 +209,12 @@ if __name__ == "__main__":
         "Initiating onboarding check-in call to %s (%s)", args.name, args.phone
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=EmployeeOnboardingCheckController(
-            employee_name=args.name,
-            employee_id=args.employee_id,
-            start_date=args.start_date,
-        ),
+        variables={
+            "employee_name": args.name,
+            "employee_id": args.employee_id,
+            "start_date": args.start_date,
+        },
     )

@@ -89,60 +89,83 @@ def create_communication(patient_id: str, note: str) -> None:
     resp.raise_for_status()
 
 
-class LabResultsNotificationController(guava.CallController):
-    def __init__(self, patient_id: str, patient_name: str, observation_ids: list[str], provider_name: str):
-        super().__init__()
-        self.patient_id = patient_id
-        self.patient_name = patient_name
-        self.observation_ids = observation_ids
-        self.provider_name = provider_name
-        self.results_summary = []
+agent = guava.Agent(
+    name="Sam",
+    organization="Riverside Health System",
+    purpose=(
+        "to notify patients that their lab results are available and answer "
+        "any questions they have about next steps"
+    ),
+)
 
-        # Fetch lab results pre-call to personalize the notification.
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_id = call.get_variable("patient_id")
+    patient_name = call.get_variable("patient_name")
+    observation_ids = call.get_variable("observation_ids")
+
+    # Fetch lab results at call start to personalize the notification.
+    results_summary = []
+    try:
+        observations = get_lab_observations(patient_id, observation_ids)
+        results_summary = [format_observation(o) for o in observations]
+    except Exception as e:
+        logging.error("Failed to fetch lab observations pre-call: %s", e)
+    call.data["results_summary"] = results_summary
+
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        patient_name = call.get_variable("patient_name")
+        patient_id = call.get_variable("patient_id")
+        logging.info("Unable to reach %s for lab results notification.", patient_name)
         try:
-            observations = get_lab_observations(patient_id, observation_ids)
-            self.results_summary = [format_observation(o) for o in observations]
+            create_communication(
+                patient_id,
+                f"Lab results notification attempted — {patient_name} unavailable, voicemail left. "
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            )
         except Exception as e:
-            logging.error("Failed to fetch lab observations pre-call: %s", e)
+            logging.error("Failed to create Communication for voicemail: %s", e)
 
-        has_results = bool(self.results_summary)
-
-        self.set_persona(
-            organization_name="Riverside Health System",
-            agent_name="Sam",
-            agent_purpose=(
-                "to notify patients that their lab results are available and answer "
-                "any questions they have about next steps"
-            ),
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, professional voicemail for {patient_name} from Riverside "
+                "Health System. Let them know their lab results are ready and they can view them "
+                "in their patient portal. Ask them to call back if they have questions. "
+                "Do not mention specific results in the voicemail."
+            )
         )
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        provider_name = call.get_variable("provider_name")
+        results_summary = call.data.get("results_summary", [])
 
-        self.reach_person(
-            contact_full_name=patient_name,
-            on_success=self.deliver_results,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def deliver_results(self):
         results_text = (
-            "The following results are now available: " + "; ".join(self.results_summary) + "."
-            if self.results_summary
+            "The following results are now available: " + "; ".join(results_summary) + "."
+            if results_summary
             else "Your lab results from your recent visit are now available."
         )
 
-        self.set_task(
+        call.set_task(
+            "log_notification",
             objective=(
-                f"Notify {self.patient_name} that their lab results are ready, share a "
+                f"Notify {patient_name} that their lab results are ready, share a "
                 "summary if available, and answer questions about next steps."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi, may I speak with {self.patient_name}? "
+                    f"Hi, may I speak with {patient_name}? "
                     f"This is Sam calling from Riverside Health System on behalf of "
-                    f"Dr. {self.provider_name}."
+                    f"Dr. {provider_name}."
                 ),
                 guava.Say(
                     f"I'm calling to let you know that your lab results are ready. {results_text} "
-                    "Dr. {self.provider_name} has reviewed these results and would like to discuss "
+                    f"Dr. {provider_name} has reviewed these results and would like to discuss "
                     "them with you at your next visit."
                 ),
                 guava.Field(
@@ -173,69 +196,55 @@ class LabResultsNotificationController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.log_notification,
         )
 
-    def log_notification(self):
-        understood = self.get_field("understood") or "yes, understood"
-        questions = self.get_field("questions") or ""
-        wants_appt = self.get_field("wants_appointment") or "no thanks"
 
-        log_note = (
-            f"Lab results notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-            f"Patient: {self.patient_name}\n"
-            f"Results shared: {'; '.join(self.results_summary) if self.results_summary else 'results available'}\n"
-            f"Patient understood: {understood}\n"
-            f"Appointment requested: {wants_appt}"
-        )
-        if questions:
-            log_note += f"\nQuestions: {questions}"
+@agent.on_task_complete("log_notification")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    provider_name = call.get_variable("provider_name")
+    results_summary = call.data.get("results_summary", [])
 
-        logging.info(
-            "Lab notification complete for patient %s — understood: %s, appt wanted: %s",
-            self.patient_id, understood, wants_appt,
-        )
+    understood = call.get_field("understood") or "yes, understood"
+    questions = call.get_field("questions") or ""
+    wants_appt = call.get_field("wants_appointment") or "no thanks"
 
-        try:
-            create_communication(self.patient_id, log_note)
-            logging.info("FHIR Communication resource created for patient %s.", self.patient_id)
-        except Exception as e:
-            logging.error("Failed to create FHIR Communication: %s", e)
+    log_note = (
+        f"Lab results notification call — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"Patient: {patient_name}\n"
+        f"Results shared: {'; '.join(results_summary) if results_summary else 'results available'}\n"
+        f"Patient understood: {understood}\n"
+        f"Appointment requested: {wants_appt}"
+    )
+    if questions:
+        log_note += f"\nQuestions: {questions}"
 
-        if wants_appt == "yes":
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know the scheduling team will call them back within "
-                    "one business day to book a follow-up appointment. Thank them for their time "
-                    "and wish them good health."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.patient_name} for their time. Remind them that their full results "
-                    "are available in their patient portal and that Dr. {self.provider_name} will "
-                    "discuss them at their upcoming visit. Wish them good health."
-                )
-            )
+    logging.info(
+        "Lab notification complete for patient %s — understood: %s, appt wanted: %s",
+        patient_id, understood, wants_appt,
+    )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for lab results notification.", self.patient_name)
-        try:
-            create_communication(
-                self.patient_id,
-                f"Lab results notification attempted — {self.patient_name} unavailable, voicemail left. "
-                f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            )
-        except Exception as e:
-            logging.error("Failed to create Communication for voicemail: %s", e)
+    try:
+        create_communication(patient_id, log_note)
+        logging.info("FHIR Communication resource created for patient %s.", patient_id)
+    except Exception as e:
+        logging.error("Failed to create FHIR Communication: %s", e)
 
-        self.hangup(
+    if wants_appt == "yes":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, professional voicemail for {self.patient_name} from Riverside "
-                "Health System. Let them know their lab results are ready and they can view them "
-                "in their patient portal. Ask them to call back if they have questions. "
-                "Do not mention specific results in the voicemail."
+                f"Let {patient_name} know the scheduling team will call them back within "
+                "one business day to book a follow-up appointment. Thank them for their time "
+                "and wish them good health."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {patient_name} for their time. Remind them that their full results "
+                f"are available in their patient portal and that Dr. {provider_name} will "
+                "discuss them at their upcoming visit. Wish them good health."
             )
         )
 
@@ -256,13 +265,13 @@ if __name__ == "__main__":
         "Initiating lab results notification call to %s (%s)", args.name, args.phone,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=LabResultsNotificationController(
-            patient_id=args.patient_id,
-            patient_name=args.name,
-            observation_ids=args.observation_ids,
-            provider_name=args.provider,
-        ),
+        variables={
+            "patient_id": args.patient_id,
+            "patient_name": args.name,
+            "observation_ids": args.observation_ids,
+            "provider_name": args.provider,
+        },
     )

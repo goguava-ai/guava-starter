@@ -8,32 +8,50 @@ from datetime import datetime
 
 
 
-class CourseFeedbackController(guava.CallController):
-    def __init__(self, name, course_name, instructor_name, term):
-        super().__init__()
-        self.name = name
-        self.course_name = course_name
-        self.instructor_name = instructor_name
-        self.term = term
-        self.set_persona(
-            organization_name="Westfield University - Academic Affairs",
-            agent_name="Sam",
-            agent_purpose=(
-                "gather structured post-term feedback from students on their course "
-                "and instructor experience to help improve academic quality"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.name,
-            on_success=self.begin_course_feedback,
-            on_failure=self.recipient_unavailable,
-        )
+agent = guava.Agent(
+    name="Sam",
+    organization="Westfield University - Academic Affairs",
+    purpose=(
+        "gather structured post-term feedback from students on their course "
+        "and instructor experience to help improve academic quality"
+    ),
+)
 
-    def begin_course_feedback(self):
-        self.set_task(
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info(
+            "Could not reach %s for course feedback on '%s' (%s).",
+            call.get_variable("name"),
+            call.get_variable("course_name"),
+            call.get_variable("term"),
+        )
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "student_name": call.get_variable("name"),
+            "course_name": call.get_variable("course_name"),
+            "instructor_name": call.get_variable("instructor_name"),
+            "term": call.get_variable("term"),
+            "outcome": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "The student could not be reached. End the call politely."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "survey",
             objective=(
-                f"You are calling {self.name} to collect feedback on the course "
-                f"'{self.course_name}' taught by {self.instructor_name} during the {self.term} term. "
+                f"You are calling {call.get_variable('name')} to collect feedback on the course "
+                f"'{call.get_variable('course_name')}' taught by {call.get_variable('instructor_name')} during the {call.get_variable('term')} term. "
                 "Gather numeric ratings on a scale of 1 to 5 for overall course quality, the instructor, "
                 "and course difficulty. Also capture open-ended responses about what the student found "
                 "most valuable, what could be improved, and whether they would recommend the course "
@@ -42,16 +60,16 @@ class CourseFeedbackController(guava.CallController):
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.name}, this is Sam from Westfield University Academic Affairs. "
-                    f"Now that the {self.term} term has wrapped up, we're reaching out to students "
+                    f"Hi {call.get_variable('name')}, this is Sam from Westfield University Academic Affairs. "
+                    f"Now that the {call.get_variable('term')} term has wrapped up, we're reaching out to students "
                     f"to collect feedback on their courses. I'd love to get your thoughts on "
-                    f"'{self.course_name}' with {self.instructor_name} — it should only take a couple "
+                    f"'{call.get_variable('course_name')}' with {call.get_variable('instructor_name')} — it should only take a couple "
                     "of minutes, and your responses are kept confidential."
                 ),
                 guava.Field(
                     key="course_overall_rating",
                     description=(
-                        f"The student's overall rating of '{self.course_name}' on a scale of 1 to 5, "
+                        f"The student's overall rating of '{call.get_variable('course_name')}' on a scale of 1 to 5, "
                         "where 1 is poor and 5 is excellent"
                     ),
                     field_type="integer",
@@ -60,7 +78,7 @@ class CourseFeedbackController(guava.CallController):
                 guava.Field(
                     key="instructor_rating",
                     description=(
-                        f"The student's rating of instructor {self.instructor_name} on a scale of 1 to 5, "
+                        f"The student's rating of instructor {call.get_variable('instructor_name')} on a scale of 1 to 5, "
                         "where 1 is poor and 5 is excellent"
                     ),
                     field_type="integer",
@@ -69,7 +87,7 @@ class CourseFeedbackController(guava.CallController):
                 guava.Field(
                     key="course_difficulty_rating",
                     description=(
-                        f"The student's rating of how difficult they found '{self.course_name}' "
+                        f"The student's rating of how difficult they found '{call.get_variable('course_name')}' "
                         "on a scale of 1 to 5, where 1 is very easy and 5 is very difficult"
                     ),
                     field_type="integer",
@@ -77,72 +95,51 @@ class CourseFeedbackController(guava.CallController):
                 ),
                 guava.Field(
                     key="most_valuable_aspect",
-                    description=f"The aspect of '{self.course_name}' the student found most valuable or memorable",
+                    description=f"The aspect of '{call.get_variable('course_name')}' the student found most valuable or memorable",
                     field_type="text",
                     required=False,
                 ),
                 guava.Field(
                     key="suggested_improvements",
-                    description=f"Any improvements or changes the student would suggest for '{self.course_name}'",
+                    description=f"Any improvements or changes the student would suggest for '{call.get_variable('course_name')}'",
                     field_type="text",
                     required=False,
                 ),
                 guava.Field(
                     key="would_recommend_course",
-                    description=f"Whether the student would recommend '{self.course_name}' to other students, and any context they provide",
+                    description=f"Whether the student would recommend '{call.get_variable('course_name')}' to other students, and any context they provide",
                     field_type="text",
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "student_name": self.name,
-            "course_name": self.course_name,
-            "instructor_name": self.instructor_name,
-            "term": self.term,
-            "fields": {
-                "course_overall_rating": self.get_field("course_overall_rating"),
-                "instructor_rating": self.get_field("instructor_rating"),
-                "course_difficulty_rating": self.get_field("course_difficulty_rating"),
-                "most_valuable_aspect": self.get_field("most_valuable_aspect"),
-                "suggested_improvements": self.get_field("suggested_improvements"),
-                "would_recommend_course": self.get_field("would_recommend_course"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.name} sincerely for taking the time to share their feedback. "
-                "Let them know their input genuinely helps Westfield University improve the "
-                "student experience. Wish them the best for the upcoming term and say goodbye warmly."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.info(
-            "Could not reach %s for course feedback on '%s' (%s).",
-            self.name,
-            self.course_name,
-            self.term,
+@agent.on_task_complete("survey")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "student_name": call.get_variable("name"),
+        "course_name": call.get_variable("course_name"),
+        "instructor_name": call.get_variable("instructor_name"),
+        "term": call.get_variable("term"),
+        "fields": {
+            "course_overall_rating": call.get_field("course_overall_rating"),
+            "instructor_rating": call.get_field("instructor_rating"),
+            "course_difficulty_rating": call.get_field("course_difficulty_rating"),
+            "most_valuable_aspect": call.get_field("most_valuable_aspect"),
+            "suggested_improvements": call.get_field("suggested_improvements"),
+            "would_recommend_course": call.get_field("would_recommend_course"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} sincerely for taking the time to share their feedback. "
+            "Let them know their input genuinely helps Westfield University improve the "
+            "student experience. Wish them the best for the upcoming term and say goodbye warmly."
         )
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "student_name": self.name,
-            "course_name": self.course_name,
-            "instructor_name": self.instructor_name,
-            "term": self.term,
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "The student could not be reached. End the call politely."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -165,13 +162,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=CourseFeedbackController(
-            name=args.name,
-            course_name=args.course_name,
-            instructor_name=args.instructor_name,
-            term=args.term,
-        ),
+        variables={
+            "name": args.name,
+            "course_name": args.course_name,
+            "instructor_name": args.instructor_name,
+            "term": args.term,
+        },
     )

@@ -8,63 +8,71 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Alex",
+    organization="Cedar Health",
+    purpose=(
+        "to notify patients that their lab results are available and log "
+        "their acknowledgment in Epic on behalf of Cedar Health"
+    ),
+)
 
-class LabResultsNotificationController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, report_id: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.report_id = report_id
-        self.report_summary = "your recent lab results"
 
-        # Pre-call: fetch the DiagnosticReport to get the result type (e.g. "Complete Blood Count").
-        # This lets the agent say "your CBC results are available" instead of a generic message.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-            resp = requests.get(
-                f"{base_url}/DiagnosticReport/{report_id}",
-                headers=headers,
-                timeout=10,
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    report_id = call.get_variable("report_id")
+
+    report_summary = "your recent lab results"
+    # Pre-call: fetch the DiagnosticReport to get the result type (e.g. "Complete Blood Count").
+    # This lets the agent say "your CBC results are available" instead of a generic message.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.get(
+            f"{base_url}/DiagnosticReport/{report_id}",
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        report = resp.json()
+        code_text = report.get("code", {}).get("text", "")
+        if code_text:
+            report_summary = f"your {code_text} results"
+    except Exception as e:
+        logging.error("Failed to fetch Epic DiagnosticReport: %s", e)
+
+    call.report_summary = report_summary
+    call.reach_person(contact_full_name=patient_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    patient_name = call.get_variable("patient_name")
+    if outcome == "unavailable":
+        call.hangup(
+            final_instructions=(
+                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
+                "letting them know their lab results are available in their patient portal and they "
+                "can call the clinic if they have any questions."
             )
-            resp.raise_for_status()
-            report = resp.json()
-            code_text = report.get("code", {}).get("text", "")
-            if code_text:
-                self.report_summary = f"your {code_text} results"
-        except Exception as e:
-            logging.error("Failed to fetch Epic DiagnosticReport: %s", e)
-
-        self.set_persona(
-            organization_name="Cedar Health",
-            agent_name="Alex",
-            agent_purpose=(
-                "to notify patients that their lab results are available and log "
-                "their acknowledgment in Epic on behalf of Cedar Health"
-            ),
         )
-
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=self.begin_notification,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_notification(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "lab_results_notification",
             objective=(
-                f"Notify {self.patient_name} that {self.report_summary} are available in their "
+                f"Notify {patient_name} that {call.report_summary} are available in their "
                 "patient portal, confirm they acknowledge receipt, and determine if they have "
                 "questions for their provider."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.patient_name}, this is Alex calling from Cedar Health. "
-                    f"I'm calling to let you know that {self.report_summary} are now available "
+                    f"Hi {patient_name}, this is Alex calling from Cedar Health. "
+                    f"I'm calling to let you know that {call.report_summary} are now available "
                     "in your patient portal."
                 ),
                 guava.Field(
@@ -96,96 +104,91 @@ class LabResultsNotificationController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        acknowledged = self.get_field("acknowledged")
-        has_questions = self.get_field("has_questions")
-        callback_requested = self.get_field("callback_requested")
 
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Alex",
-            "organization": "Cedar Health",
-            "use_case": "lab_results_notification",
-            "patient_name": self.patient_name,
-            "patient_id": self.patient_id,
-            "report_id": self.report_id,
-            "fields": {
-                "acknowledged": acknowledged,
-                "has_questions": has_questions,
-                "callback_requested": callback_requested,
-            },
+@agent.on_task_complete("lab_results_notification")
+def on_done(call: guava.Call) -> None:
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    report_id = call.get_variable("report_id")
+    acknowledged = call.get_field("acknowledged")
+    has_questions = call.get_field("has_questions")
+    callback_requested = call.get_field("callback_requested")
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "Alex",
+        "organization": "Cedar Health",
+        "use_case": "lab_results_notification",
+        "patient_name": patient_name,
+        "patient_id": patient_id,
+        "report_id": report_id,
+        "fields": {
+            "acknowledged": acknowledged,
+            "has_questions": has_questions,
+            "callback_requested": callback_requested,
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Lab results notification results saved locally.")
+
+    # Post-call: log a Communication resource in Epic to record that the patient
+    # was notified, whether they acknowledged, and whether they want a callback.
+    # This creates an auditable trail of patient outreach in the chart.
+    try:
+        base_url = os.environ["EPIC_BASE_URL"]
+        access_token = os.environ["EPIC_ACCESS_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
         }
-        print(json.dumps(results, indent=2))
-        logging.info("Lab results notification results saved locally.")
 
-        # Post-call: log a Communication resource in Epic to record that the patient
-        # was notified, whether they acknowledged, and whether they want a callback.
-        # This creates an auditable trail of patient outreach in the chart.
-        try:
-            base_url = os.environ["EPIC_BASE_URL"]
-            access_token = os.environ["EPIC_ACCESS_TOKEN"]
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
+        comm_payload = {
+            "resourceType": "Communication",
+            "status": "completed",
+            "subject": {"reference": f"Patient/{patient_id}"},
+            "sent": datetime.now(timezone.utc).isoformat(),
+            "payload": [
+                {
+                    "contentString": (
+                        f"Lab results notification for report {report_id}. "
+                        f"Patient acknowledged: {acknowledged}. "
+                        f"Has questions: {has_questions}. "
+                        f"Callback requested: {callback_requested or 'N/A'}."
+                    )
+                }
+            ],
+        }
 
-            comm_payload = {
-                "resourceType": "Communication",
-                "status": "completed",
-                "subject": {"reference": f"Patient/{self.patient_id}"},
-                "sent": datetime.now(timezone.utc).isoformat(),
-                "payload": [
-                    {
-                        "contentString": (
-                            f"Lab results notification for report {self.report_id}. "
-                            f"Patient acknowledged: {acknowledged}. "
-                            f"Has questions: {has_questions}. "
-                            f"Callback requested: {callback_requested or 'N/A'}."
-                        )
-                    }
-                ],
-            }
+        resp = requests.post(
+            f"{base_url}/Communication",
+            headers=headers,
+            json=comm_payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        comm_id = resp.json().get("id", "")
+        logging.info("Epic Communication created: %s", comm_id)
+    except Exception as e:
+        logging.error("Failed to create Epic Communication: %s", e)
 
-            resp = requests.post(
-                f"{base_url}/Communication",
-                headers=headers,
-                json=comm_payload,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            comm_id = resp.json().get("id", "")
-            logging.info("Epic Communication created: %s", comm_id)
-        except Exception as e:
-            logging.error("Failed to create Epic Communication: %s", e)
-
-        # Close with instructions that match whether a provider callback was requested
-        wants_callback = callback_requested and callback_requested.strip().lower() == "yes"
-        if wants_callback:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know that a member of their care team at Cedar Health "
-                    "will call them back to review their results. Provide the clinic's main number "
-                    "in case they need to reach someone sooner. Thank them and wish them a great day."
-                )
-            )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.patient_name} know they can view their full results in the Cedar Health "
-                    "patient portal anytime, and they are welcome to call the clinic if any questions "
-                    "come up later. Thank them and wish them a great day."
-                )
-            )
-
-    def recipient_unavailable(self):
-        self.hangup(
+    # Close with instructions that match whether a provider callback was requested
+    wants_callback = callback_requested and callback_requested.strip().lower() == "yes"
+    if wants_callback:
+        call.hangup(
             final_instructions=(
-                "We were unable to reach the patient. Leave a brief voicemail on behalf of Cedar Health "
-                "letting them know their lab results are available in their patient portal and they "
-                "can call the clinic if they have any questions."
+                f"Let {patient_name} know that a member of their care team at Cedar Health "
+                "will call them back to review their results. Provide the clinic's main number "
+                "in case they need to reach someone sooner. Thank them and wish them a great day."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Let {patient_name} know they can view their full results in the Cedar Health "
+                "patient portal anytime, and they are welcome to call the clinic if any questions "
+                "come up later. Thank them and wish them a great day."
             )
         )
 
@@ -208,12 +211,12 @@ if __name__ == "__main__":
         args.report_id,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=LabResultsNotificationController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            report_id=args.report_id,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "report_id": args.report_id,
+        },
     )

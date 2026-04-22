@@ -79,36 +79,45 @@ def nps_category(score: int) -> str:
     return "Detractor"
 
 
-class NpsSurveyController(guava.CallController):
-    def __init__(self, contact_name: str, contact_email: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.contact_email = contact_email
+agent = guava.Agent(
+    name="Sam",
+    organization="Lumis Corp",
+    purpose=(
+        "to collect a brief Net Promoter Score survey from Lumis Corp customers "
+        "and understand how we can improve their experience"
+    ),
+)
 
-        self.set_persona(
-            organization_name="Lumis Corp",
-            agent_name="Sam",
-            agent_purpose=(
-                "to collect a brief Net Promoter Score survey from Lumis Corp customers "
-                "and understand how we can improve their experience"
-            ),
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for NPS survey.", contact_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief, friendly voicemail for {contact_name} from Lumis Corp. "
+                "Let them know you're calling to gather some quick feedback on their experience "
+                "and will try again another time. No need to ask them to call back."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.begin_survey,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def begin_survey(self):
-        self.set_task(
+    elif outcome == "available":
+        call.set_task(
+            "record_response",
             objective=(
-                f"Conduct a short NPS survey with {self.contact_name}. Keep it brief and respectful "
+                f"Conduct a short NPS survey with {contact_name}. Keep it brief and respectful "
                 "of their time — aim to complete the survey in under two minutes."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Sam from Lumis Corp. I'm calling to ask "
+                    f"Hi {contact_name}, this is Sam from Lumis Corp. I'm calling to ask "
                     "just a couple quick questions about your experience with us — it should only "
                     "take about a minute. Is now a good time?"
                 ),
@@ -142,85 +151,79 @@ class NpsSurveyController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.record_response,
         )
 
-    def record_response(self):
-        score_str = self.get_field("nps_score") or "0"
-        reason = self.get_field("nps_reason") or ""
-        suggestion = self.get_field("improvement_suggestion") or ""
 
+@agent.on_task_complete("record_response")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    contact_email = call.get_variable("contact_email")
+
+    score_str = call.get_field("nps_score") or "0"
+    reason = call.get_field("nps_reason") or ""
+    suggestion = call.get_field("improvement_suggestion") or ""
+
+    try:
+        score = int(score_str)
+    except ValueError:
+        score = 0
+
+    category = nps_category(score)
+    verbatim = reason
+    if suggestion:
+        verbatim += f"\n\nSuggestion: {suggestion}"
+
+    logging.info(
+        "NPS survey complete for %s — score: %d, category: %s",
+        contact_name, score, category,
+    )
+
+    try:
+        contact = find_contact_by_email(contact_email)
+    except Exception as e:
+        logging.error("Contact lookup failed for %s: %s", contact_email, e)
+        contact = None
+
+    if contact:
+        contact_id = contact["Id"]
+        account_id = contact.get("AccountId") or ""
         try:
-            score = int(score_str)
-        except ValueError:
-            score = 0
-
-        category = nps_category(score)
-        verbatim = reason
-        if suggestion:
-            verbatim += f"\n\nSuggestion: {suggestion}"
-
-        logging.info(
-            "NPS survey complete for %s — score: %d, category: %s",
-            self.contact_name, score, category,
-        )
-
-        try:
-            contact = find_contact_by_email(self.contact_email)
+            record_id = create_nps_response(contact_id, account_id, score, category, verbatim)
+            logging.info("NPS_Response__c created: %s", record_id)
         except Exception as e:
-            logging.error("Contact lookup failed for %s: %s", self.contact_email, e)
-            contact = None
-
-        if contact:
-            contact_id = contact["Id"]
-            account_id = contact.get("AccountId") or ""
-            try:
-                record_id = create_nps_response(contact_id, account_id, score, category, verbatim)
-                logging.info("NPS_Response__c created: %s", record_id)
-            except Exception as e:
-                logging.error("Failed to create NPS_Response__c: %s", e)
-            try:
-                log_task(
-                    contact_id,
-                    account_id,
-                    subject=f"NPS Survey — Score {score} ({category})",
-                    description=(
-                        f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"
-                        f"Score: {score} ({category})\n"
-                        f"Feedback: {verbatim}"
-                    ),
-                )
-                logging.info("Task logged for contact %s.", contact_id)
-            except Exception as e:
-                logging.error("Failed to log Task: %s", e)
-        else:
-            logging.warning("No Salesforce Contact found for email %s — skipping record creation.", self.contact_email)
-
-        if score <= 6:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} sincerely for their honest feedback. "
-                    "Let them know their response has been shared with the team and that someone "
-                    "will be following up to better understand their experience. "
-                    "Do not be defensive — be genuinely appreciative."
-                )
+            logging.error("Failed to create NPS_Response__c: %s", e)
+        try:
+            log_task(
+                contact_id,
+                account_id,
+                subject=f"NPS Survey — Score {score} ({category})",
+                description=(
+                    f"NPS survey completed — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"
+                    f"Score: {score} ({category})\n"
+                    f"Feedback: {verbatim}"
+                ),
             )
-        else:
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} warmly for the positive feedback and for their time. "
-                    "Let them know their input helps the team continue improving. "
-                    "Wish them a great day."
-                )
-            )
+            logging.info("Task logged for contact %s.", contact_id)
+        except Exception as e:
+            logging.error("Failed to log Task: %s", e)
+    else:
+        logging.warning("No Salesforce Contact found for email %s — skipping record creation.", contact_email)
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for NPS survey.", self.contact_name)
-        self.hangup(
+    if score <= 6:
+        call.hangup(
             final_instructions=(
-                f"Leave a brief, friendly voicemail for {self.contact_name} from Lumis Corp. "
-                "Let them know you're calling to gather some quick feedback on their experience "
-                "and will try again another time. No need to ask them to call back."
+                f"Thank {contact_name} sincerely for their honest feedback. "
+                "Let them know their response has been shared with the team and that someone "
+                "will be following up to better understand their experience. "
+                "Do not be defensive — be genuinely appreciative."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} warmly for the positive feedback and for their time. "
+                "Let them know their input helps the team continue improving. "
+                "Wish them a great day."
             )
         )
 
@@ -237,11 +240,11 @@ if __name__ == "__main__":
 
     logging.info("Initiating NPS survey call to %s (%s)", args.name, args.phone)
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=NpsSurveyController(
-            contact_name=args.name,
-            contact_email=args.email,
-        ),
+        variables={
+            "contact_name": args.name,
+            "contact_email": args.email,
+        },
     )

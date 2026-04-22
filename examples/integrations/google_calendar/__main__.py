@@ -115,96 +115,100 @@ def book_slot(service, calendar_id: str, iso_slot: str, caller_name: str) -> str
     return event_link
 
 
-class AppointmentSchedulingController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Grace",
+    organization="Acme Consulting",
+    purpose="to help callers book a consultation appointment",
+)
 
-        self.calendar_id = os.environ["GOOGLE_CALENDAR_ID"]
-        self.service = build_calendar_service()
 
-        # Fetch free slots once at call start and build a DatetimeFilter over them.
-        # The filter uses Gemini to match natural language queries (e.g. "Tuesday morning")
-        # against the ISO-8601 slot list without a round-trip per utterance.
-        free_slots = get_free_slots(self.service, self.calendar_id)
-        self.datetime_filter = DatetimeFilter(
-            source_list=free_slots,
-            client=google_genai.Client(),
-        )
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 
-        self.set_persona(
-            organization_name="Acme Consulting",
-            agent_name="Grace",
-            agent_purpose="to help callers book a consultation appointment",
-        )
 
-        self.set_task(
-            objective="Book a consultation appointment for the caller.",
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Acme Consulting. My name is Grace. "
-                    "I'd be happy to help you schedule a consultation."
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    calendar_id = os.environ["GOOGLE_CALENDAR_ID"]
+    service = build_calendar_service()
+
+    # Fetch free slots once at call start and build a DatetimeFilter over them.
+    # The filter uses Gemini to match natural language queries (e.g. "Tuesday morning")
+    # against the ISO-8601 slot list without a round-trip per utterance.
+    free_slots = get_free_slots(service, calendar_id)
+    call.datetime_filter = DatetimeFilter(
+        source_list=free_slots,
+        client=google_genai.Client(),
+    )
+    call.calendar_id = calendar_id
+    call.calendar_service = service
+
+    call.set_task(
+        "finalize_booking",
+        objective="Book a consultation appointment for the caller.",
+        checklist=[
+            guava.Say(
+                "Thank you for calling Acme Consulting. My name is Grace. "
+                "I'd be happy to help you schedule a consultation."
+            ),
+            guava.Field(
+                key="caller_name",
+                field_type="text",
+                description="Ask the caller for their full name.",
+                required=True,
+            ),
+            # calendar_slot presents available times conversationally and lets
+            # the caller express a preference in natural language (e.g. "next
+            # Tuesday afternoon"). on_search_query is called with the caller's
+            # preference string and returns (matching_slots, fallback_slots).
+            guava.Field(
+                key="appointment_time",
+                field_type="calendar_slot",
+                description=(
+                    "Find an appointment time that works for the caller. "
+                    f"Each slot is {APPOINTMENT_DURATION_MINS} minutes long."
                 ),
-                guava.Field(
-                    key="caller_name",
-                    field_type="text",
-                    description="Ask the caller for their full name.",
-                    required=True,
-                ),
-                # calendar_slot presents available times conversationally and lets
-                # the caller express a preference in natural language (e.g. "next
-                # Tuesday afternoon"). choice_generator is called with the caller's
-                # preference string and returns (matching_slots, fallback_slots).
-                guava.Field(
-                    key="appointment_time",
-                    field_type="calendar_slot",
-                    description=(
-                        "Find an appointment time that works for the caller. "
-                        f"Each slot is {APPOINTMENT_DURATION_MINS} minutes long."
-                    ),
-                    choice_generator=self.filter_slots,
-                    required=True,
-                ),
-                guava.Say(
-                    "Your appointment has been confirmed. "
-                    "You will receive a calendar invitation shortly. Have a great day!"
-                ),
-            ],
-            on_complete=self.finalize_booking,
-        )
+                searchable=True,
+                required=True,
+            ),
+            guava.Say(
+                "Your appointment has been confirmed. "
+                "You will receive a calendar invitation shortly. Have a great day!"
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def filter_slots(self, query: str) -> tuple[list[str], list[str]]:
-        """Called by guava whenever the caller expresses a time preference."""
-        return self.datetime_filter.filter(query, max_results=3)
+@agent.on_search_query("appointment_time")
+def search_appointment_time(call: guava.Call, query: str):
+    return call.datetime_filter.filter(query, max_results=3)
 
-    def finalize_booking(self):
-        caller_name = self.get_field("caller_name") or "Unknown Caller"
-        slot = self.get_field("appointment_time")
 
-        if not slot:
-            logging.error("No appointment_time collected — cannot book.")
-            self.hangup(
-                final_instructions=(
-                    "Apologize for a technical issue and let the caller know someone "
-                    "from Acme Consulting will follow up by email to confirm their time."
-                )
+@agent.on_task_complete("finalize_booking")
+def on_done(call: guava.Call) -> None:
+    caller_name = call.get_field("caller_name") or "Unknown Caller"
+    slot = call.get_field("appointment_time")
+
+    if not slot:
+        logging.error("No appointment_time collected — cannot book.")
+        call.hangup(
+            final_instructions=(
+                "Apologize for a technical issue and let the caller know someone "
+                "from Acme Consulting will follow up by email to confirm their time."
             )
-            return
-
-        logging.info("Booking slot %s for %s", slot, caller_name)
-        book_slot(
-            service=self.service,
-            calendar_id=self.calendar_id,
-            iso_slot=slot,
-            caller_name=caller_name,
         )
-        self.hangup()
+        return
+
+    logging.info("Booking slot %s for %s", slot, caller_name)
+    book_slot(
+        service=call.calendar_service,
+        calendar_id=call.calendar_id,
+        iso_slot=slot,
+        caller_name=caller_name,
+    )
+    call.hangup()
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=AppointmentSchedulingController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

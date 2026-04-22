@@ -7,31 +7,55 @@ import argparse
 from datetime import datetime, timezone
 
 
+agent = guava.Agent(
+    name="Riley",
+    organization="Pinnacle Realty Group",
+    purpose=(
+        "schedule and confirm property showings for interested buyers "
+        "so they can tour homes at a time that works for them and their agent"
+    ),
+)
 
-class ShowingSchedulingController(guava.CallController):
-    def __init__(self, contact_name: str, property_address: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.property_address = property_address
-        self.set_persona(
-            organization_name="Pinnacle Realty Group",
-            agent_name="Riley",
-            agent_purpose=(
-                "schedule and confirm property showings for interested buyers "
-                "so they can tour homes at a time that works for them and their agent"
-            ),
-        )
-        self.reach_person(
-            contact_full_name=self.contact_name,
-            on_success=self.start_scheduling,
-            on_failure=self.recipient_unavailable,
-        )
 
-    def start_scheduling(self):
-        self.set_task(
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    property_address = call.get_variable("property_address")
+
+    if outcome == "unavailable":
+        logging.warning(
+            "Could not reach %s for showing scheduling at %s.",
+            contact_name,
+            property_address,
+        )
+        results = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "vertical": "real_estate",
+            "use_case": "showing_scheduling",
+            "contact_name": contact_name,
+            "property_address": property_address,
+            "status": "recipient_unavailable",
+        }
+        print(json.dumps(results, indent=2))
+        call.hangup(
+            final_instructions=(
+                "Leave a brief, friendly voicemail introducing yourself as Riley from "
+                "Pinnacle Realty Group. Mention that you are calling about scheduling "
+                f"a showing for {property_address} and ask them to call back or "
+                "check their email for a scheduling link. Keep the message under 30 seconds."
+            )
+        )
+    elif outcome == "available":
+        call.set_task(
+            "showing_scheduling",
             objective=(
-                f"You are calling {self.contact_name} on behalf of Pinnacle Realty Group "
-                f"to schedule a showing for {self.property_address}. "
+                f"You are calling {contact_name} on behalf of Pinnacle Realty Group "
+                f"to schedule a showing for {property_address}. "
                 "Be friendly and enthusiastic about the property. "
                 "Work with the caller to find a date and time that fits their schedule, "
                 "confirm any additional properties they may want to see, "
@@ -40,13 +64,13 @@ class ShowingSchedulingController(guava.CallController):
             checklist=[
                 guava.Say(
                     f"Great news — we'd love to set up a showing for you at "
-                    f"{self.property_address}. Let's find a time that works perfectly "
+                    f"{property_address}. Let's find a time that works perfectly "
                     f"for your schedule."
                 ),
                 guava.Field(
                     key="showing_date_preference",
                     description=(
-                        f"What date works best for you to tour {self.property_address}? "
+                        f"What date works best for you to tour {property_address}? "
                         "Please provide a specific date or a range of dates."
                     ),
                     field_type="date",
@@ -80,57 +104,34 @@ class ShowingSchedulingController(guava.CallController):
                     required=True,
                 ),
             ],
-            on_complete=self.save_results,
         )
 
-    def save_results(self):
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vertical": "real_estate",
-            "use_case": "showing_scheduling",
-            "contact_name": self.contact_name,
-            "property_address": self.property_address,
-            "fields": {
-                "showing_date_preference": self.get_field("showing_date_preference"),
-                "showing_time_preference": self.get_field("showing_time_preference"),
-                "additional_properties_interest": self.get_field("additional_properties_interest"),
-                "pre_approval_letter_ready": self.get_field("pre_approval_letter_ready"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Showing scheduling results captured: %s", results)
-        self.hangup(
-            final_instructions=(
-                "Confirm the showing details back to the caller — the property address, "
-                "date, and time. Let them know they'll receive a calendar confirmation "
-                "and a reminder the day before. Thank them for their interest in "
-                "Pinnacle Realty Group and wish them an exciting home search."
-            )
-        )
 
-    def recipient_unavailable(self):
-        logging.warning(
-            "Could not reach %s for showing scheduling at %s.",
-            self.contact_name,
-            self.property_address,
+@agent.on_task_complete("showing_scheduling")
+def on_done(call: guava.Call) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "vertical": "real_estate",
+        "use_case": "showing_scheduling",
+        "contact_name": call.get_variable("contact_name"),
+        "property_address": call.get_variable("property_address"),
+        "fields": {
+            "showing_date_preference": call.get_field("showing_date_preference"),
+            "showing_time_preference": call.get_field("showing_time_preference"),
+            "additional_properties_interest": call.get_field("additional_properties_interest"),
+            "pre_approval_letter_ready": call.get_field("pre_approval_letter_ready"),
+        },
+    }
+    print(json.dumps(results, indent=2))
+    logging.info("Showing scheduling results captured: %s", results)
+    call.hangup(
+        final_instructions=(
+            "Confirm the showing details back to the caller — the property address, "
+            "date, and time. Let them know they'll receive a calendar confirmation "
+            "and a reminder the day before. Thank them for their interest in "
+            "Pinnacle Realty Group and wish them an exciting home search."
         )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vertical": "real_estate",
-            "use_case": "showing_scheduling",
-            "contact_name": self.contact_name,
-            "property_address": self.property_address,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        self.hangup(
-            final_instructions=(
-                "Leave a brief, friendly voicemail introducing yourself as Riley from "
-                "Pinnacle Realty Group. Mention that you are calling about scheduling "
-                f"a showing for {self.property_address} and ask them to call back or "
-                "check their email for a scheduling link. Keep the message under 30 seconds."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -152,11 +153,11 @@ if __name__ == "__main__":
         args.property_address,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=ShowingSchedulingController(
-            contact_name=args.name,
-            property_address=args.property_address,
-        ),
+        variables={
+            "contact_name": args.name,
+            "property_address": args.property_address,
+        },
     )

@@ -57,93 +57,94 @@ def lookup_product(service, query: str) -> dict | None:
     return None
 
 
-class InventoryLookupController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Sam",
+    organization="Apex Solutions",
+    purpose=(
+        "to help staff and partners quickly check current inventory levels "
+        "from the Apex Solutions product catalog"
+    ),
+)
 
-        self.service = build_sheets_service()
 
-        self.set_persona(
-            organization_name="Apex Solutions",
-            agent_name="Sam",
-            agent_purpose=(
-                "to help staff and partners quickly check current inventory levels "
-                "from the Apex Solutions product catalog"
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.sheets_service = build_sheets_service()
+
+    call.set_task(
+        "report_inventory",
+        objective=(
+            "A caller wants to check how many units of a product are currently in stock. "
+            "Ask for the product name or SKU and read back the inventory details."
+        ),
+        checklist=[
+            guava.Say(
+                "Thanks for calling Apex Solutions inventory. I'm Sam. "
+                "I can look up current stock levels — what product are you checking on?"
             ),
-        )
-
-        self.set_task(
-            objective=(
-                "A caller wants to check how many units of a product are currently in stock. "
-                "Ask for the product name or SKU and read back the inventory details."
+            guava.Field(
+                key="product_query",
+                field_type="text",
+                description=(
+                    "Ask for the product name or SKU they want to check. "
+                    "A partial name is fine."
+                ),
+                required=True,
             ),
-            checklist=[
-                guava.Say(
-                    "Thanks for calling Apex Solutions inventory. I'm Sam. "
-                    "I can look up current stock levels — what product are you checking on?"
-                ),
-                guava.Field(
-                    key="product_query",
-                    field_type="text",
-                    description=(
-                        "Ask for the product name or SKU they want to check. "
-                        "A partial name is fine."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.report_inventory,
-        )
+        ],
+    )
 
-        self.accept_call()
 
-    def report_inventory(self):
-        query = (self.get_field("product_query") or "").strip()
-        logging.info("Inventory lookup — query: '%s'", query)
+@agent.on_task_complete("report_inventory")
+def on_done(call: guava.Call) -> None:
+    query = (call.get_field("product_query") or "").strip()
+    logging.info("Inventory lookup — query: '%s'", query)
 
-        try:
-            product = lookup_product(self.service, query)
-        except Exception as e:
-            logging.error("Sheets lookup failed: %s", e)
-            self.hangup(
-                final_instructions=(
-                    "Apologize — there was a technical issue accessing the inventory sheet. "
-                    "Ask the caller to check the sheet directly or try again in a moment."
-                )
-            )
-            return
-
-        if not product:
-            self.hangup(
-                final_instructions=(
-                    f"Let the caller know we couldn't find a product matching '{query}' "
-                    "in the inventory sheet. Ask them to double-check the name or SKU "
-                    "and try again. Thank them for calling."
-                )
-            )
-            return
-
-        qty = product["quantity"]
-        name = product["name"]
-        sku = product["sku"]
-        location = product["location"]
-        unit = product["unit"]
-
-        location_phrase = f", located in {location}" if location else ""
-        logging.info("Found product '%s' (SKU %s): %s %s%s", name, sku, qty, unit, location_phrase)
-
-        self.hangup(
+    try:
+        product = lookup_product(call.sheets_service, query)
+    except Exception as e:
+        logging.error("Sheets lookup failed: %s", e)
+        call.hangup(
             final_instructions=(
-                f"Let the caller know that {name} (SKU: {sku}) currently has "
-                f"{qty} {unit} in stock{location_phrase}. "
-                "Thank them for calling Apex Solutions."
+                "Apologize — there was a technical issue accessing the inventory sheet. "
+                "Ask the caller to check the sheet directly or try again in a moment."
             )
         )
+        return
+
+    if not product:
+        call.hangup(
+            final_instructions=(
+                f"Let the caller know we couldn't find a product matching '{query}' "
+                "in the inventory sheet. Ask them to double-check the name or SKU "
+                "and try again. Thank them for calling."
+            )
+        )
+        return
+
+    qty = product["quantity"]
+    name = product["name"]
+    sku = product["sku"]
+    location = product["location"]
+    unit = product["unit"]
+
+    location_phrase = f", located in {location}" if location else ""
+    logging.info("Found product '%s' (SKU %s): %s %s%s", name, sku, qty, unit, location_phrase)
+
+    call.hangup(
+        final_instructions=(
+            f"Let the caller know that {name} (SKU: {sku}) currently has "
+            f"{qty} {unit} in stock{location_phrase}. "
+            "Thank them for calling Apex Solutions."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=InventoryLookupController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])

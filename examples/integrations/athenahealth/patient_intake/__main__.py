@@ -58,30 +58,56 @@ def post_intake_document(patient_id: str, content: str, headers: dict) -> bool:
     return resp.ok
 
 
-class PatientIntakeController(guava.CallController):
-    def __init__(self, patient_name: str, patient_id: str, appointment_time: str):
-        super().__init__()
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.appointment_time = appointment_time
-        self.headers = {}
-        self.existing_meds: list = []
-        self.existing_allergies: list = []
+agent = guava.Agent(
+    name="Avery",
+    organization="Maple Medical Group",
+    purpose=(
+        "to complete pre-visit intake for patients before their appointments"
+    ),
+)
 
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.reach_person(contact_full_name=call.get_variable("patient_name"))
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for pre-visit intake.", call.get_variable("patient_name"))
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {call.get_variable('patient_name')} from Maple Medical Group. "
+                "Let them know you're calling to complete a pre-visit intake before their "
+                f"appointment on {call.get_variable('appointment_time')} and ask them to call back. "
+                "Keep it friendly and concise."
+            )
+        )
+    elif outcome == "available":
+        patient_name = call.get_variable("patient_name")
+        patient_id = call.get_variable("patient_id")
+        appointment_time = call.get_variable("appointment_time")
+
+        headers = {}
+        existing_meds: list = []
+        existing_allergies: list = []
         try:
             token = get_access_token()
-            self.headers = {"Authorization": f"Bearer {token}"}
-            self.existing_meds = get_patient_medications(patient_id, self.headers)
-            self.existing_allergies = get_patient_allergies(patient_id, self.headers)
+            headers = {"Authorization": f"Bearer {token}"}
+            existing_meds = get_patient_medications(patient_id, headers)
+            existing_allergies = get_patient_allergies(patient_id, headers)
             logging.info(
                 "Pre-call data loaded for patient %s: %d meds, %d allergies",
-                patient_id, len(self.existing_meds), len(self.existing_allergies),
+                patient_id, len(existing_meds), len(existing_allergies),
             )
         except Exception as e:
             logging.error("Failed to load patient pre-call data for %s: %s", patient_id, e)
 
-        med_names = [m.get("medicationname", "") for m in self.existing_meds if m.get("medicationname")]
-        allergy_names = [a.get("allergenname", "") for a in self.existing_allergies if a.get("allergenname")]
+        call.data = {"headers": headers}
+
+        med_names = [m.get("medicationname", "") for m in existing_meds if m.get("medicationname")]
+        allergy_names = [a.get("allergenname", "") for a in existing_allergies if a.get("allergenname")]
 
         meds_context = (
             f"Medications on file: {', '.join(med_names)}. "
@@ -96,15 +122,8 @@ class PatientIntakeController(guava.CallController):
             "No allergies on file. Ask if they have any known drug or environmental allergies."
         )
 
-        self.set_persona(
-            organization_name="Maple Medical Group",
-            agent_name="Avery",
-            agent_purpose=(
-                "to complete pre-visit intake for patients before their appointments"
-            ),
-        )
-
-        self.set_task(
+        call.set_task(
+            "save_intake",
             objective=(
                 f"Complete pre-visit intake for {patient_name} ahead of their appointment "
                 f"on {appointment_time}. Collect their chief complaint, confirm current "
@@ -147,55 +166,43 @@ class PatientIntakeController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.save_intake,
         )
 
-        self.reach_person(
-            contact_full_name=self.patient_name,
-            on_success=lambda: None,  # task already set; will run after reach_person
-            on_failure=self.recipient_unavailable,
+
+@agent.on_task_complete("save_intake")
+def on_done(call: guava.Call) -> None:
+    complaint = call.get_field("chief_complaint") or ""
+    meds = call.get_field("medications_confirmed") or ""
+    allergies = call.get_field("allergies_confirmed") or ""
+    changes = call.get_field("recent_changes") or "None reported"
+    patient_name = call.get_variable("patient_name")
+    patient_id = call.get_variable("patient_id")
+    appointment_time = call.get_variable("appointment_time")
+    headers = call.data.get("headers", {}) if call.data else {}
+
+    summary = (
+        f"Pre-visit intake — {appointment_time}\n"
+        f"Chief complaint: {complaint}\n"
+        f"Medications: {meds}\n"
+        f"Allergies: {allergies}\n"
+        f"Recent changes: {changes}"
+    )
+    logging.info("Intake summary for patient %s:\n%s", patient_id, summary)
+
+    try:
+        posted = post_intake_document(patient_id, summary, headers)
+        logging.info("Intake document posted to chart: %s", posted)
+    except Exception as e:
+        logging.error("Failed to post intake document for patient %s: %s", patient_id, e)
+
+    call.hangup(
+        final_instructions=(
+            f"Thank {patient_name} for completing the intake. "
+            "Let them know the care team will review this before their visit. "
+            "Remind them to arrive 10–15 minutes early and bring their insurance card. "
+            "Wish them a great day."
         )
-
-    def save_intake(self):
-        complaint = self.get_field("chief_complaint") or ""
-        meds = self.get_field("medications_confirmed") or ""
-        allergies = self.get_field("allergies_confirmed") or ""
-        changes = self.get_field("recent_changes") or "None reported"
-
-        summary = (
-            f"Pre-visit intake — {self.appointment_time}\n"
-            f"Chief complaint: {complaint}\n"
-            f"Medications: {meds}\n"
-            f"Allergies: {allergies}\n"
-            f"Recent changes: {changes}"
-        )
-        logging.info("Intake summary for patient %s:\n%s", self.patient_id, summary)
-
-        try:
-            posted = post_intake_document(self.patient_id, summary, self.headers)
-            logging.info("Intake document posted to chart: %s", posted)
-        except Exception as e:
-            logging.error("Failed to post intake document for patient %s: %s", self.patient_id, e)
-
-        self.hangup(
-            final_instructions=(
-                f"Thank {self.patient_name} for completing the intake. "
-                "Let them know the care team will review this before their visit. "
-                "Remind them to arrive 10–15 minutes early and bring their insurance card. "
-                "Wish them a great day."
-            )
-        )
-
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for pre-visit intake.", self.patient_name)
-        self.hangup(
-            final_instructions=(
-                f"Leave a brief voicemail for {self.patient_name} from Maple Medical Group. "
-                "Let them know you're calling to complete a pre-visit intake before their "
-                f"appointment on {self.appointment_time} and ask them to call back. "
-                "Keep it friendly and concise."
-            )
-        )
+    )
 
 
 if __name__ == "__main__":
@@ -214,12 +221,12 @@ if __name__ == "__main__":
         args.name, args.phone, args.appointment,
     )
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=PatientIntakeController(
-            patient_name=args.name,
-            patient_id=args.patient_id,
-            appointment_time=args.appointment,
-        ),
+        variables={
+            "patient_name": args.name,
+            "patient_id": args.patient_id,
+            "appointment_time": args.appointment,
+        },
     )

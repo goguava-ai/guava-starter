@@ -61,55 +61,66 @@ def get_last_refresh(dataset_id: str, token: str) -> dict | None:
     return items[0] if items else None
 
 
-class DatasetRefreshTriggerController(guava.CallController):
-    def __init__(self, contact_name: str, dataset_id: str, dataset_name: str):
-        super().__init__()
-        self.contact_name = contact_name
-        self.dataset_id = dataset_id
-        self.dataset_name = dataset_name
-        self._token: str = ""
-        self._last_refresh_time: str = ""
+agent = guava.Agent(
+    name="Morgan",
+    organization="Apex Analytics",
+    purpose=(
+        "to coordinate Power BI dataset refreshes with data owners "
+        "and confirm that data is up to date"
+    ),
+)
 
-        try:
-            self._token = get_access_token()
-            last = get_last_refresh(dataset_id, self._token)
-            if last:
-                self._last_refresh_time = last.get("endTime") or last.get("startTime") or ""
-        except Exception as e:
-            logging.warning("Pre-call Power BI setup failed: %s", e)
 
-        self.set_persona(
-            organization_name="Apex Analytics",
-            agent_name="Morgan",
-            agent_purpose=(
-                "to coordinate Power BI dataset refreshes with data owners "
-                "and confirm that data is up to date"
-            ),
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    dataset_id = call.get_variable("dataset_id")
+
+    call.token = ""
+    call.last_refresh_time = ""
+    try:
+        call.token = get_access_token()
+        last = get_last_refresh(dataset_id, call.token)
+        if last:
+            call.last_refresh_time = last.get("endTime") or last.get("startTime") or ""
+    except Exception as e:
+        logging.warning("Pre-call Power BI setup failed: %s", e)
+
+    call.reach_person(contact_full_name=contact_name)
+
+
+@agent.on_reach_person
+def on_reach_person(call: guava.Call, outcome: str) -> None:
+    contact_name = call.get_variable("contact_name")
+    dataset_name = call.get_variable("dataset_name")
+
+    if outcome == "unavailable":
+        logging.info("Unable to reach %s for dataset refresh confirmation", contact_name)
+        call.hangup(
+            final_instructions=(
+                f"Leave a brief voicemail for {contact_name} from Apex Analytics. "
+                f"Let them know you were calling to confirm a manual refresh of '{dataset_name}' "
+                "in Power BI and that you'll send a follow-up email."
+            )
         )
-
-        self.reach_person(
-            contact_full_name=contact_name,
-            on_success=self.request_confirmation,
-            on_failure=self.recipient_unavailable,
-        )
-
-    def request_confirmation(self):
+    elif outcome == "available":
         last_note = (
-            f" It last completed a refresh at {self._last_refresh_time}."
-            if self._last_refresh_time
+            f" It last completed a refresh at {call.last_refresh_time}."
+            if call.last_refresh_time
             else ""
         )
 
-        self.set_task(
+        call.set_task(
+            "request_confirmation",
             objective=(
-                f"Confirm with {self.contact_name} that it's safe to trigger an on-demand "
-                f"refresh of the '{self.dataset_name}' Power BI dataset."
+                f"Confirm with {contact_name} that it's safe to trigger an on-demand "
+                f"refresh of the '{dataset_name}' Power BI dataset."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {self.contact_name}, this is Morgan from Apex Analytics. "
+                    f"Hi {contact_name}, this is Morgan from Apex Analytics. "
                     f"I'm calling because we'd like to trigger a manual refresh of "
-                    f"the '{self.dataset_name}' dataset in Power BI.{last_note} "
+                    f"the '{dataset_name}' dataset in Power BI.{last_note} "
                     "I just want to confirm this is a good time before we kick it off."
                 ),
                 guava.Field(
@@ -136,57 +147,51 @@ class DatasetRefreshTriggerController(guava.CallController):
                     required=False,
                 ),
             ],
-            on_complete=self.handle_approval,
         )
 
-    def handle_approval(self):
-        approval = self.get_field("approval") or "yes, go ahead"
-        notes = self.get_field("notes") or ""
 
-        logging.info(
-            "Refresh approval for dataset %s: %s (notes: %s)",
-            self.dataset_id, approval, notes,
-        )
+@agent.on_task_complete("request_confirmation")
+def on_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    dataset_id = call.get_variable("dataset_id")
 
-        if approval != "yes, go ahead":
-            self.hangup(
-                final_instructions=(
-                    f"Thank {self.contact_name} for the heads-up. Let them know you'll hold off "
-                    "on the refresh and check back with them later. If they indicated they're editing "
-                    "the dataset, let them know you'll try again once they've confirmed it's ready."
-                )
-            )
-            return
+    approval = call.get_field("approval") or "yes, go ahead"
+    notes = call.get_field("notes") or ""
 
-        try:
-            if not self._token:
-                self._token = get_access_token()
-            trigger_dataset_refresh(self.dataset_id, self._token)
-            logging.info("Power BI dataset refresh triggered: %s", self.dataset_id)
-            self.hangup(
-                final_instructions=(
-                    f"Let {self.contact_name} know the refresh has been triggered successfully. "
-                    f"Depending on the dataset size, it may take a few minutes to complete. "
-                    "They'll be able to see the refresh status in Power BI. "
-                    "Thank them for their time."
-                )
-            )
-        except Exception as e:
-            logging.error("Failed to trigger Power BI refresh: %s", e)
-            self.hangup(
-                final_instructions=(
-                    f"Apologize to {self.contact_name} — the refresh trigger encountered a technical issue. "
-                    "Let them know our team will investigate and try again shortly."
-                )
-            )
+    logging.info(
+        "Refresh approval for dataset %s: %s (notes: %s)",
+        dataset_id, approval, notes,
+    )
 
-    def recipient_unavailable(self):
-        logging.info("Unable to reach %s for dataset refresh confirmation", self.contact_name)
-        self.hangup(
+    if approval != "yes, go ahead":
+        call.hangup(
             final_instructions=(
-                f"Leave a brief voicemail for {self.contact_name} from Apex Analytics. "
-                f"Let them know you were calling to confirm a manual refresh of '{self.dataset_name}' "
-                "in Power BI and that you'll send a follow-up email."
+                f"Thank {contact_name} for the heads-up. Let them know you'll hold off "
+                "on the refresh and check back with them later. If they indicated they're editing "
+                "the dataset, let them know you'll try again once they've confirmed it's ready."
+            )
+        )
+        return
+
+    try:
+        if not call.token:
+            call.token = get_access_token()
+        trigger_dataset_refresh(dataset_id, call.token)
+        logging.info("Power BI dataset refresh triggered: %s", dataset_id)
+        call.hangup(
+            final_instructions=(
+                f"Let {contact_name} know the refresh has been triggered successfully. "
+                f"Depending on the dataset size, it may take a few minutes to complete. "
+                "They'll be able to see the refresh status in Power BI. "
+                "Thank them for their time."
+            )
+        )
+    except Exception as e:
+        logging.error("Failed to trigger Power BI refresh: %s", e)
+        call.hangup(
+            final_instructions=(
+                f"Apologize to {contact_name} — the refresh trigger encountered a technical issue. "
+                "Let them know our team will investigate and try again shortly."
             )
         )
 
@@ -202,12 +207,12 @@ if __name__ == "__main__":
     parser.add_argument("--dataset-name", required=True, help="Human-readable dataset name")
     args = parser.parse_args()
 
-    guava.Client().create_outbound(
+    agent.call_phone(
         from_number=os.environ["GUAVA_AGENT_NUMBER"],
         to_number=args.phone,
-        call_controller=DatasetRefreshTriggerController(
-            contact_name=args.name,
-            dataset_id=args.dataset_id,
-            dataset_name=args.dataset_name,
-        ),
+        variables={
+            "contact_name": args.name,
+            "dataset_id": args.dataset_id,
+            "dataset_name": args.dataset_name,
+        },
     )

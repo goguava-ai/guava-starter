@@ -50,99 +50,100 @@ def format_last_checkpoint(checkpoints: list) -> str:
     return message
 
 
-class ShipmentStatusCheckController(guava.CallController):
-    def __init__(self):
-        super().__init__()
+agent = guava.Agent(
+    name="Alex",
+    organization="Meridian Commerce",
+    purpose="to help Meridian Commerce customers check the current status of their shipments",
+)
 
-        self.set_persona(
-            organization_name="Meridian Commerce",
-            agent_name="Alex",
-            agent_purpose="to help Meridian Commerce customers check the current status of their shipments",
-        )
 
-        self.set_task(
-            objective=(
-                "A customer is calling to check on a shipment. Collect their tracking number "
-                "and look up the current delivery status."
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "look_up_shipment",
+        objective=(
+            "A customer is calling to check on a shipment. Collect their tracking number "
+            "and look up the current delivery status."
+        ),
+        checklist=[
+            guava.Say(
+                "Thank you for calling Meridian Commerce. This is Alex. "
+                "I can look up your shipment status right away."
             ),
-            checklist=[
-                guava.Say(
-                    "Thank you for calling Meridian Commerce. This is Alex. "
-                    "I can look up your shipment status right away."
+            guava.Field(
+                key="tracking_number",
+                field_type="text",
+                description=(
+                    "Ask the customer for their tracking number. "
+                    "It's typically found in their shipping confirmation email or order page."
                 ),
-                guava.Field(
-                    key="tracking_number",
-                    field_type="text",
-                    description=(
-                        "Ask the customer for their tracking number. "
-                        "It's typically found in their shipping confirmation email or order page."
-                    ),
-                    required=True,
-                ),
-            ],
-            on_complete=self.look_up_shipment,
-        )
+                required=True,
+            ),
+        ],
+    )
 
-        self.accept_call()
 
-    def look_up_shipment(self):
-        tracking_number = (self.get_field("tracking_number") or "").strip()
-        logging.info("Looking up tracking number: %s", tracking_number)
+@agent.on_task_complete("look_up_shipment")
+def on_done(call: guava.Call) -> None:
+    tracking_number = (call.get_field("tracking_number") or "").strip()
+    logging.info("Looking up tracking number: %s", tracking_number)
 
-        try:
-            tracking = search_tracking(tracking_number)
-        except Exception as e:
-            logging.error("AfterShip lookup failed for %s: %s", tracking_number, e)
-            tracking = None
+    try:
+        tracking = search_tracking(tracking_number)
+    except Exception as e:
+        logging.error("AfterShip lookup failed for %s: %s", tracking_number, e)
+        tracking = None
 
-        if not tracking:
-            self.hangup(
-                final_instructions=(
-                    "Let the customer know you weren't able to find a shipment with that tracking number. "
-                    "Suggest they double-check the number from their shipping confirmation email. "
-                    "Offer to transfer them to a support agent if they need further help."
-                )
-            )
-            return
-
-        tag = tracking.get("tag", "")
-        status_text = TAG_LABELS.get(tag, "in an unknown status")
-        carrier = (tracking.get("slug") or "").replace("-", " ").title()
-        expected = (
-            tracking.get("expected_delivery")
-            or tracking.get("current_expected_delivery")
-            or ""
-        )
-        checkpoints = tracking.get("checkpoints") or []
-        last_update = format_last_checkpoint(checkpoints)
-
-        logging.info("Tracking %s: tag=%s, carrier=%s", tracking_number, tag, carrier)
-
-        eta_note = f" The estimated delivery date is {expected}." if expected else ""
-        carrier_note = f" The carrier is {carrier}." if carrier else ""
-        update_note = (
-            f" The most recent carrier update was: '{last_update}'." if last_update else ""
-        )
-
-        escalation_note = ""
-        if tag in ("AttemptFail", "Exception"):
-            escalation_note = (
-                " Since this requires carrier action, offer to provide the carrier's contact "
-                "information or escalate to a support agent who can follow up directly."
-            )
-
-        self.hangup(
+    if not tracking:
+        call.hangup(
             final_instructions=(
-                f"Let the customer know their shipment {status_text}.{carrier_note}"
-                f"{eta_note}{update_note}{escalation_note} "
-                "Be warm and helpful. Thank them for calling Meridian Commerce."
+                "Let the customer know you weren't able to find a shipment with that tracking number. "
+                "Suggest they double-check the number from their shipping confirmation email. "
+                "Offer to transfer them to a support agent if they need further help."
             )
         )
+        return
+
+    tag = tracking.get("tag", "")
+    status_text = TAG_LABELS.get(tag, "in an unknown status")
+    carrier = (tracking.get("slug") or "").replace("-", " ").title()
+    expected = (
+        tracking.get("expected_delivery")
+        or tracking.get("current_expected_delivery")
+        or ""
+    )
+    checkpoints = tracking.get("checkpoints") or []
+    last_update = format_last_checkpoint(checkpoints)
+
+    logging.info("Tracking %s: tag=%s, carrier=%s", tracking_number, tag, carrier)
+
+    eta_note = f" The estimated delivery date is {expected}." if expected else ""
+    carrier_note = f" The carrier is {carrier}." if carrier else ""
+    update_note = (
+        f" The most recent carrier update was: '{last_update}'." if last_update else ""
+    )
+
+    escalation_note = ""
+    if tag in ("AttemptFail", "Exception"):
+        escalation_note = (
+            " Since this requires carrier action, offer to provide the carrier's contact "
+            "information or escalate to a support agent who can follow up directly."
+        )
+
+    call.hangup(
+        final_instructions=(
+            f"Let the customer know their shipment {status_text}.{carrier_note}"
+            f"{eta_note}{update_note}{escalation_note} "
+            "Be warm and helpful. Thank them for calling Meridian Commerce."
+        )
+    )
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    guava.Client().listen_inbound(
-        agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-        controller_class=ShipmentStatusCheckController,
-    )
+    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
