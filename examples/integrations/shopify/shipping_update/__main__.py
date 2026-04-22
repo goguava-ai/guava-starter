@@ -1,10 +1,10 @@
 import argparse
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 STORE = os.environ["SHOPIFY_STORE"]
 BASE_URL = f"https://{STORE}.myshopify.com/admin/api/2026-01"

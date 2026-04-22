@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 GRAPH_ACCESS_TOKEN = os.environ["GRAPH_ACCESS_TOKEN"]
 BASE_URL = "https://graph.microsoft.com/v1.0"

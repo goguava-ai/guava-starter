@@ -1,15 +1,13 @@
-import guava
-import os
-import logging
-from guava import logging_utils
-import requests
 import datetime
+import logging
+import os
 import zoneinfo
 
+import guava
+import requests
 from google import genai as google_genai
-
+from guava import logging_utils
 from guava.helpers.genai import DateRangeParser
-
 
 CALENDLY_TOKEN = os.environ["CALENDLY_TOKEN"]
 AGENT_NUMBER = os.environ["GUAVA_AGENT_NUMBER"]

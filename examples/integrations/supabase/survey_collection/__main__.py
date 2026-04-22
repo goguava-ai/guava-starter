@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 REST_URL = f"{SUPABASE_URL}/rest/v1"

@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = os.environ.get("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
 

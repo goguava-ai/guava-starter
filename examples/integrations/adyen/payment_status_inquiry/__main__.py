@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 CHECKOUT_BASE_URL = os.environ.get("ADYEN_CHECKOUT_URL", "https://checkout-test.adyen.com/v71")
 MERCHANT_ACCOUNT = os.environ["ADYEN_MERCHANT_ACCOUNT"]

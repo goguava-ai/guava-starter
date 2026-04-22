@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 MONDAY_API_URL = "https://api.monday.com/v2"
 

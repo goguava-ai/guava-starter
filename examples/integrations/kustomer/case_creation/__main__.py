@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from urllib.parse import quote
 
+import guava
+import requests
+from guava import logging_utils
 
 TOKEN = os.environ["KUSTOMER_API_TOKEN"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}

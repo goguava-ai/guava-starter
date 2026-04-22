@@ -1,11 +1,11 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 import uuid
-import requests
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 ACCESS_TOKEN = os.environ["SQUARE_ACCESS_TOKEN"]
 LOCATION_ID = os.environ["SQUARE_LOCATION_ID"]

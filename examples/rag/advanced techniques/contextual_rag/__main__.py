@@ -16,17 +16,17 @@ Gemini generates the final answer.
 Requires ANTHROPIC_API_KEY in addition to the standard Guava credentials.
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
 import anthropic
+import guava
 from google import genai
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
-from guava.helpers.vertexai import VertexAIEmbedding
 from guava.helpers.rag import chunk_document
+from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)
 

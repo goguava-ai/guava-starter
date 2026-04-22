@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from datetime import datetime, timezone
-from pymongo import MongoClient
 
+import guava
+from guava import logging_utils
+from pymongo import MongoClient
 
 _client = MongoClient(os.environ["MONGODB_URI"])
 _db = _client[os.environ["MONGODB_DATABASE"]]

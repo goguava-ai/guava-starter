@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 SN_INSTANCE = os.environ["SERVICENOW_INSTANCE"]
 SN_USERNAME = os.environ["SERVICENOW_USERNAME"]

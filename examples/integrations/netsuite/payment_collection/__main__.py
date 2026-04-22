@@ -1,13 +1,13 @@
-import guava
-import os
-import logging
-from guava import logging_utils
-import json
 import argparse
-import requests
-from requests_oauthlib import OAuth1
+import json
+import logging
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
+from requests_oauthlib import OAuth1
 
 NS_ACCOUNT_ID = os.environ["NETSUITE_ACCOUNT_ID"]
 NS_CONSUMER_KEY = os.environ["NETSUITE_CONSUMER_KEY"]

@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
 import base64
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 
 def get_access_token() -> str:

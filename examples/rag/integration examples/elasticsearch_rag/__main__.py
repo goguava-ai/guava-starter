@@ -21,14 +21,14 @@ To run Elasticsearch locally:
         -e "xpack.security.enabled=false" elasticsearch:8.15.0
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
+import guava
 from elasticsearch import Elasticsearch
 from google import genai
+from guava import logging_utils
 from guava.helpers.rag import DocumentQA, VectorStore
 
 logger = logging.getLogger(__name__)

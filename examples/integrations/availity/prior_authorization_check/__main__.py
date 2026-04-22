@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 AVAILITY_CLIENT_ID = os.environ["AVAILITY_CLIENT_ID"]
 AVAILITY_CLIENT_SECRET = os.environ["AVAILITY_CLIENT_SECRET"]

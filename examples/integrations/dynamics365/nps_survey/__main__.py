@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 ACCESS_TOKEN = os.environ["DYNAMICS_ACCESS_TOKEN"]
 ORG_URL = os.environ["DYNAMICS_ORG_URL"]  # e.g. https://yourorg.crm.dynamics.com

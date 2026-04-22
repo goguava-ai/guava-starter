@@ -6,15 +6,15 @@ and answers every caller question via DocumentQA.
 This is the simplest RAG pattern — a single retriever over a static document set.
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
+import guava
 from google import genai
-from guava.helpers.rag import DocumentQA
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding, VertexAIGeneration
 
 logger = logging.getLogger(__name__)

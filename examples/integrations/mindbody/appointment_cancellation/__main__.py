@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import json
-import requests
+import logging
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = "https://api.mindbodyonline.com/public/v6"
 API_KEY = os.environ["MINDBODY_API_KEY"]

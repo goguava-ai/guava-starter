@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime
 
+import guava
+import requests
+from guava import logging_utils
 
 SALESFORCE_INSTANCE_URL = os.environ["SALESFORCE_INSTANCE_URL"]
 SALESFORCE_ACCESS_TOKEN = os.environ["SALESFORCE_ACCESS_TOKEN"]

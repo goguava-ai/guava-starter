@@ -7,13 +7,14 @@ Environment variables:
     GUAVA_AGENT_NUMBER
 """
 
-import guava
+import logging
 import os
 from pathlib import Path
 
+import guava
 from guava import logging_utils
 from guava.helpers.rag import DocumentQA
-import logging
+
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 print(DOCS_DIR)
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]

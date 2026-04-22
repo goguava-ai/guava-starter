@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 ADYEN_API_KEY = os.environ["ADYEN_API_KEY"]
 ADYEN_MERCHANT_ACCOUNT = os.environ["ADYEN_MERCHANT_ACCOUNT"]

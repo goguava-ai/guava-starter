@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 ACCESS_TOKEN = os.environ["DRCHRONO_ACCESS_TOKEN"]
 DOCTOR_ID = int(os.environ["DRCHRONO_DOCTOR_ID"])

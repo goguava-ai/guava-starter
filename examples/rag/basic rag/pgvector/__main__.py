@@ -22,15 +22,15 @@ To run a local Postgres with pgvector:
     docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=pass pgvector/pgvector:pg16
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
+import guava
 from google import genai
-from guava.helpers.rag import DocumentQA
+from guava import logging_utils
 from guava.helpers.pgvector import PgVectorStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)

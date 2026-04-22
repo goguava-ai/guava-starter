@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 # Generic inbound workflow trigger. The Retool workflow receives the caller's
 # intent and structured fields, executes its logic, and returns a message for

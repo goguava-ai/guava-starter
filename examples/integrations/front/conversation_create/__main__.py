@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 FRONT_API_TOKEN = os.environ["FRONT_API_TOKEN"]
 FRONT_INBOX_ID = os.environ["FRONT_INBOX_ID"]  # e.g. "inb_XXXX"

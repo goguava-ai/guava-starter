@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 TENANT_ID = os.environ["POWERBI_TENANT_ID"]
 CLIENT_ID = os.environ["POWERBI_CLIENT_ID"]

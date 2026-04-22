@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 API_LOGIN_ID = os.environ["AUTHORIZENET_API_LOGIN_ID"]
 TRANSACTION_KEY = os.environ["AUTHORIZENET_TRANSACTION_KEY"]

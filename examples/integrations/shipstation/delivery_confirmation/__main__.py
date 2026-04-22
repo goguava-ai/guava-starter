@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 from datetime import datetime
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = "https://ssapi.shipstation.com"
 AUTH = (os.environ["SHIPSTATION_API_KEY"], os.environ["SHIPSTATION_API_SECRET"])

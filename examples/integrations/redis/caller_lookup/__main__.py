@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import json
-from redis import Redis
+import logging
+import os
 
+import guava
+from guava import logging_utils
+from redis import Redis
 
 r = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 

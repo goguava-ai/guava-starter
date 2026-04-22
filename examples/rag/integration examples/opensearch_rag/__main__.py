@@ -21,17 +21,17 @@ Environment variables:
     AWS_DEFAULT_REGION   — AWS region (default: us-east-1)
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
 import boto3
+import guava
+from google import genai
+from guava import logging_utils
+from guava.helpers.rag import DocumentQA, VectorStore, chunk_document
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
-from google import genai
-from guava.helpers.rag import DocumentQA, VectorStore, chunk_document
 
 logger = logging.getLogger(__name__)
 

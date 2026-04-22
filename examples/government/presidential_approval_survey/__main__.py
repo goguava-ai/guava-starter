@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import json
+import logging
+import os
 from datetime import datetime
 
+import guava
+from guava import logging_utils
 
 TO_NUMBER = "+13142239451"
 

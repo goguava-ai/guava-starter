@@ -1,11 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 
+import guava
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-
+from guava import logging_utils
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 SPREADSHEET_ID = os.environ["SHEETS_SPREADSHEET_ID"]

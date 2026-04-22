@@ -1,12 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
+import logging
+import os
 from datetime import datetime, timezone
 
+import guava
 from google.cloud import bigquery
-
+from guava import logging_utils
 
 # Set this to your BigQuery table: "your_project.your_dataset.your_table"
 BIGQUERY_TABLE = os.environ["BIGQUERY_TABLE"]

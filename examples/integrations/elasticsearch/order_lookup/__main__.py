@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 ES_URL = os.environ["ELASTICSEARCH_URL"].rstrip("/")
 ORDER_INDEX = os.environ.get("ELASTICSEARCH_ORDER_INDEX", "orders")

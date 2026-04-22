@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
+import os
+
+import guava
 from guava import logging_utils
 from pymongo import MongoClient
-
 
 _client = MongoClient(os.environ["MONGODB_URI"])
 _db = _client[os.environ["MONGODB_DATABASE"]]

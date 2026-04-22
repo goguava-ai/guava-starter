@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import json
-import boto3
+import logging
+import os
 from datetime import datetime, timezone
 
+import boto3
+import guava
+from guava import logging_utils
 
 agent = guava.Agent(
     name="Sam",

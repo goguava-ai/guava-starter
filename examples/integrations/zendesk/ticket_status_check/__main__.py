@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import base64
-import requests
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 ZENDESK_SUBDOMAIN = os.environ["ZENDESK_SUBDOMAIN"]
 ZENDESK_EMAIL = os.environ["ZENDESK_EMAIL"]

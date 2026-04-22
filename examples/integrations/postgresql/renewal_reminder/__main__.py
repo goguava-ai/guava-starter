@@ -1,12 +1,12 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import psycopg2
-import psycopg2.extras
+import logging
+import os
 from datetime import date
 
+import guava
+import psycopg2
+import psycopg2.extras
+from guava import logging_utils
 
 
 def get_connection():

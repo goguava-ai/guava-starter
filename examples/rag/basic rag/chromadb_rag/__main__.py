@@ -11,13 +11,13 @@ Requires: pip install 'gridspace-guava[chromadb]'
 Data is stored in a local ./chroma_data directory next to this file.
 """
 
-import guava
-from guava import logging_utils
 import os
 from pathlib import Path
 
-from guava.helpers.rag import DocumentQA
+import guava
+from guava import logging_utils
 from guava.helpers.chromadb import ChromaVectorStore
+from guava.helpers.rag import DocumentQA
 
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]

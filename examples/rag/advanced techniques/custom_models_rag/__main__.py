@@ -16,21 +16,20 @@ Environment variables:
     ANTHROPIC_API_KEY — Anthropic API key for answer generation
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
 import anthropic
+import guava
 import openai
-
+from guava import logging_utils
+from guava.helpers.lancedb import LanceDBStore
 from guava.helpers.rag import (
     DocumentQA,
     EmbeddingModel,
     GenerationModel,
 )
-from guava.helpers.lancedb import LanceDBStore
 
 logger = logging.getLogger(__name__)
 

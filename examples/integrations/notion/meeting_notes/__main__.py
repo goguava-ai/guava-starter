@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = "https://api.notion.com/v1"
 DATABASE_ID = os.environ["NOTION_DATABASE_ID"]

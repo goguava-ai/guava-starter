@@ -1,18 +1,15 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import datetime
-
+import logging
+import os
 import pickle
 
+import guava
 from google import genai as google_genai
-from google.oauth2 import service_account
 from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
-
+from guava import logging_utils
 from guava.helpers.genai import DatetimeFilter
-
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 

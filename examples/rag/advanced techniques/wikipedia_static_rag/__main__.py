@@ -10,15 +10,15 @@ Good for supplementing domain-specific docs with general background
 knowledge (e.g. "What is subrogation?" or "How does flood insurance work?").
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 
+import guava
 import httpx
 from google import genai
-from guava.helpers.rag import DocumentQA
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding, VertexAIGeneration
 
 logger = logging.getLogger(__name__)

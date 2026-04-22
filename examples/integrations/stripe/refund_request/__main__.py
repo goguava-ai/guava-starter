@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
 AUTH = (STRIPE_SECRET_KEY, "")

@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 # Webhook URL and API key from the Retool Workflow editor (Trigger block → Run from API).
 RETOOL_WORKFLOW_WEBHOOK_URL = os.environ["RETOOL_IT_HELPDESK_WORKFLOW_URL"]

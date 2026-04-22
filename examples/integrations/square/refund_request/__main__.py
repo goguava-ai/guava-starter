@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 import uuid
-import requests
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = os.environ.get("SQUARE_BASE_URL", "https://connect.squareupsandbox.com")
 SQUARE_VERSION = "2024-01-18"

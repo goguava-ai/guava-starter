@@ -1,10 +1,10 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import logging
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 PRACTICE_ID = os.environ["ATHENA_PRACTICE_ID"]
 BASE_URL = f"https://api.platform.athenahealth.com/v1/{PRACTICE_ID}"

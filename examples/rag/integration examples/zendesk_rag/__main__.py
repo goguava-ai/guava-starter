@@ -15,17 +15,17 @@ Environment variables:
     ZENDESK_API_TOKEN  — your Zendesk API token (Admin > Apps & Integrations > APIs > Zendesk API)
 """
 
-import re
-import os
 import logging
-from guava import logging_utils
+import os
+import re
 from pathlib import Path
 
-import requests
 import guava
+import requests
 from google import genai
-from guava.helpers.rag import DocumentQA
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)

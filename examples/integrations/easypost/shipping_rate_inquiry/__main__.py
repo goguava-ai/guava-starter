@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 EASYPOST_API_KEY = os.environ["EASYPOST_API_KEY"]
 BASE_URL = "https://api.easypost.com/v2"

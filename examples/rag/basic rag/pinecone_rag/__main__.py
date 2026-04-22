@@ -16,13 +16,13 @@ Environment variables:
     PINECONE_API_KEY  — your Pinecone API key
 """
 
-import guava
-from guava import logging_utils
 import os
 from pathlib import Path
 
-from guava.helpers.rag import DocumentQA
+import guava
+from guava import logging_utils
 from guava.helpers.pinecone import PineconeVectorStore
+from guava.helpers.rag import DocumentQA
 
 DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
 DOCUMENTS = [p.read_text() for p in sorted(DOCS_DIR.glob("*.txt"))]

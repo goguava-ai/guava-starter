@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from datetime import datetime, timezone
-from opensearchpy import OpenSearch
 
+import guava
+from guava import logging_utils
+from opensearchpy import OpenSearch
 
 OPENSEARCH_HOST = os.environ["OPENSEARCH_HOST"]
 OPENSEARCH_PORT = int(os.environ.get("OPENSEARCH_PORT", "443"))

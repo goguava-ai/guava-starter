@@ -12,18 +12,18 @@ Uses Vertex AI for both embedding (LanceDBStore) and answer generation
 multi-turn conversations.
 """
 
-import guava
-import os
 import logging
-from dataclasses import dataclass, field
-from guava import logging_utils
+import os
 import tempfile
+from dataclasses import dataclass, field
 
+import guava
 import httpx
 from google import genai
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
-from guava.helpers.vertexai import VertexAIEmbedding
 from guava.helpers.rag import chunk_document
+from guava.helpers.vertexai import VertexAIEmbedding
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 import random
-import requests
 
+import guava
+import requests
+from guava import logging_utils
 
 STEDI_API_KEY = os.environ["STEDI_API_KEY"]
 PROVIDER_NPI = os.environ["STEDI_PROVIDER_NPI"]

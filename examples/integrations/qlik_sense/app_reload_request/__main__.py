@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 QLIK_TENANT_URL = os.environ["QLIK_TENANT_URL"].rstrip("/")
 QLIK_API_KEY = os.environ["QLIK_API_KEY"]

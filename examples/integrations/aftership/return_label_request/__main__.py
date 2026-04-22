@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 AFTERSHIP_API_KEY = os.environ["AFTERSHIP_API_KEY"]
 HEADERS = {

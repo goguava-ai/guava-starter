@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
+
+import guava
 import pymysql
 import pymysql.cursors
-
+from guava import logging_utils
 
 # Points required to reach each tier and the perks associated with them.
 TIERS = {

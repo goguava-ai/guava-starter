@@ -1,12 +1,12 @@
-import base64
-import guava
-import os
-import logging
-from guava import logging_utils
 import argparse
-import requests
+import base64
+import logging
+import os
 from datetime import datetime, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = os.environ.get("PRACTICE_FUSION_FHIR_BASE_URL", "https://api.practicefusion.com/fhir/r4")
 

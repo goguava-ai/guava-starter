@@ -16,18 +16,18 @@ Environment variables:
     SALESFORCE_SECURITY_TOKEN — Salesforce API security token
 """
 
-import re
-import os
 import logging
-from guava import logging_utils
+import os
+import re
 from pathlib import Path
 
 import guava
 from google import genai
-from simple_salesforce import Salesforce
-from guava.helpers.rag import DocumentQA
+from guava import logging_utils
 from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding
+from simple_salesforce import Salesforce
 
 logger = logging.getLogger(__name__)
 

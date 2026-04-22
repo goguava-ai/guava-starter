@@ -1,11 +1,11 @@
-import guava
-import os
-import logging
-from guava import logging_utils
 import json
-import requests
+import logging
+import os
 from datetime import datetime, timedelta
 
+import guava
+import requests
+from guava import logging_utils
 
 BASE_URL = "https://acuityscheduling.com/api/v1"
 AUTH = (os.environ["ACUITY_USER_ID"], os.environ["ACUITY_API_KEY"])

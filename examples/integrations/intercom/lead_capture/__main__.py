@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime
 
+import guava
+import requests
+from guava import logging_utils
 
 INTERCOM_ACCESS_TOKEN = os.environ["INTERCOM_ACCESS_TOKEN"]
 

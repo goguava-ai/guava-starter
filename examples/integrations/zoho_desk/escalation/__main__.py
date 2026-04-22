@@ -1,9 +1,9 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 
+import guava
+import requests
+from guava import logging_utils
 
 ACCESS_TOKEN = os.environ["ZOHO_DESK_ACCESS_TOKEN"]
 ORG_ID = os.environ["ZOHO_DESK_ORG_ID"]

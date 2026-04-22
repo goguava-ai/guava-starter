@@ -1,12 +1,12 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 import secrets
-import pymysql
-import pymysql.cursors
 from datetime import datetime
 
+import guava
+import pymysql
+import pymysql.cursors
+from guava import logging_utils
 
 
 def get_connection():

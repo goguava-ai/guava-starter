@@ -7,16 +7,16 @@ the most relevant knowledge base, preventing cross-contamination (e.g. auto
 deductible info appearing when the caller asked about life insurance).
 """
 
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
 from pathlib import Path
 
+import guava
 from google import genai
+from guava import logging_utils
 from guava.helpers.genai import IntentRecognizer
-from guava.helpers.rag import DocumentQA
 from guava.helpers.lancedb import LanceDBStore
+from guava.helpers.rag import DocumentQA
 from guava.helpers.vertexai import VertexAIEmbedding, VertexAIGeneration
 
 logger = logging.getLogger(__name__)

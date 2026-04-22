@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
+import os
+
+import guava
 import psycopg2
 import psycopg2.extras
-
+from guava import logging_utils
 
 PRIORITY_MAP = {
     "blocking my entire team": "critical",

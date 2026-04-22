@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime
 
+import guava
+import requests
+from guava import logging_utils
 
 FHIR_BASE_URL = os.environ["MEDITECH_FHIR_BASE_URL"]
 

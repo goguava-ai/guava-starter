@@ -1,10 +1,10 @@
-import guava
-import os
 import logging
-from guava import logging_utils
-import requests
+import os
 from datetime import datetime, timedelta, timezone
 
+import guava
+import requests
+from guava import logging_utils
 
 ES_URL = os.environ["ELASTICSEARCH_URL"].rstrip("/")
 LOG_INDEX = os.environ.get("ELASTICSEARCH_LOG_INDEX", "logs-*")
