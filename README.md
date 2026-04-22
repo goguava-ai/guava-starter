@@ -7,7 +7,7 @@ Guava is a voice agent platform for developers. This repo is a starting point fo
 1. **Install the SDK** (Python >= 3.10 required):
 
    ```bash
-   pip install gridspace-guava --extra-index-url https://guava-pypi.gridspace.com
+   pip install guava-sdk
    ```
 
 2. **Set your credentials**:

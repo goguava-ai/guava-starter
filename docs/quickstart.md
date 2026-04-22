@@ -1,535 +1,358 @@
 # Quickstart
 
-Welcome to Guava, a voice agent platform created exclusively for developers. Guava allows developers to deliver reliable voice agents that integrate seamlessly with existing agentic AI systems.
+The recommended approach for building Guava voice agents is the Guava CLI, which sets up projects and installs necessary components. Alternatively, direct SDK installation is available.
 
-The primary interface for using Guava is a Python SDK.
+## Account Setup
 
-### Installation / Setup
+Begin by registering at [app.goguava.ai](https://app.goguava.ai).
 
-> NOTE
-> Prerequisites
+## CLI Installation
 
-- Python >= 3.10
-- A Guava API Key and Phone Number
+**Script-based (macOS/Linux):**
 
-1. Install the Python SDK using your preferred method.
-
-*Method 1: pip*
-
-```
-$ pip install gridspace-guava --extra-index-url https://guava-pypi.gridspace.com
-
+```bash
+curl -fsSL https://storage.googleapis.com/gridspace-guava-cli/cli/install.sh | sh
 ```
 
-*Method 2: uv astral*
+**Homebrew (macOS):**
 
-```
-$ uv add gridspace-guava --index guava=https://guava-pypi.gridspace.com
-
-```
-
-*Method 3: poetry*
-
-```
-$ poetry source add --priority=explicit guava https://guava-pypi.gridspace.com
-$ poetry add --source guava gridspace-guava
-
+```bash
+brew tap goguava-ai/tap
+brew install goguava-ai/tap/guava
 ```
 
-2. Set your environment variables.
+## Authentication
 
-```
-$ export GUAVA_API_KEY="..."
-$ export GUAVA_AGENT_NUMBER="..."
-
+```bash
+guava login
 ```
 
-3. You’re ready.
+## Create an Agent
 
-## Running an Example
+Bootstrap a new project with starter code:
 
-Examples can be found in the `guava.examples` submodule. Running one starts a voice conversation through a phone or webrtc session.
-
-### Outbound Phone Call
-
-```
-$ python -m guava.examples.scheduling_outbound +1... # Use your phone number here and your agent will call you.
-
+```bash
+guava create my-agent
 ```
 
-### Inbound Phone Call
+## Optional: Clone the Starter Repository
 
-```
-$ python -m guava.examples.thai_palace
-$ # Now dial your agent's number while the script is running.
+Clone the Guava starter materials containing API documentation and examples sized for AI coding assistants:
 
-```
-
-### Inbound WebRTC
-
-```
-$ python -m guava.tools.create_webrtc_agent # Create a WebRTC agent code.
-$ python -m guava.examples.inbound_webrtc grtc-... # Start the listener
-$ # Go to https://guava-dev.gridspace.com/debug-webrtc and call the agent.
-
+```bash
+git clone https://github.com/goguava-ai/guava-starter.git my-agent/guava-starter
 ```
 
-## Example Walkthroughs
+## Deploy
 
-### Outbound Call with Appointment Scheduling
-
-In this example, we'll be making outbound calls to schedule appointments for a fictional dental office. You can run the completed version of this example from the SDK.
-
-```
-$ python -m guava.examples.scheduling_outbound +1... # Use your phone number here and your agent will call you.
-
+```bash
+guava deploy up ./my-agent
 ```
 
-We create a new CallController subclass to manage the call:
+Monitor progress through the Deployments dashboard and view calls in Conversations.
 
-```
-class SchedulingController(guava.CallController):
-    def __init__(self, patient_name):
-        super().__init__()
-        self.datetime_filter = DatetimeFilter(source_list=MOCK_APPOINTMENTS)
-        self._intended_recipient = patient_name
-        self.set_persona(
-            organization_name="Bright Smile Dental",
-            agent_name="Grace",
-            agent_purpose=f'You are calling {self._intended_recipient} to help them schedule a dental appointment',
-        )
-        self.reach_person(
-            contact_full_name=self._intended_recipient,
-            on_success=self.schedule_recipient,
-            on_failure=self.recipient_unavailable,
-        )
+---
 
+# SDK Installation (Without CLI)
+
+If you prefer to skip the CLI, you can install the SDK directly.
+
+## Install the SDK
+
+**pip:**
+
+```bash
+pip install guava-sdk
 ```
 
-Here, we use the `DatetimeFilter` class, which uses an external LLM call to find potential times based on user input.
+**uv:**
 
-> NOTE
-> Note
->
-> In a production use case, you would likely replace DatetimeFilter with your own scheduling backend. It's provided here as an example to get you started quickly.
-
-We also use the `reach_person` convenience function to confirm that we are talking to the intended recipient of the call. Once the callee has been confirmed, we transition to the `schedule_recipient` function.
-
-```
-    def schedule_recipient(self):
-        self.set_task(
-            checklist=[
-                # Use guava.Say to instruct the agent to repeat a line verbatim.
-                guava.Say("Let me look to see what appointment times we have available."),
-                guava.Field(
-                    key="appointment_time",
-                    field_type='calendar_slot',
-                    description="Find a time that works for the caller",
-                    choice_generator=self.appointment_time_filter
-                ),
-                guava.Say("Your appointment has been confirmed! Have a nice day.")
-            ],
-            on_complete=self.end_call,
-        )
-
+```bash
+uv add guava-sdk
 ```
 
-The `Field` checklist item instructs the voice bot to negotiate with the patient to pick a calendar slot for their appointment.
+**poetry:**
 
-The `choice_generator` function is a function that we implement which takes in a natural language description of what times are preferable to the patient. For example, they might say "Tuesdays and Fridays work best". The `choice_generator` is then free to use that input in conjunction with any external data sources and models to suggest some dates and times.
-
-```
-    def appointment_time_filter(self, query: str):
-        return self.datetime_filter.filter(query, max_results=3)
-
+```bash
+poetry add guava-sdk
 ```
 
-In this example, we use the `DatetimeFilter` helper class, intialized with a list of hardcoded times.
+## Set Environment Variables
 
-The full outbound scheduling is show below.
-
+```bash
+export GUAVA_API_KEY="gva-..."         # Set to your API key.
+export GUAVA_AGENT_NUMBER="+15551234567" # Set to your purchased number.
 ```
-import argparse
-import logging
+
+Your API key is available from the API Keys dashboard. `GUAVA_AGENT_NUMBER` is a phone number you purchase through Guava.
+
+## Optional: Clone the Starter Repository
+
+```bash
+git clone https://github.com/goguava-ai/guava-starter.git guava-starter
+```
+
+## Run an Example
+
+The SDK includes pre-built examples you can run directly.
+
+**Outbound scheduling call** — your agent will call the number you provide:
+
+```bash
+python -m guava.examples.scheduling_outbound +1... "John Doe"
+```
+
+**Inbound restaurant waitlist** — dial your agent's number while the script is running:
+
+```bash
+python -m guava.examples.restaurant_waitlist
+```
+
+---
+
+# Example: Inbound Call with RAG
+
+This example builds an inbound voice agent for a property insurance company. Callers can ask questions about their policy, and the agent answers using a document knowledge base.
+
+## Define the Agent
+
+```python
 import guava
+
+agent = guava.Agent(
+    organization="Harper Valley Property Insurance",
+    purpose="Answer questions regarding property insurance policy until there are no more questions",
+)
+```
+
+## Set Up DocumentQA
+
+`DocumentQA` is a built-in RAG helper. You can substitute any knowledge base system you prefer.
+
+```python
+from guava.helpers.rag import DocumentQA
+from guava.examples.example_data import PROPERTY_INSURANCE_POLICY
+
+document_qa = DocumentQA(documents=PROPERTY_INSURANCE_POLICY)
+```
+
+## Handle Questions with `on_question`
+
+When the agent is asked something it cannot answer from context alone, it invokes the `on_question` callback. The agent remains fully responsive during the lookup — it continues listening and engaging with the caller while waiting for your response.
+
+```python
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    return document_qa.ask(question)
+```
+
+## Start the Agent
+
+Guava does not require a public web server to receive inbound calls. All agents can run behind firewalls and NATs.
+
+```python
+# Attach your agent to a phone number. Call your agent's number to talk to it.
+agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
+
+# Receive a WebRTC link to talk to your agent in the browser.
+agent.listen_webrtc()
+
+# Talk to your agent using your local audio device.
+agent.call_local()
+```
+
+## Complete Example
+
+```python
+import logging
 import os
+import guava
+import argparse
 
-from guava.examples.mock_appointments import MOCK_APPOINTMENTS
-from guava.helpers.openai import DatetimeFilter
+from guava.helpers.rag import DocumentQA
+from guava import logging_utils, Agent
+from guava.examples.example_data import PROPERTY_INSURANCE_POLICY
 
-selected_time = None
+logger = logging.getLogger("guava.examples.property_insurance")
 
-class SchedulingController(guava.CallController):
-    def __init__(self, patient_name):
-        super().__init__()
-        self.datetime_filter = DatetimeFilter(source_list=MOCK_APPOINTMENTS)
-        self._intended_recipient = patient_name
-        self.set_persona(
-            organization_name="Bright Smile Dental",
-            agent_name="Grace",
-            agent_purpose=f'You are calling {self._intended_recipient} to help them schedule a dental appointment',
-        )
-        self.reach_person(
-            contact_full_name=self._intended_recipient,
-            on_success=self.schedule_recipient,
-            on_failure=self.recipient_unavailable,
-        )
+agent = Agent(
+    organization="Harper Valley Property Insurance",
+    purpose="Answer questions regarding property insurance policy until there are no more questions",
+)
 
-    def schedule_recipient(self):
-        self.set_task(
-            checklist=[
-                guava.Say("Let me look to see what appointment times we have available."),
-                guava.Field(
-                    key="appointment_time",
-                    field_type='calendar_slot',
-                    description="Find a time that works for the caller",
-                    choice_generator=self.appointment_time_filter
-                ),
-                guava.Say("Your appointment has been confirmed! Have a nice day.")
-            ],
-            on_complete=self.end_call,
-        )
+# Built-in knowledge base helper. You can use any RAG system you prefer.
+document_qa = DocumentQA(documents=PROPERTY_INSURANCE_POLICY)
 
-    def appointment_time_filter(self, query: str):
-        return self.datetime_filter.filter(query, max_results=3)
+# When the agent is asked a question it cannot answer, it invokes on_question.
+@agent.on_question
+def on_question(call: guava.Call, question: str) -> str:
+    # Forward the question to the knowledge base and return the answer.
+    answer = document_qa.ask(question)
+    logger.info("RAG answer: %s", answer)
+    return answer
 
-    def end_call(self):
-        global selected_time
-        selected_time = self.get_field("appointment_time")
-        self.hangup(final_instructions="Thank them for their time and hang up the call.")
+if __name__ == "__main__":
+    logging_utils.configure_logging()
 
-    def recipient_unavailable(self):
-        self.hangup(final_instructions="Apologize for your mistake and hang up the call.")
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument("phone", type=str, help="Phone number to call.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--phone", action="store_true", help="Listen for phone calls.")
+    group.add_argument("--webrtc", action="store_true", help="Create a WebRTC code.")
+    group.add_argument("--local", action="store_true", help="Start a local call.")
     args = parser.parse_args()
 
-    client = guava.Client()
-    client.create_outbound(
-        from_number=os.environ['GUAVA_AGENT_NUMBER'],
-        to_number=args.phone,
-        call_controller=SchedulingController(patient_name="Benjamin Buttons"),
-    )
-    if selected_time:
-        client.send_sms(
-            from_number=os.environ['GUAVA_AGENT_NUMBER'],
-            to_number=args.phone,
-            message=f"Your appointment has been confirmed for {selected_time}"
-        )
-
+    if args.phone:
+        agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
+    elif args.webrtc:
+        agent.listen_webrtc()
+    else:
+        agent.call_local()
 ```
 
-### Outbound Sales Call with RAG
+---
 
-In this example, we will call a potential customer for a fictional real estate company and answer their questions by referencing a knowledge base.
+# Example: Inbound Call with Form Filling
 
-```
-class InsuranceCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
+This example builds an inbound voice agent for a restaurant waitlist. The agent collects caller information conversationally using structured fields.
 
-  @override
-  def on_question(self, question: str) -> str:
-    ...
+## Define the Agent
 
-```
+`guava.Agent` is the starting point for building Guava agents.
 
-The first step is to define a `CallController` subclass. The `CallController` implements callback functions that steer the voice experience in real-time during the call. You can think of Guava as providing the Agent, and your `CallController` as the expert coach, whispering in the Agent's ear as they handle the call.
-
-Since we want our bot to provide truthful answers to the customer's questions, the Agent will invoke the `on_question` function any time the user asks something that can't be inferred from context alone. You'll receive the question in natural language, and you are then free to use any technologies and tools at your disposal to return the answer. The Agent will continue to be responsive and attentive to the conversation while waiting for your response, so you are not latency-constrained in your `on_question` implementation.
-
-```
-from guava.examples.example_data import PROPERTY_INSURANCE_POLICY
-from guava.helpers.openai import DocumentQA
-
-class InsuranceCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.document_qa = DocumentQA("harper-valley-property-insurance", PROPERTY_INSURANCE_POLICY)
-
-  @override
-  def on_question(self, question: str) -> str:
-    return self.document_qa.ask(question)
-
-```
-
-The Guava SDK provides helpers for common patterns, including a `DocumentQA` class, which implements RAG using OpenAI's vector store API. In your own programs, you are free to use any models or providers to handle the Guava callbacks.
-
-Next, we need to give the Agent some information about the job to be done on this call. Unlike some AI platforms, Guava discourages long system prompts that attempt to cover every possible scenario, in favor of short contextual directions. We'll provide that using the `set_persona` and `set_task` functions.
-
-```
-class InsuranceCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.document_qa = DocumentQA("harper-valley-property-insurance", PROPERTY_INSURANCE_POLICY)
-    self.set_persona(organization_name="Harper Valley Property Insurance")
-    self.set_task(
-      '''
-      You are making an outbound call to a potential customer.
-      Your task is to answer questions regarding property insurance
-      policy until there are no more questions.
-      '''
-    )
-
-```
-
-The `set_persona` function lets the Agent know what organization it is representing on the call. The `set_task` function gives the Agent a brief summary of its current objective. As the conversation progresses, we may call `set_task` again to change our short-term objective, for example to authenticate the user or fill out a form. We'll see other examples of call steering in later examples.
-
-With all that in place, it's time to start talking!
-
-```
-if __name__ == "__main__":
-  guava.Client().create_outbound(
-    from_number=os.environ['GUAVA_AGENT_NUMBER'],
-    to_number="+1...", # Your phone number goes here.
-    call_controller=InsuranceCallController(),
-  )
-
-```
-
-The `guava.Client()` constructor will open a new control websocket to the Guava API server, and `create_outbound` will initiate an outbound phone call. To test our Agent, we just run the script, making sure that our API key and agent number variables are set:
-
-```
-$ export GUAVA_API_KEY="..."
-$ export GUAVA_AGENT_NUMBER="..."
-$ python ./insurance_example.py
-
-```
-
-The full example code is shown below.
-
-insurance_example.py
-
-```
+```python
 import guava
-import os
-import logging
 
-from typing_extensions import override
-from guava.examples.example_data import PROPERTY_INSURANCE_POLICY
-from guava.helpers.openai import DocumentQA
-
-# Print logs at the INFO level.
-logging.basicConfig(level=logging.INFO)
-
-class InsuranceCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    # Load in a QA system based off a long and complex property insurance document.
-    self.document_qa = DocumentQA("harper-valley-property-insurance", PROPERTY_INSURANCE_POLICY)
-    self.set_persona(organization_name="Harper Valley Property Insurance")
-    self.set_task("You are making an outbound call to a potential customer. Your task is to answer questions regarding property insurance policy until there are no more questions.")
-
-  @override
-  def on_question(self, question: str) -> str:
-    # Replace with your fancy RAG system.
-    return self.document_qa.ask(question)
-
-if __name__ == "__main__":
-  guava.Client().create_outbound(
-    from_number=os.environ['GUAVA_AGENT_NUMBER'],
-    to_number="+1...", # Your phone number goes here.
-    call_controller=InsuranceCallController(),
-  )
-
+agent = guava.Agent(
+    name="Mia",
+    organization="Thai Palace",
+    purpose="Helping callers join the restaurant waitlist",
+)
 ```
 
-### Inbound Reservation Call with Intent Recognition and Form Filling
+## Accept or Reject Calls
 
-In this example, we will walk through how to set up an inbound call listener for a restaurant. When a caller phones in to make a reservation, the Agent listens for the caller’s intent, routes it to your `CallController`, and responds appropriately. Let's start by defining a new `CallController` subclass.
+`on_call_received` fires before the call starts and gives you a chance to accept or reject based on caller info.
 
-```
-class RestaurantReservationCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-
-```
-
-When the Agent detects an action or intent expressed by the caller, it needs a way to notify our `RestaurantReservationCallController` appropriately based on what the caller is trying to do. To support this, the Agent invokes the `on_intent` method whenever a caller intent is detected.
-
-The detected intent is passed to `on_intent` in natural language, giving you the flexibility to use any tools, services, or logic needed to determine the next steps. While this processing occurs, the Agent remains engaged in the conversation with the caller, ensuring the caller experience stays responsive.
-
-How can we set things up such that our `RestaurantReservationCallController` is able to process downstream logic on a select set of intents that the Agent detects?
-
-```
-from guava.helpers.openai import IntentRecognizer
-
+```python
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
 ```
 
-The Guava SDK provides a helper `IntentRecognizer` class, an LLM-based classifier. The SDK reference for `IntentRecognizer` can be found here.
+## Set Up a Task with Fields
 
-```
-class RestaurantReservationCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.intent_recognizer = IntentRecognizer(["making a reservation", "anything else"])
+`on_call_start` fires at the beginning of every accepted call. Use `set_task` to give the agent a structured checklist.
 
-  @override
-  def on_intent(self, intent: str):
-    choice = self.intent_recognizer.classify(intent)
-    if choice == "making a reservation":
-      ...
-    else:
-      ...
+The checklist can mix `Field` objects (typed, named values the agent extracts) with plain strings (freeform instructions the agent follows). The agent gathers each piece of information conversationally and automatically moves on when all fields are filled.
 
-```
-
-We initialize the intent recognizer in the constructor by providing a list of intents we want to classify. When an intent is detected and matched, we handle it in the `on_intent` callback, where we can take action based on the matched intent. The `classify` method returns the most likely intent from the list provided during initialization.
-
-With intent classification in place, we will use the `set_persona` and `set_task` methods to give the Agent its own background and guide its behavior, both at the start of the call and whenever a caller’s intent is detected.
-
-```
-class RestaurantReservationCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.intent_recognizer = IntentRecognizer(["making a reservation", "anything else"])
-    self.set_persona(organization_name="Thai Palace")
-    self.make_reservation()
-
-  def make_reservation(self):
-    self.set_task(
-      objective="You are a virtual assistant for a restaurant called Thai Palace. Your job is to add callers to a reservation list.",
-      checklist=[
-        guava.Field(
-          key="caller_name",
-          field_type="text",
-          description="The name to be added to the waitlist"
-        ),
-        guava.Field(
-          key="party_size",
-          field_type="integer",
-          description="The number of people attending",
-        ),
-        guava.Field(
-          key="phone_number",
-          field_type="text",
-          description="Phone number to text when the table is ready",
-        ),
-        "Read the phone number back to the caller to make sure you got it right.",
-      ],
-      on_complete=self.hangup,
+```python
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "waitlist",
+        objective="You are a virtual assistant for Thai Palace. Add callers to the waitlist.",
+        checklist=[
+            guava.Field(key="caller_name", field_type="text", description="Name for the waitlist"),
+            guava.Field(key="party_size", field_type="integer", description="Number of people"),
+            guava.Field(
+                key="phone_number",
+                field_type="text",
+                description="Phone number to text when the table is ready",
+            ),
+            "Read the phone number back to the caller to confirm.",
+        ],
     )
-
-  @override
-  def on_intent(self, intent: str):
-    choice = self.intent_recognizer.classify(intent)
-    if choice == "making a reservation":
-      self.make_reservation()
-    else:
-      self.set_task(
-        checklist=["Tell the caller that we only handle restaurant reservation at this number."],
-        on_complete=self.make_reservation,
-      )
-
 ```
 
-The `set_persona` method establishes that the agent is representing the Thai Palace restaurant for these calls.
+## Handle Task Completion
 
-Beyond defining the Agent’s current objective through the `objective` argument, the `set_task` method also allows you to supply a `checklist` (a structured list of to-do items the agent must complete) and an `on_complete` callback (invoked once all checklist items have been satisfied).
+`on_task_complete` fires once every field in the checklist is collected.
 
-In this reservation example, we need to collect a few pieces of information from the caller: their name, the number of guests, and a phone number for the reservation. To gather this information, we populate the `checklist` with `guava.Field(...)` entries, one for each required detail. We can also include natural language in the form of a plain Python string in the `checklist` to provide the Agent with more flexible, high-level guidance on how to conduct the conversation.
-
-Once all `checklist` items have been completed, we pass the `hangup` method (provided by the Guava SDK as part of the `CallController` interface) as the `on_complete` callback, allowing the Agent to gracefully end the call when the reservation making process is finished.
-
-For more details on `set_task` and the supported checklist item types, refer to the SDK reference here.
-
-```
-class RestaurantReservationCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.intent_recognizer = IntentRecognizer(["making a reservation", "anything else"])
-    self.set_persona(organization_name="Thai Palace")
-    self.make_reservation()
-    self.accept_call()
-
+```python
+@agent.on_task_complete("waitlist")
+def on_waitlist_done(call: guava.Call) -> None:
+    logger.info(
+        "Added %s, party of %d, to waitlist.",
+        call.get_field("caller_name"),
+        call.get_field("party_size"),
+    )
+    call.hangup("Thank the caller and let them know we'll text when their table is ready.")
 ```
 
-Unlike the outbound example, inbound calls require an explicit decision about how to handle incoming callers. While the `Client` waits and listens for inbound calls, our `RestaurantReservationCallController` is responsible for deciding whether a call should be accepted or rejected. This is done using the `accept_call()` method, which allows the Agent to answer and begin handling the call. In some cases, you may instead choose to call `reject_call()` (for example, if the incoming number is on a blacklist or does not meet your acceptance criteria).
+## Start the Agent
 
-With all that in place, let's set up our `Client` to start listening for inbound calls.
+```python
+# Attach your agent to a phone number. Call your agent's number to talk to it.
+agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
 
-```
-if __name__ == "__main__":
-  guava.Client().listen_inbound(
-    agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-    controller_class=RestaurantReservationCallController,
-  )
+# Receive a WebRTC link to talk to your agent in the browser.
+agent.listen_webrtc()
 
-```
-
-The `guava.Client()` constructor will open a new control websocket to the Guava API server, and `listen_inbound` will start listening for inbound calls. To test our Agent, we just run the script, making sure that our API key and agent number variables are set:
-
-```
-$ export GUAVA_API_KEY="..."
-$ export GUAVA_AGENT_NUMBER="..."
-$ python ./restaurant_example.py
-
+# Talk to your agent using your local audio device.
+agent.call_local()
 ```
 
-The full `restaurant_example.py` file is shown below.
+## Complete Example
 
-```
-# restaurant_example.py
-
-import logging
+```python
+import os
 import guava
-import os
-from typing_extensions import override
-from guava.helpers.openai import IntentRecognizer
+import logging
+import argparse
+from guava import logging_utils
 
-# Print logs at the INFO level.
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("thai_palace")
 
-class RestaurantReservationCallController(guava.CallController):
-  def __init__(self):
-    super().__init__()
-    self.intent_recognizer = IntentRecognizer(["making a reservation", "anything else"])
-    self.set_persona(organization_name="Thai Palace")
-    self.make_reservation()
-    self.accept_call()
+agent = guava.Agent(
+    name="Mia",
+    organization="Thai Palace",
+    purpose="Helping callers join the restaurant waitlist",
+)
 
-  def make_reservation(self):
-    self.set_task(
-      objective="You are a virtual assistant for a restaurant called Thai Palace. Your job is to add callers to a reservation list.",
-      checklist=[
-        guava.Field(
-          key="caller_name",
-          field_type="text",
-          description="The name to be added to the waitlist"
-        ),
-        guava.Field(
-          key="party_size",
-          field_type="integer",
-          description="The number of people attending",
-        ),
-        guava.Field(
-          key="phone_number",
-          field_type="text",
-          description="Phone number to text when the table is ready",
-        ),
-        "Read the phone number back to the caller to make sure you got it right.",
-      ],
-      on_complete=self.hangup,
+@agent.on_call_received
+def on_call_received(call_info: guava.CallInfo) -> guava.IncomingCallAction:
+    return guava.AcceptCall()
+
+@agent.on_call_start
+def on_call_start(call: guava.Call) -> None:
+    call.set_task(
+        "waitlist",
+        objective="You are a virtual assistant for Thai Palace. Add callers to the waitlist.",
+        checklist=[
+            guava.Field(key="caller_name", field_type="text", description="Name for the waitlist"),
+            guava.Field(key="party_size", field_type="integer", description="Number of people"),
+            guava.Field(
+                key="phone_number",
+                field_type="text",
+                description="Phone number to text when the table is ready",
+            ),
+            "Read the phone number back to the caller to confirm.",
+        ],
     )
 
-  @override
-  def on_intent(self, intent: str):
-    choice = self.intent_recognizer.classify(intent)
-    if choice == "making a reservation":
-      self.make_reservation()
-    else:
-      self.set_task(
-        checklist=["Tell the caller that we only handle restaurant reservation at this number."],
-        on_complete=self.make_reservation,
-      )
+@agent.on_task_complete("waitlist")
+def on_waitlist_done(call: guava.Call) -> None:
+    logger.info(
+        "Added %s, party of %d, to waitlist.",
+        call.get_field("caller_name"),
+        call.get_field("party_size"),
+    )
+    call.hangup("Thank the caller and let them know we'll text when their table is ready.")
 
 if __name__ == "__main__":
-  guava.Client().listen_inbound(
-    agent_number=os.environ["GUAVA_AGENT_NUMBER"],
-    controller_class=RestaurantReservationCallController,
-  )
+    logging_utils.configure_logging()
 
+    parser = argparse.ArgumentParser()
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--phone", action="store_true", help="Listen for phone calls.")
+    group.add_argument("--webrtc", action="store_true", help="Create a WebRTC code.")
+    group.add_argument("--local", action="store_true", help="Start a local call.")
+    args = parser.parse_args()
+
+    if args.phone:
+        agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
+    elif args.webrtc:
+        agent.listen_webrtc()
+    else:
+        agent.call_local()
 ```
