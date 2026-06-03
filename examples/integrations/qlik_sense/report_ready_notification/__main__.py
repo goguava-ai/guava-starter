@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -164,12 +165,17 @@ if __name__ == "__main__":
     parser.add_argument("--app-id", required=True, help="Qlik app ID")
     parser.add_argument("--reload-id", default="", help="Reload job ID")
     parser.add_argument("--duration", default="", help="Reload duration in minutes")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info("Notifying %s (%s) — Qlik app '%s' is ready", args.name, args.phone, args.app_name)
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "recipient_name": args.name,

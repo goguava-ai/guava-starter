@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -340,6 +341,11 @@ if __name__ == "__main__":
     parser.add_argument("--first-name", required=True, help="Patient's first name")
     parser.add_argument("--last-name", required=True, help="Patient's last name")
     parser.add_argument("--dob", required=True, help="Date of birth (YYYY-MM-DD)")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info(
@@ -347,7 +353,7 @@ if __name__ == "__main__":
     )
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "patient_name": args.name,

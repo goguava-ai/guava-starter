@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.25.0 (2026-05-20)
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import json
 import logging
 import argparse

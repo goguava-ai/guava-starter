@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -248,12 +249,17 @@ if __name__ == "__main__":
     parser.add_argument("phone", help="Contact's phone number (E.164, e.g. +15551234567)")
     parser.add_argument("--contact-id", required=True, help="Intercom contact ID")
     parser.add_argument("--name", required=True, help="Full name of the contact to reach")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info("Initiating re-engagement call to %s (%s)", args.name, args.phone)
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "contact_id": args.contact_id,

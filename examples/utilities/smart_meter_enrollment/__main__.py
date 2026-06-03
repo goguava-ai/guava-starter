@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.25.0 (2026-05-20)
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import json
 import os
@@ -129,10 +129,15 @@ if __name__ == "__main__":
     parser.add_argument("phone", help="Customer phone number to call")
     parser.add_argument("--name", required=True, help="Customer full name")
     parser.add_argument("--account-number", required=True, help="Customer account number")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "contact_name": args.name,
