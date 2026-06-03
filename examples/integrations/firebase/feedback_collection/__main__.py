@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -261,12 +262,17 @@ if __name__ == "__main__":
     parser.add_argument("--customer-id", required=True, help="Customer ID in Firestore")
     parser.add_argument("--service-date", required=True, help="Date of service (e.g. 'March 28')")
     parser.add_argument("--service-type", default="service visit", help="Type of service performed")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info("Calling %s (%s) for post-service feedback", args.name, args.phone)
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "customer_name": args.name,

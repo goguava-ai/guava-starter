@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -213,10 +214,15 @@ if __name__ == "__main__":
     parser.add_argument("--currency", default="USD", help="ISO 4217 currency code (default: USD)")
     parser.add_argument("--description", required=True, help="Description of the charge or invoice")
     parser.add_argument("--reference", required=True, help="Unique order or invoice reference")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "customer_name": args.name,

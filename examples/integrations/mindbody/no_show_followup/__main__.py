@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import json
 import logging
@@ -241,6 +242,11 @@ if __name__ == "__main__":
     parser.add_argument("--client-id", required=True, help="Mindbody client ID")
     parser.add_argument("--class-name", required=True, help="Name of the class they missed (e.g. 'Tuesday Morning Yoga')")
     parser.add_argument("--class-date", required=True, help="Date/time of the missed class (e.g. 'Tuesday, March 25 at 7:00 AM')")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info(
@@ -253,7 +259,7 @@ if __name__ == "__main__":
     )
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "client_name": args.name,

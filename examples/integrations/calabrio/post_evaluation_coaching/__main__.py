@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import json
 import logging
@@ -293,6 +294,11 @@ if __name__ == "__main__":
     parser.add_argument("--evaluation-id", required=True, help="Calabrio evaluation ID")
     parser.add_argument("--score", required=True, help="Evaluation score (e.g. '82/100')")
     parser.add_argument("--call-date", required=True, help="Date of the evaluated call (YYYY-MM-DD)")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info(
@@ -301,7 +307,7 @@ if __name__ == "__main__":
     )
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "agent_name": args.name,

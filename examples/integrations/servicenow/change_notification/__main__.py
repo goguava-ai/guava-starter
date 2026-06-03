@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 import argparse
 import logging
 import os
@@ -219,6 +220,11 @@ if __name__ == "__main__":
     parser.add_argument("--change-number", required=True, help="ServiceNow Change Request number (e.g. CHG0012345)")
     parser.add_argument("--summary", required=True, help="Brief plain-language summary of the change")
     parser.add_argument("--window", required=True, help="Maintenance window (e.g. 'Saturday March 30, 10 PM – 2 AM ET')")
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
     args = parser.parse_args()
 
     logging.info(
@@ -227,7 +233,7 @@ if __name__ == "__main__":
     )
 
     agent.call_phone(
-        from_number=os.environ["GUAVA_AGENT_NUMBER"],
+        from_number=args.from_number,
         to_number=args.phone,
         variables={
             "contact_name": args.name,

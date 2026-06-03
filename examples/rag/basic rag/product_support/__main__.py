@@ -1,3 +1,4 @@
+# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
 """
 Customers call in with questions about their Apex BrewMaster Pro coffee maker.
 Product documents are uploaded to Guava at startup and queries are answered via
@@ -8,7 +9,7 @@ Environment variables:
     GUAVA_AGENT_NUMBER
 """
 
-import os
+import argparse
 from pathlib import Path
 
 import guava
@@ -49,4 +50,24 @@ def on_question(call: guava.Call, question: str) -> str:
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
+
+    parser = argparse.ArgumentParser()
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--phone", metavar="PHONE_NUMBER", nargs="?", const="", help="Listen for phone calls."
+    )
+    group.add_argument(
+        "--webrtc", metavar="WEBRTC_CODE", nargs="?", const="", help="Listen on a WebRTC code."
+    )
+    group.add_argument("--local", action="store_true", help="Start a local call.")
+    group.add_argument("--sip", metavar="SIP_CODE", help="Listen on a SIP code \'guavasip-...\'.")
+    args = parser.parse_args()
+
+    if args.phone is not None:
+        agent.listen_phone(args.phone)
+    elif args.webrtc is not None:
+        agent.listen_webrtc(args.webrtc or None)
+    elif args.sip:
+        agent.listen_sip(args.sip)
+    else:
+        agent.call_local()
