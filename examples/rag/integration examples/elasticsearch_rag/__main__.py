@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
+# SDK conformance: guava-sdk 0.29.0 (2026-06-09)
 """
 Elasticsearch RAG: hybrid BM25 + kNN search.
 
