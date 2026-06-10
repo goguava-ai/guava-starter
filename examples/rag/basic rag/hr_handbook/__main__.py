@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.28.0 (2026-06-03)
+# SDK conformance: guava-sdk 0.29.0 (2026-06-09)
 """
 Employees call in to ask questions about company policy. Handbook documents
 are uploaded to Guava at startup and queries are answered via the server-side
