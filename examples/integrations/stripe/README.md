@@ -10,6 +10,7 @@ Voice agents that integrate with the [Stripe API](https://docs.stripe.com/api) t
 | [`subscription_cancellation`](subscription_cancellation/) | Inbound | Customer cancels their subscription; agent captures reason and sets `cancel_at_period_end` |
 | [`refund_request`](refund_request/) | Inbound | Customer requests a refund; agent verifies recent charges and creates a Stripe refund |
 | [`plan_upgrade`](plan_upgrade/) | Inbound | Customer upgrades to a higher-tier plan; agent swaps the subscription price |
+| [`take_payment`](take_payment/) | Inbound | Customer pays over the phone; agent texts a Stripe Checkout link and voice-confirms on payment |
 | [`payment_recovery`](payment_recovery/) | Outbound | Call customers with past-due invoices; retry payment if they confirm |
 | [`churn_winback`](churn_winback/) | Outbound | Call recently canceled customers to gather feedback and gauge re-subscription interest |
 | [`trial_conversion`](trial_conversion/) | Outbound | Call trial users nearing expiry; convert to paid by ending the trial early if they agree |
