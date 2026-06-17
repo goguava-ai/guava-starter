@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.29.0 (2026-06-09)
+# SDK conformance: guava-sdk 0.29.0 (2026-06-16)
 """
 Custom Models RAG: plug in any embedding and generation model.
 

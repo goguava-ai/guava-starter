@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.29.0 (2026-06-09)
+# SDK conformance: guava-sdk 0.29.0 (2026-06-16)
 """
 Static Wikipedia RAG: fetches articles at startup, indexes with Vertex AI embeddings.
 
