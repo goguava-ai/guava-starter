@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.29.0 (2026-06-16)
+# SDK conformance: guava-sdk 0.32.0 (2026-06-30)
 """
 Salesforce Knowledge RAG: fetch articles via SOQL, answer questions with Guava.
 
