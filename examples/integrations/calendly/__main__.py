@@ -308,6 +308,7 @@ def on_booking_done(call: guava.Call) -> None:
         call.hangup()
 
     except requests.HTTPError as e:
+        assert e.response is not None
         if e.response.status_code != 403:
             logging.error("Calendly API error: %s — %s", e, e.response.text)
             call.hangup(

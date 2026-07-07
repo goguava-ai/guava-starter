@@ -1,4 +1,5 @@
 # SDK conformance: guava-sdk 0.32.0 (2026-06-30)
+import argparse
 import json
 import os
 from datetime import datetime
@@ -109,6 +110,15 @@ def on_done(call: guava.Call) -> None:
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
+    parser = argparse.ArgumentParser(
+        description="Outbound presidential approval survey call"
+    )
+    parser.add_argument(
+        "--from-number",
+        default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
+        help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
+    )
+    args = parser.parse_args()
     agent.call_phone(
         from_number=args.from_number,
         to_number=TO_NUMBER,

@@ -137,7 +137,7 @@ def on_call_start(call: guava.Call) -> None:
     # If caller-ID is blocked we can't text them — add a question to collect it on the call.
     needs_phone_number = caller_number(call) is None
 
-    checklist = [
+    checklist: list[guava.Field | guava.Say | str] = [
         guava.Say("Hi, I'm Grace with Guava Demo Pay. I can take a payment for you right now."),
         guava.Field(
             key="amount_dollars",
