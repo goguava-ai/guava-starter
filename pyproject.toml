@@ -4,7 +4,7 @@ version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "guava-sdk>=0.22.0",
+    "guava-sdk>=0.32.0",
 ]
 
 [dependency-groups]
