@@ -15,6 +15,11 @@ dev = [
     "ty>=0.0.56",
 ]
 
+[tool.ruff.lint]
+ignore = [
+    "F841",  # unused variables are common in examples for demonstration purposes
+]
+
 [tool.ty.analysis]
 allowed-unresolved-imports = [
     "anthropic.**",
