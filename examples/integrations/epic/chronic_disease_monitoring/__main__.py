@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import guava
 import requests
@@ -253,7 +254,7 @@ def on_done(call: guava.Call) -> None:
 
         effective_time = datetime.now(timezone.utc).isoformat()
         subject_ref = {"reference": f"Patient/{patient_id}"}
-        observations = []
+        observations: list[Any] = []
 
         # Blood pressure is a composite Observation with systolic and diastolic as components
         if bp_systolic and bp_systolic != "not measured":
