@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.32.0 (2026-06-30)
+# SDK conformance: guava-sdk 0.33.0 (2026-07-07)
 """Plug a raw Google GenAI (Gemini) client into Guava callbacks.
 
 This example shows how to integrate your own Gemini key (and your own model
