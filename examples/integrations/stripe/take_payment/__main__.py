@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.33.0 (2026-07-07)
+# SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 """Inbound pay-by-phone demo using a Stripe Checkout link sent over SMS.
 
 What the caller experiences:
