@@ -142,6 +142,23 @@ def on_done(call: guava.Call) -> None:
     )
 
 
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "course_overall_rating": call.get_field("course_overall_rating"),
+        "instructor_rating": call.get_field("instructor_rating"),
+        "course_difficulty_rating": call.get_field("course_difficulty_rating"),
+        "most_valuable_aspect": call.get_field("most_valuable_aspect"),
+        "suggested_improvements": call.get_field("suggested_improvements"),
+        "would_recommend_course": call.get_field("would_recommend_course"),
+    }, indent=2))
+
+
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(

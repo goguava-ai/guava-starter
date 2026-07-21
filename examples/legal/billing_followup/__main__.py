@@ -82,11 +82,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="payment_intention",
                     description=(
-                        "The client's stated intention regarding payment: whether they "
-                        "intend to pay in full now, would like to arrange a payment "
-                        "plan, or wish to dispute the invoice or a portion of it"
+                        "The client's stated intention regarding payment"
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["pay in full", "payment plan", "dispute"],
                     required=True,
                 ),
                 guava.Field(
@@ -152,6 +151,22 @@ def on_done(call: guava.Call) -> None:
             "goodbye professionally."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "invoice_received": call.get_field("invoice_received"),
+        "payment_intention": call.get_field("payment_intention"),
+        "payment_date_commitment": call.get_field("payment_date_commitment"),
+        "dispute_reason": call.get_field("dispute_reason"),
+        "preferred_payment_method": call.get_field("preferred_payment_method"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

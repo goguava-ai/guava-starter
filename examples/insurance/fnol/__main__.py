@@ -60,8 +60,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="loss_type",
-                description="The type of loss: fire, flood, theft, auto, or other",
-                field_type="text",
+                description="The type of loss",
+                field_type="multiple_choice",
+                choices=["fire", "flood", "theft", "auto", "other"],
                 required=True,
             ),
             guava.Field(
@@ -132,6 +133,21 @@ def on_done(call: guava.Call) -> None:
             "We appreciate your patience and are here to help. Take care."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "policy_number": call.get_field("policy_number"),
+        "policyholder_name": call.get_field("policyholder_name"),
+        "loss_date": call.get_field("loss_date"),
+        "loss_type": call.get_field("loss_type"),
+        "loss_description": call.get_field("loss_description"),
+        "location_of_loss": call.get_field("location_of_loss"),
+        "injuries_reported": call.get_field("injuries_reported"),
+        "estimated_damage": call.get_field("estimated_damage"),
+        "best_callback_number": call.get_field("best_callback_number"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

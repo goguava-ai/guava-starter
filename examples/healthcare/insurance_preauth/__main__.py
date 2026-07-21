@@ -60,10 +60,10 @@ def on_call_start(call: guava.Call) -> None:
             guava.Field(
                 key="covered",
                 description=(
-                    "Ask the representative for the authorization decision on the procedure. "
-                    "Capture one of: 'approved', 'denied', or 'pending'."
+                    "Ask the representative for the authorization decision on the procedure."
                 ),
-                field_type="text",
+                field_type="multiple_choice",
+                choices=["approved", "denied", "pending"],
                 required=True,
             ),
             guava.Field(
@@ -130,6 +130,22 @@ def on_done(call: guava.Call) -> None:
                 "a callback number or reference to check status. Wish them a good day."
             )
         )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "auth_representative_name": call.get_field("auth_representative_name"),
+        "auth_number": call.get_field("auth_number"),
+        "covered": call.get_field("covered"),
+        "coverage_limitations": call.get_field("coverage_limitations"),
+        "effective_date": call.get_field("effective_date"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

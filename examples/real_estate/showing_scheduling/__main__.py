@@ -135,6 +135,21 @@ def on_done(call: guava.Call) -> None:
     )
 
 
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "showing_date_preference": call.get_field("showing_date_preference"),
+        "showing_time_preference": call.get_field("showing_time_preference"),
+        "additional_properties_interest": call.get_field("additional_properties_interest"),
+        "pre_approval_letter_ready": call.get_field("pre_approval_letter_ready"),
+    }, indent=2))
+
+
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="Schedule a property showing outbound call.")

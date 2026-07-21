@@ -110,11 +110,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="cancellation_decision",
                     description=(
-                        "Ask for the customer's final decision: will they stay with Nexus Mobile, "
-                        "request more time to decide, or proceed with cancellation? "
-                        "Capture their exact decision."
+                        "Ask for the customer's final decision on their Nexus Mobile account."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["stay", "more_time", "cancel"],
                     required=True,
                 ),
             ],
@@ -150,6 +149,22 @@ def on_done(call: guava.Call) -> None:
             "is always open, and wish them well."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "primary_dissatisfaction_reason": call.get_field("primary_dissatisfaction_reason"),
+        "competitor_offer_received": call.get_field("competitor_offer_received"),
+        "alternative_plan_interest": call.get_field("alternative_plan_interest"),
+        "retention_offer_accepted": call.get_field("retention_offer_accepted"),
+        "cancellation_decision": call.get_field("cancellation_decision"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -61,13 +62,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="payment_intention",
-                    description=(
-                        "Record the account holder's stated intention for resolving the balance. "
-                        "Expected values: 'pay_now' if they will pay today, 'payment_plan' if they "
-                        "want to arrange installments, 'dispute' if they are contesting the balance, "
-                        "or 'callback' if they need to call back at a later time."
-                    ),
-                    field_type="text",
+                    description="The account holder's stated intention for resolving the balance.",
+                    field_type="multiple_choice",
+                    choices=["pay_now", "payment_plan", "dispute", "callback"],
                     required=True,
                 ),
                 guava.Field(
@@ -127,6 +124,21 @@ def on_done(call: guava.Call) -> None:
             f"call courteously."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "payment_intention": call.get_field("payment_intention"),
+        "payment_date": call.get_field("payment_date"),
+        "payment_amount": call.get_field("payment_amount"),
+        "dispute_reason": call.get_field("dispute_reason"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

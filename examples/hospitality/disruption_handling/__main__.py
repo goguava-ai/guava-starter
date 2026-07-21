@@ -70,11 +70,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="rebooking_preference",
-                    description=(
-                        "What is the traveler's preferred resolution? Options include: "
-                        "next_available flight, a specific_date of their choosing, or a full refund."
-                    ),
-                    field_type="text",
+                    description="What is the traveler's preferred resolution for the disrupted flight?",
+                    field_type="multiple_choice",
+                    choices=["next_available", "specific_date", "refund"],
                     required=True,
                 ),
                 guava.Field(
@@ -147,6 +145,23 @@ def on_done(call: guava.Call) -> None:
             "them they are in good hands."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "disruption_acknowledged": call.get_field("disruption_acknowledged"),
+        "rebooking_preference": call.get_field("rebooking_preference"),
+        "preferred_departure_date": call.get_field("preferred_departure_date"),
+        "seat_preference": call.get_field("seat_preference"),
+        "meal_preference": call.get_field("meal_preference"),
+        "contact_email_for_confirmation": call.get_field("contact_email_for_confirmation"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

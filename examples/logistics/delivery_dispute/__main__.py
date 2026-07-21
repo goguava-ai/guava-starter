@@ -53,15 +53,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="dispute_type",
-                description=(
-                    "The category of the delivery dispute: "
-                    "not_received (package never arrived), "
-                    "wrong_item (incorrect item delivered), "
-                    "stolen (package was stolen after delivery), "
-                    "damaged (item arrived damaged), "
-                    "or late (delivery arrived significantly past the expected date)"
-                ),
-                field_type="text",
+                description="The category of the delivery dispute",
+                field_type="multiple_choice",
+                choices=["not_received", "wrong_item", "stolen", "damaged", "late"],
                 required=True,
             ),
             guava.Field(
@@ -78,13 +72,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="resolution_preference",
-                description=(
-                    "The customer's preferred resolution: "
-                    "reship (send the item again), "
-                    "refund (receive a full refund), "
-                    "or investigation (have SwiftShip investigate the incident)"
-                ),
-                field_type="text",
+                description="The customer's preferred resolution for the dispute",
+                field_type="multiple_choice",
+                choices=["reship", "refund", "investigation"],
                 required=True,
             ),
             guava.Field(
@@ -120,6 +110,19 @@ def on_done(call: guava.Call) -> None:
             "wish them a good day."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "claimant_name": call.get_field("claimant_name"),
+        "tracking_number": call.get_field("tracking_number"),
+        "dispute_type": call.get_field("dispute_type"),
+        "order_value": call.get_field("order_value"),
+        "dispute_description": call.get_field("dispute_description"),
+        "resolution_preference": call.get_field("resolution_preference"),
+        "best_callback_number": call.get_field("best_callback_number"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

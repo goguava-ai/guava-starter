@@ -66,11 +66,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="payment_intention",
-                    description=(
-                        "How the student or guardian intends to handle the balance. "
-                        "Options are: pay_now, payment_plan, financial_aid_pending, or dispute"
-                    ),
-                    field_type="text",
+                    description="How the student or guardian intends to handle the balance.",
+                    field_type="multiple_choice",
+                    choices=["pay_now", "payment_plan", "financial_aid_pending", "dispute"],
                     required=True,
                 ),
                 guava.Field(
@@ -117,6 +115,21 @@ def on_done(call: guava.Call) -> None:
             "if they have further questions and provide a warm, encouraging close to the conversation."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "payment_intention": call.get_field("payment_intention"),
+        "payment_plan_confirmed": call.get_field("payment_plan_confirmed"),
+        "payment_date_commitment": call.get_field("payment_date_commitment"),
+        "financial_aid_questions": call.get_field("financial_aid_questions"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

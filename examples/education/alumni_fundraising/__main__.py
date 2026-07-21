@@ -77,11 +77,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="gift_type",
-                    description=(
-                        "The type of gift the alumnus prefers. "
-                        "Options are: one_time, monthly, or annual"
-                    ),
-                    field_type="text",
+                    description="The type of gift the alumnus prefers.",
+                    field_type="multiple_choice",
+                    choices=["one_time", "monthly", "annual"],
                     required=False,
                 ),
                 guava.Field(
@@ -134,6 +132,23 @@ def on_done(call: guava.Call) -> None:
             "connected with the alumni community. Close the call on a positive note."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "open_to_giving": call.get_field("open_to_giving"),
+        "gift_amount": call.get_field("gift_amount"),
+        "gift_type": call.get_field("gift_type"),
+        "designation_preference": call.get_field("designation_preference"),
+        "pledge_date": call.get_field("pledge_date"),
+        "decline_reason": call.get_field("decline_reason"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

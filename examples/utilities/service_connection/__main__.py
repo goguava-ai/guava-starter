@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -79,8 +80,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="preferred_time_window",
-                    description="Ask whether the customer prefers a morning connection window (8 AM to 12 PM), an afternoon window (12 PM to 5 PM), or if any time works",
-                    field_type="text",
+                    description="Ask the customer which connection time window works best for them",
+                    field_type="multiple_choice",
+                    choices=["Morning (8 AM to 12 PM)", "Afternoon (12 PM to 5 PM)", "Any time"],
                     required=True,
                 ),
                 guava.Field(
@@ -131,6 +133,23 @@ def on_done(call: guava.Call) -> None:
             "Power & Light and wish them well with their move."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "move_in_date": call.get_field("move_in_date"),
+        "preferred_connection_date": call.get_field("preferred_connection_date"),
+        "preferred_time_window": call.get_field("preferred_time_window"),
+        "billing_address_confirmed": call.get_field("billing_address_confirmed"),
+        "autopay_interest": call.get_field("autopay_interest"),
+        "paperless_billing_interest": call.get_field("paperless_billing_interest"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -79,11 +80,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="paperless_statements_opted_in",
-                    description=(
-                        "Record whether the customer chose to opt in to paperless statements. "
-                        "Expected values: 'yes' to enroll or 'no' to continue receiving paper statements."
-                    ),
-                    field_type="text",
+                    description="Whether the customer chose to opt in to paperless statements.",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=True,
                 ),
                 guava.Say(
@@ -94,11 +93,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="overdraft_protection_opted_in",
-                    description=(
-                        "Record whether the customer chose to opt in to overdraft protection. "
-                        "Expected values: 'yes' to enroll or 'no' to decline."
-                    ),
-                    field_type="text",
+                    description="Whether the customer chose to opt in to overdraft protection.",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=True,
                 ),
                 guava.Say(
@@ -118,13 +115,11 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="security_question_set",
                     description=(
-                        "Ask the customer if they would like to set up a security question for "
-                        "their online banking profile now, or if they prefer to do this later "
-                        "through the mobile app. Record 'set_during_call' if a security question "
-                        "was established, 'deferred' if they chose to do it later, or leave blank "
-                        "if the topic was not addressed."
+                        "Whether the customer set up a security question for their online banking "
+                        "profile during the call or chose to do it later through the mobile app."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["set_during_call", "deferred"],
                     required=False,
                 ),
             ],
@@ -157,6 +152,22 @@ def on_done(call: guava.Call) -> None:
             f"National Bank."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "disclosures_acknowledged": call.get_field("disclosures_acknowledged"),
+        "paperless_statements_opted_in": call.get_field("paperless_statements_opted_in"),
+        "overdraft_protection_opted_in": call.get_field("overdraft_protection_opted_in"),
+        "debit_card_delivery_address_confirmed": call.get_field("debit_card_delivery_address_confirmed"),
+        "security_question_set": call.get_field("security_question_set"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

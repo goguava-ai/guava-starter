@@ -57,12 +57,16 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="matter_type",
-                description=(
-                    "The general category of legal matter. Ask the caller which "
-                    "best describes their situation: personal injury, family law, "
-                    "criminal defense, business law, estate planning, or other"
-                ),
-                field_type="text",
+                description="The general category of legal matter",
+                field_type="multiple_choice",
+                choices=[
+                    "personal injury",
+                    "family law",
+                    "criminal defense",
+                    "business law",
+                    "estate planning",
+                    "other",
+                ],
                 required=True,
             ),
             guava.Field(
@@ -102,13 +106,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="urgency_level",
-                description=(
-                    "The urgency of the matter. Ask whether their situation is "
-                    "urgent — for example involving an upcoming court date or "
-                    "statute of limitations deadline — standard, or exploratory "
-                    "at this stage"
-                ),
-                field_type="text",
+                description="The urgency of the matter",
+                field_type="multiple_choice",
+                choices=["urgent", "standard", "exploratory"],
                 required=True,
             ),
         ],
@@ -144,6 +144,20 @@ def on_done(call: guava.Call) -> None:
             "say goodbye professionally."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "caller_name": call.get_field("caller_name"),
+        "caller_phone": call.get_field("caller_phone"),
+        "matter_type": call.get_field("matter_type"),
+        "brief_matter_description": call.get_field("brief_matter_description"),
+        "adverse_parties_names": call.get_field("adverse_parties_names"),
+        "desired_outcome": call.get_field("desired_outcome"),
+        "how_did_you_hear_about_us": call.get_field("how_did_you_hear_about_us"),
+        "urgency_level": call.get_field("urgency_level"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

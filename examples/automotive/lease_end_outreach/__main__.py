@@ -63,11 +63,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="lease_end_decision",
-                    description=(
-                        "The customer's current decision or preference: return the vehicle, "
-                        "buy it out, re-lease a new vehicle, or undecided"
-                    ),
-                    field_type="text",
+                    description="The customer's current decision or preference for their lease-end option.",
+                    field_type="multiple_choice",
+                    choices=["return the vehicle", "buy it out", "re-lease a new vehicle", "undecided"],
                     required=True,
                 ),
                 guava.Field(
@@ -138,6 +136,22 @@ def on_lease_end_outreach_done(call: guava.Call) -> None:
             f"scheduled shortly. Wish them a great day."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "lease_end_decision": call.get_field("lease_end_decision"),
+        "buyout_interest_confirmed": call.get_field("buyout_interest_confirmed"),
+        "new_vehicle_interest": call.get_field("new_vehicle_interest"),
+        "re_lease_model_preference": call.get_field("re_lease_model_preference"),
+        "appointment_requested": call.get_field("appointment_requested"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

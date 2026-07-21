@@ -78,8 +78,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="transportation_needed",
-                    description="Whether the customer needs a loaner car, a shuttle, or neither during the repair",
-                    field_type="text",
+                    description="Whether the customer needs transportation during the repair.",
+                    field_type="multiple_choice",
+                    choices=["loaner car", "shuttle", "neither"],
                     required=True,
                 ),
                 guava.Field(
@@ -119,6 +120,22 @@ def on_recall_notification_done(call: guava.Call) -> None:
             f"in touch with a confirmed time. Wish them a safe and pleasant day."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "recall_acknowledged": call.get_field("recall_acknowledged"),
+        "vehicle_in_possession": call.get_field("vehicle_in_possession"),
+        "appointment_date_preference": call.get_field("appointment_date_preference"),
+        "transportation_needed": call.get_field("transportation_needed"),
+        "questions_about_recall": call.get_field("questions_about_recall"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -77,12 +77,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="product_as_described",
-                    description=(
-                        "Whether the product matched its online description: "
-                        "'yes' if fully accurate, 'no' if it did not match, "
-                        "or 'partially' if only some aspects matched"
-                    ),
-                    field_type="text",
+                    description="Whether the product matched its online description",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "partially"],
                     required=True,
                 ),
                 guava.Field(
@@ -141,6 +138,23 @@ def on_done(call: guava.Call) -> None:
             "and wish them a wonderful day before ending the call."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "product_rating": call.get_field("product_rating"),
+        "delivery_experience_rating": call.get_field("delivery_experience_rating"),
+        "product_as_described": call.get_field("product_as_described"),
+        "would_purchase_again": call.get_field("would_purchase_again"),
+        "review_permission": call.get_field("review_permission"),
+        "improvement_feedback": call.get_field("improvement_feedback"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

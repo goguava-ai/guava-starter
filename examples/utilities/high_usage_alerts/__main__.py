@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -128,6 +129,22 @@ def on_done(call: guava.Call) -> None:
             "a customer and for taking the time to speak with you today."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "usage_increase_acknowledged": call.get_field("usage_increase_acknowledged"),
+        "known_reason_for_increase": call.get_field("known_reason_for_increase"),
+        "interested_in_energy_audit": call.get_field("interested_in_energy_audit"),
+        "paperless_billing_interest": call.get_field("paperless_billing_interest"),
+        "budget_billing_interest": call.get_field("budget_billing_interest"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -67,12 +67,11 @@ def on_call_start(call: guava.Call) -> None:
             guava.Field(
                 key="issue_category",
                 description=(
-                    "Ask the caller to describe what type of issue they are experiencing. "
-                    "Based on their answer, categorize it as one of: no_signal, slow_data, "
-                    "call_quality, billing, device_hardware, or other. "
-                    "Capture the category label."
+                    "Ask the caller to describe what type of issue they are experiencing "
+                    "and categorize their answer."
                 ),
-                field_type="text",
+                field_type="multiple_choice",
+                choices=["no_signal", "slow_data", "call_quality", "billing", "device_hardware", "other"],
                 required=True,
             ),
             guava.Field(
@@ -97,10 +96,10 @@ def on_call_start(call: guava.Call) -> None:
                 key="already_rebooted",
                 description=(
                     "Ask the caller if they have already tried rebooting or restarting "
-                    "their device since the issue began. Capture yes or no and any "
-                    "relevant context they share."
+                    "their device since the issue began."
                 ),
-                field_type="text",
+                field_type="multiple_choice",
+                choices=["yes", "no"],
                 required=True,
             ),
             guava.Field(
@@ -145,6 +144,20 @@ def on_done(call: guava.Call) -> None:
             "them a good day."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "caller_name": call.get_field("caller_name"),
+        "account_number": call.get_field("account_number"),
+        "device_model": call.get_field("device_model"),
+        "issue_category": call.get_field("issue_category"),
+        "issue_description": call.get_field("issue_description"),
+        "issue_started": call.get_field("issue_started"),
+        "already_rebooted": call.get_field("already_rebooted"),
+        "technician_callback_number": call.get_field("technician_callback_number"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

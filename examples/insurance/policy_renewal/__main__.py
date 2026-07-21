@@ -66,10 +66,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="renewal_confirmed",
-                    description=(
-                        "Whether the policyholder wants to renew: yes, no, or need_changes"
-                    ),
-                    field_type="text",
+                    description="Whether the policyholder wants to renew",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "need_changes"],
                     required=True,
                 ),
                 guava.Field(
@@ -127,6 +126,21 @@ def on_done(call: guava.Call) -> None:
             "Have a wonderful day."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "renewal_confirmed": call.get_field("renewal_confirmed"),
+        "coverage_change_requested": call.get_field("coverage_change_requested"),
+        "additional_coverage_interest": call.get_field("additional_coverage_interest"),
+        "preferred_payment_method": call.get_field("preferred_payment_method"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

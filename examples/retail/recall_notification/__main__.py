@@ -87,22 +87,16 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="resolution_choice",
-                    description=(
-                        "The customer's preferred resolution for the recalled product: "
-                        "'return_refund' for a full refund, "
-                        "'replacement' for a free replacement unit, "
-                        "or 'store_credit' for store credit"
-                    ),
-                    field_type="text",
+                    description="The customer's preferred resolution for the recalled product",
+                    field_type="multiple_choice",
+                    choices=["return_refund", "replacement", "store_credit"],
                     required=True,
                 ),
                 guava.Field(
                     key="return_label_delivery_preference",
-                    description=(
-                        "How the customer would like to receive their prepaid return shipping label: "
-                        "'email' to receive it by email, or 'mail' to receive a physical label by post"
-                    ),
-                    field_type="text",
+                    description="How the customer would like to receive their prepaid return shipping label",
+                    field_type="multiple_choice",
+                    choices=["email", "mail"],
                     required=True,
                 ),
                 guava.Field(
@@ -150,6 +144,22 @@ def on_done(call: guava.Call) -> None:
             "and close the call with care and professionalism."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "recall_acknowledged": call.get_field("recall_acknowledged"),
+        "product_still_in_use": call.get_field("product_still_in_use"),
+        "resolution_choice": call.get_field("resolution_choice"),
+        "return_label_delivery_preference": call.get_field("return_label_delivery_preference"),
+        "questions_about_recall": call.get_field("questions_about_recall"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -73,11 +74,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="document_submission_method",
-                    description=(
-                        "The method the applicant has chosen to submit their documents. "
-                        "Expected values: 'email', 'fax', or 'branch'."
-                    ),
-                    field_type="text",
+                    description="The method the applicant has chosen to submit their documents.",
+                    field_type="multiple_choice",
+                    choices=["email", "fax", "branch"],
                     required=True,
                 ),
                 guava.Field(
@@ -124,6 +123,21 @@ def on_done(call: guava.Call) -> None:
             f"days with a decision. Wish them a great day and close the call warmly."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "missing_documents_acknowledged": call.get_field("missing_documents_acknowledged"),
+        "document_submission_method": call.get_field("document_submission_method"),
+        "preferred_submission_date": call.get_field("preferred_submission_date"),
+        "additional_questions": call.get_field("additional_questions"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

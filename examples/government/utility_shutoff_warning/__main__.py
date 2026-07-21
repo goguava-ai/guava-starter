@@ -70,12 +70,14 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="payment_intention",
-                    description=(
-                        "Ask the resident how they intend to address the balance. Options are: "
-                        "pay the full amount now, set up a payment plan, dispute the balance, "
-                        "or apply for a hardship assistance program."
-                    ),
-                    field_type="text",
+                    description="Ask the resident how they intend to address the balance.",
+                    field_type="multiple_choice",
+                    choices=[
+                        "pay the full amount now",
+                        "set up a payment plan",
+                        "dispute the balance",
+                        "apply for a hardship assistance program",
+                    ],
                     required=True,
                 ),
                 guava.Field(
@@ -137,6 +139,22 @@ def on_done(call: guava.Call) -> None:
             "further. End the call respectfully."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "shutoff_date_acknowledged": call.get_field("shutoff_date_acknowledged"),
+        "payment_intention": call.get_field("payment_intention"),
+        "payment_amount_commitment": call.get_field("payment_amount_commitment"),
+        "payment_date_commitment": call.get_field("payment_date_commitment"),
+        "hardship_program_interest": call.get_field("hardship_program_interest"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

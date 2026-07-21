@@ -133,6 +133,23 @@ def on_done(call: guava.Call) -> None:
     )
 
 
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "commercial_invoice_confirmed": call.get_field("commercial_invoice_confirmed"),
+        "country_of_origin": call.get_field("country_of_origin"),
+        "hs_tariff_code": call.get_field("hs_tariff_code"),
+        "total_declared_value": call.get_field("total_declared_value"),
+        "dangerous_goods_present": call.get_field("dangerous_goods_present"),
+        "additional_documents_available": call.get_field("additional_documents_available"),
+    }, indent=2))
+
+
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(description="SwiftShip Logistics - Customs Compliance Agent")

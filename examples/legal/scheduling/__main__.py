@@ -99,9 +99,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     key="location_preference",
                     description=(
                         f"How the party would prefer to participate in the "
-                        f"{call.get_variable('event_type')}: in person, by video conference, or by phone"
+                        f"{call.get_variable('event_type')}"
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["in person", "video conference", "phone"],
                     required=True,
                 ),
                 guava.Field(
@@ -158,6 +159,23 @@ def on_done(call: guava.Call) -> None:
             "contact Hargrove and Associates directly. Say goodbye professionally."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "availability_confirmed": call.get_field("availability_confirmed"),
+        "preferred_date": call.get_field("preferred_date"),
+        "preferred_time": call.get_field("preferred_time"),
+        "location_preference": call.get_field("location_preference"),
+        "special_accommodations": call.get_field("special_accommodations"),
+        "confirmation_email": call.get_field("confirmation_email"),
+    }, indent=2))
 
 
 if __name__ == "__main__":
