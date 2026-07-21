@@ -66,11 +66,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="absence_reason",
-                    description=(
-                        f"The reason for {call.get_variable('student_name')}'s absence. "
-                        "Options are: illness, family_emergency, appointment, other, or unknown"
-                    ),
-                    field_type="text",
+                    description=f"The reason for {call.get_variable('student_name')}'s absence.",
+                    field_type="multiple_choice",
+                    choices=["illness", "family_emergency", "appointment", "other", "unknown"],
                     required=True,
                 ),
                 guava.Field(
@@ -125,6 +123,22 @@ def on_done(call: guava.Call) -> None:
             "a speedy recovery or a good rest of the day. End the call warmly."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "absence_reason": call.get_field("absence_reason"),
+        "expected_return_date": call.get_field("expected_return_date"),
+        "doctor_note_available": call.get_field("doctor_note_available"),
+        "parent_aware_of_absence": call.get_field("parent_aware_of_absence"),
+        "additional_message_for_teacher": call.get_field("additional_message_for_teacher"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

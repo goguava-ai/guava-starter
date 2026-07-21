@@ -57,11 +57,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="issue_category",
-                description=(
-                    "What category best describes the issue? "
-                    "Options are: plumbing, electrical, HVAC, appliance, structural, or other."
-                ),
-                field_type="text",
+                description="What category best describes the issue?",
+                field_type="multiple_choice",
+                choices=["Plumbing", "Electrical", "HVAC", "Appliance", "Structural", "Other"],
                 required=True,
             ),
             guava.Field(
@@ -81,7 +79,8 @@ def on_call_start(call: guava.Call) -> None:
                     "urgent means it needs attention within 24 to 48 hours, "
                     "and routine means it can be scheduled within the next week."
                 ),
-                field_type="text",
+                field_type="multiple_choice",
+                choices=["Emergency", "Urgent", "Routine"],
                 required=True,
             ),
             guava.Field(
@@ -157,6 +156,20 @@ def on_done(call: guava.Call) -> None:
             "Thank them and end the call warmly."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "urgency_level": call.get_field("urgency_level"),
+        "tenant_name": call.get_field("tenant_name"),
+        "unit_address": call.get_field("unit_address"),
+        "issue_category": call.get_field("issue_category"),
+        "issue_description": call.get_field("issue_description"),
+        "best_entry_time": call.get_field("best_entry_time"),
+        "permission_to_enter": call.get_field("permission_to_enter"),
+        "contact_phone": call.get_field("contact_phone"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -93,11 +93,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="preferred_enrollment_method",
-                    description=(
-                        "Ask how the resident would prefer to complete enrollment: "
-                        "online, by phone, or in person."
-                    ),
-                    field_type="text",
+                    description="Ask how the resident would prefer to complete enrollment.",
+                    field_type="multiple_choice",
+                    choices=["online", "by phone", "in person"],
                     required=True,
                 ),
                 guava.Field(
@@ -139,6 +137,24 @@ def on_done(call: guava.Call) -> None:
             "directly with any questions. Wish them a good day and end the call politely."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "interested_in_enrolling": call.get_field("interested_in_enrolling"),
+        "household_size": call.get_field("household_size"),
+        "annual_household_income_range": call.get_field("annual_household_income_range"),
+        "currently_receiving_benefits": call.get_field("currently_receiving_benefits"),
+        "program_questions": call.get_field("program_questions"),
+        "preferred_enrollment_method": call.get_field("preferred_enrollment_method"),
+        "best_callback_time": call.get_field("best_callback_time"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

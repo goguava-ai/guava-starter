@@ -58,10 +58,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     key="refill_confirmed",
                     description=(
                         f"Ask the patient whether they would like to confirm the refill for {medication}, "
-                        "decline it, or be connected with a pharmacist for questions. "
-                        "Capture one of: 'yes', 'no', or 'call_pharmacist'."
+                        "decline it, or be connected with a pharmacist for questions."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "call_pharmacist"],
                     required=True,
                 ),
                 guava.Field(
@@ -126,6 +126,20 @@ def on_done(call: guava.Call) -> None:
                 "Thank them for their time and wish them good health."
             )
         )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "refill_confirmed": call.get_field("refill_confirmed"),
+        "preferred_pickup_date": call.get_field("preferred_pickup_date"),
+        "questions_for_pharmacist": call.get_field("questions_for_pharmacist"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

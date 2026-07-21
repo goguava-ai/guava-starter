@@ -72,11 +72,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="info_submission_method",
-                    description=(
-                        "How the student plans to submit the missing information or documents. "
-                        "Options are: online_portal, email, or in_person"
-                    ),
-                    field_type="text",
+                    description="How the student plans to submit the missing information or documents.",
+                    field_type="multiple_choice",
+                    choices=["online_portal", "email", "in_person"],
                     required=True,
                 ),
                 guava.Field(
@@ -125,6 +123,22 @@ def on_done(call: guava.Call) -> None:
             f"to the {call.get_variable('term')} term. Say goodbye warmly."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "missing_info_acknowledged": call.get_field("missing_info_acknowledged"),
+        "info_submission_method": call.get_field("info_submission_method"),
+        "submission_date_commitment": call.get_field("submission_date_commitment"),
+        "term_start_confirmed": call.get_field("term_start_confirmed"),
+        "questions_about_enrollment": call.get_field("questions_about_enrollment"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

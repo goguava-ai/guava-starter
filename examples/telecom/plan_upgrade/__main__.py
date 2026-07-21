@@ -103,21 +103,20 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="upgrade_effective_date_preference",
                     description=(
-                        "If the customer wants to upgrade, ask when they would like the new plan "
-                        "to take effect — immediately, at the start of their next billing cycle, "
-                        "or on a specific date. Capture their preference."
+                        "If the customer wants to upgrade, ask when they would like the "
+                        "new plan to take effect."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["immediately", "next_billing_cycle", "specific_date"],
                     required=False,
                 ),
                 guava.Field(
                     key="upgrade_decision_final",
                     description=(
-                        "Confirm the customer's final decision: upgrading now, upgrading later, "
-                        "wanting a follow-up call, or declining the upgrade entirely. "
-                        "Capture this conclusively."
+                        "Confirm the customer's final decision on the plan upgrade."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["upgrading_now", "upgrading_later", "follow_up_call", "declined"],
                     required=True,
                 ),
             ],
@@ -154,6 +153,22 @@ def on_done(call: guava.Call) -> None:
             "any time to make the change and wish them a great day."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "interested_in_upgrade": call.get_field("interested_in_upgrade"),
+        "questions_about_new_plan": call.get_field("questions_about_new_plan"),
+        "upgrade_plan_selected": call.get_field("upgrade_plan_selected"),
+        "upgrade_effective_date_preference": call.get_field("upgrade_effective_date_preference"),
+        "upgrade_decision_final": call.get_field("upgrade_decision_final"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -57,8 +57,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="load_status",
-                description="Current status of the load: on_time, delayed, delivered, or issue",
-                field_type="text",
+                description="Current status of the load",
+                field_type="multiple_choice",
+                choices=["on_time", "delayed", "delivered", "issue"],
                 required=True,
             ),
             guava.Field(
@@ -100,6 +101,23 @@ def on_done(call: guava.Call) -> None:
             "that dispatch will follow up with any necessary support. Wish them a safe drive."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "driver_name": call.get_field("driver_name"),
+        "current_location": call.get_field("current_location"),
+        "estimated_arrival_time": call.get_field("estimated_arrival_time"),
+        "load_status": call.get_field("load_status"),
+        "delay_reason": call.get_field("delay_reason"),
+        "loads_remaining": call.get_field("loads_remaining"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -77,10 +77,10 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="renewal_intent",
                     description=(
-                        "Are you planning to renew your lease, or are you considering moving? "
-                        "You can say yes, no, or undecided if you haven't made up your mind yet."
+                        "Are you planning to renew your lease, or are you considering moving?"
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["Yes", "No", "Undecided"],
                     required=True,
                 ),
                 guava.Field(
@@ -168,6 +168,23 @@ def on_done(call: guava.Call) -> None:
             "Wish them a great day and close warmly."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "renewal_intent": call.get_field("renewal_intent"),
+        "preferred_lease_term": call.get_field("preferred_lease_term"),
+        "income_change_since_last_lease": call.get_field("income_change_since_last_lease"),
+        "updated_phone": call.get_field("updated_phone"),
+        "updated_email": call.get_field("updated_email"),
+        "maintenance_concerns_before_renewal": call.get_field("maintenance_concerns_before_renewal"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -60,22 +61,22 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="transaction_recognized",
                     description=(
-                        f"Ask the cardholder whether they recognize the transaction: "
-                        f"{call.get_variable('transaction')} for {call.get_variable('amount')}. "
-                        f"Record their answer as 'yes' if they recognize it or 'no' if they do not."
+                        f"Whether the cardholder recognizes the transaction: "
+                        f"{call.get_variable('transaction')} for {call.get_variable('amount')}."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=True,
                 ),
                 guava.Field(
                     key="authorize_transaction",
                     description=(
-                        "If the cardholder recognized the transaction, ask whether they would like "
-                        "to authorize and allow it to process. Record 'yes' to authorize or 'no' "
-                        "to block it. Leave blank if the cardholder did not recognize the transaction "
-                        "and it is being treated as fraudulent."
+                        "If the cardholder recognized the transaction, whether they would like "
+                        "to authorize and allow it to process. Leave blank if the cardholder did "
+                        "not recognize the transaction and it is being treated as fraudulent."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=False,
                 ),
                 guava.Field(
@@ -95,11 +96,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="card_replacement_requested",
-                    description=(
-                        "Record whether the cardholder has requested a replacement card. "
-                        "Expected values: 'yes' or 'no'."
-                    ),
-                    field_type="text",
+                    description="Whether the cardholder has requested a replacement card.",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=True,
                 ),
             ],
@@ -129,6 +128,21 @@ def on_done(call: guava.Call) -> None:
             f"have further concerns, and close the call professionally."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "transaction_recognized": call.get_field("transaction_recognized"),
+        "authorize_transaction": call.get_field("authorize_transaction"),
+        "additional_fraud_concerns": call.get_field("additional_fraud_concerns"),
+        "card_replacement_requested": call.get_field("card_replacement_requested"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

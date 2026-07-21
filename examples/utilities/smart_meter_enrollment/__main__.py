@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -76,8 +77,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="installation_window_preference",
-                    description="Ask whether the customer prefers a morning window (8 AM to 12 PM), an afternoon window (12 PM to 5 PM), or if any time works for the installation",
-                    field_type="text",
+                    description="Ask the customer which installation time window works best for them",
+                    field_type="multiple_choice",
+                    choices=["Morning (8 AM to 12 PM)", "Afternoon (12 PM to 5 PM)", "Any time"],
                     required=True,
                 ),
                 guava.Field(
@@ -119,6 +121,22 @@ def on_done(call: guava.Call) -> None:
             "Metro Power & Light customer."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "enrollment_accepted": call.get_field("enrollment_accepted"),
+        "installation_date_preference": call.get_field("installation_date_preference"),
+        "installation_window_preference": call.get_field("installation_window_preference"),
+        "pets_to_secure": call.get_field("pets_to_secure"),
+        "gate_code_or_access_notes": call.get_field("gate_code_or_access_notes"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

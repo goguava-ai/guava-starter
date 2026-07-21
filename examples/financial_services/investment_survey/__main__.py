@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -143,6 +144,22 @@ def on_done(call: guava.Call) -> None:
             f"questions about their portfolio, and wish them a great day before closing the call."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "advisor_rating": call.get_field("advisor_rating"),
+        "portfolio_satisfaction": call.get_field("portfolio_satisfaction"),
+        "service_quality_rating": call.get_field("service_quality_rating"),
+        "likelihood_to_recommend": call.get_field("likelihood_to_recommend"),
+        "improvement_suggestions": call.get_field("improvement_suggestions"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

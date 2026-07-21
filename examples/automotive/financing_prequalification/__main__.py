@@ -130,6 +130,20 @@ def on_prequalification_done(call: guava.Call) -> None:
     )
 
 
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "full_name": call.get_field("full_name"),
+        "vehicle_of_interest": call.get_field("vehicle_of_interest"),
+        "estimated_purchase_price": call.get_field("estimated_purchase_price"),
+        "annual_income": call.get_field("annual_income"),
+        "employment_status": call.get_field("employment_status"),
+        "down_payment_amount": call.get_field("down_payment_amount"),
+        "credit_score_range": call.get_field("credit_score_range"),
+        "trade_in_vehicle": call.get_field("trade_in_vehicle"),
+    }, indent=2))
+
+
 if __name__ == "__main__":
     logging_utils.configure_logging()
 

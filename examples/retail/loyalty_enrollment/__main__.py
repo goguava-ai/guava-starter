@@ -72,11 +72,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="preferred_communication_channel",
-                    description=(
-                        "The customer's preferred channel for receiving loyalty rewards updates and offers: "
-                        "'email', 'sms', or 'both'"
-                    ),
-                    field_type="text",
+                    description="The customer's preferred channel for receiving loyalty rewards updates and offers",
+                    field_type="multiple_choice",
+                    choices=["email", "sms", "both"],
                     required=True,
                 ),
                 guava.Field(
@@ -129,6 +127,21 @@ def on_done(call: guava.Call) -> None:
             "Wish them a wonderful day and close the call warmly."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "loyalty_enrollment_accepted": call.get_field("loyalty_enrollment_accepted"),
+        "preferred_communication_channel": call.get_field("preferred_communication_channel"),
+        "birthday_for_rewards": call.get_field("birthday_for_rewards"),
+        "referral_email_to_share": call.get_field("referral_email_to_share"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

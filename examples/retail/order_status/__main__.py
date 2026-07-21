@@ -71,13 +71,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 ),
                 guava.Field(
                     key="resolution_preference",
-                    description=(
-                        "The customer's preferred resolution for the delay: "
-                        "'wait' to wait for the new delivery date, "
-                        "'reship' to have the order reshipped, "
-                        "or 'refund' for a full refund"
-                    ),
-                    field_type="text",
+                    description="The customer's preferred resolution for the delay",
+                    field_type="multiple_choice",
+                    choices=["wait", "reship", "refund"],
                     required=True,
                 ),
                 guava.Field(
@@ -122,6 +118,21 @@ def on_done(call: guava.Call) -> None:
             "Wish them a great day and end the call politely."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "delay_acknowledged": call.get_field("delay_acknowledged"),
+        "resolution_preference": call.get_field("resolution_preference"),
+        "new_delivery_address": call.get_field("new_delivery_address"),
+        "additional_concerns": call.get_field("additional_concerns"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

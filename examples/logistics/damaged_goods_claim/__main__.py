@@ -70,8 +70,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="packaging_condition",
-                description="The condition of the outer packaging when the shipment was received: intact, damaged, or destroyed",
-                field_type="text",
+                description="The condition of the outer packaging when the shipment was received",
+                field_type="multiple_choice",
+                choices=["intact", "damaged", "destroyed"],
                 required=True,
             ),
             guava.Field(
@@ -82,8 +83,9 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="replacement_or_refund_preference",
-                description="Whether the claimant prefers a replacement shipment or a refund to resolve the claim",
-                field_type="text",
+                description="The claimant's preferred resolution for the claim",
+                field_type="multiple_choice",
+                choices=["replacement", "refund"],
                 required=True,
             ),
             guava.Field(
@@ -120,6 +122,21 @@ def on_done(call: guava.Call) -> None:
             "Apologize again for the inconvenience and wish them a good day."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "claimant_name": call.get_field("claimant_name"),
+        "tracking_number": call.get_field("tracking_number"),
+        "delivery_date": call.get_field("delivery_date"),
+        "damage_description": call.get_field("damage_description"),
+        "number_of_damaged_items": call.get_field("number_of_damaged_items"),
+        "packaging_condition": call.get_field("packaging_condition"),
+        "photos_available": call.get_field("photos_available"),
+        "replacement_or_refund_preference": call.get_field("replacement_or_refund_preference"),
+        "callback_number": call.get_field("callback_number"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

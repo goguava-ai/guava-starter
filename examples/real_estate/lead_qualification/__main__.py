@@ -40,17 +40,16 @@ def on_call_start(call: guava.Call) -> None:
             ),
             guava.Field(
                 key="buyer_or_seller",
-                description="Are you looking to buy a property, sell a property, or both?",
-                field_type="text",
+                description="Are you looking to buy, sell, or both?",
+                field_type="multiple_choice",
+                choices=["Buy", "Sell", "Both"],
                 required=True,
             ),
             guava.Field(
                 key="property_type",
-                description=(
-                    "What type of property are you interested in? "
-                    "Options include single family home, condo, multi-family, or land."
-                ),
-                field_type="text",
+                description="What type of property are you interested in?",
+                field_type="multiple_choice",
+                choices=["Single family home", "Condo", "Multi-family", "Land"],
                 required=True,
             ),
             guava.Field(
@@ -82,10 +81,11 @@ def on_call_start(call: guava.Call) -> None:
             guava.Field(
                 key="financing_pre_approved",
                 description=(
-                    "Have you already been pre-approved for financing, or are you "
-                    "paying cash? If not yet pre-approved, that's completely fine."
+                    "Have you already been pre-approved for financing? "
+                    "If not yet pre-approved, that's completely fine."
                 ),
-                field_type="text",
+                field_type="multiple_choice",
+                choices=["Pre-approved", "Paying cash", "Not yet pre-approved"],
                 required=True,
             ),
             guava.Field(
@@ -127,6 +127,19 @@ def on_done(call: guava.Call) -> None:
             "personalized plan. Wish them a wonderful day and say goodbye warmly."
         )
     )
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "buyer_or_seller": call.get_field("buyer_or_seller"),
+        "property_type": call.get_field("property_type"),
+        "target_location": call.get_field("target_location"),
+        "budget_range": call.get_field("budget_range"),
+        "timeline_to_move": call.get_field("timeline_to_move"),
+        "financing_pre_approved": call.get_field("financing_pre_approved"),
+        "agent_assignment_preference": call.get_field("agent_assignment_preference"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

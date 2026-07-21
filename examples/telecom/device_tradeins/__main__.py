@@ -84,12 +84,11 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="current_device_condition",
                     description=(
-                        "If the customer is interested, ask them to describe the current condition "
-                        "of their device. Offer these options: excellent (like new, no scratches), "
-                        "good (minor wear), fair (noticeable scratches or small cracks), or "
-                        "poor (significant damage). Capture the condition they select or describe."
+                        "If the customer is interested, ask them to describe the current "
+                        "condition of their device."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["excellent", "good", "fair", "poor"],
                     required=False,
                 ),
                 guava.Field(
@@ -105,12 +104,13 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="trade_in_method_preference",
                     description=(
-                        "Explain the two trade-in options: visiting a Nexus Mobile store in person "
-                        "where they can walk out with a new device the same day, or using the "
-                        "mail-in program where a prepaid shipping kit is sent to them. "
-                        "Ask which method they prefer. Capture 'store' or 'mail_in'."
+                        "Explain the two trade-in options: visiting a Nexus Mobile store in "
+                        "person where they can walk out with a new device the same day, or "
+                        "using the mail-in program where a prepaid shipping kit is sent to "
+                        "them. Ask which method they prefer."
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["store", "mail_in"],
                     required=False,
                 ),
                 guava.Field(
@@ -157,6 +157,22 @@ def on_done(call: guava.Call) -> None:
             "Nexus Mobile whenever they are ready."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "trade_in_interested": call.get_field("trade_in_interested"),
+        "current_device_condition": call.get_field("current_device_condition"),
+        "new_device_interest": call.get_field("new_device_interest"),
+        "trade_in_method_preference": call.get_field("trade_in_method_preference"),
+        "preferred_store_visit_date": call.get_field("preferred_store_visit_date"),
+    }, indent=2))
 
 
 if __name__ == "__main__":

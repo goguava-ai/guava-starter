@@ -1,6 +1,7 @@
 # SDK conformance: guava-sdk 0.34.0 (2026-07-14)
 import argparse
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -131,6 +132,24 @@ def on_done(call: guava.Call) -> None:
             "Health Department website or call the department directly. End the call politely."
         )
     )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event):
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call) -> None:
+    logging.info("Session ended — collected fields: %s", json.dumps({
+        "household_count": call.get_field("household_count"),
+        "vaccinations_up_to_date": call.get_field("vaccinations_up_to_date"),
+        "flu_shot_this_season": call.get_field("flu_shot_this_season"),
+        "chronic_conditions_present": call.get_field("chronic_conditions_present"),
+        "healthcare_access_barriers": call.get_field("healthcare_access_barriers"),
+        "health_insurance_status": call.get_field("health_insurance_status"),
+        "primary_care_physician_assigned": call.get_field("primary_care_physician_assigned"),
+    }, indent=2))
 
 
 if __name__ == "__main__":
