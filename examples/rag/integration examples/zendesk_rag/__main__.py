@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.34.0 (2026-07-14)
+# SDK conformance: guava-sdk 0.34.0 (2026-07-21)
 """
 Zendesk Help Center RAG: fetch articles via REST API, answer questions with Guava.
 
