@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.34.0 (2026-07-14)
+# SDK conformance: guava-sdk 0.34.0 (2026-07-21)
 """
 Basic RAG: document QA over policy files using LanceDB.
 

@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.34.0 (2026-07-14)
+# SDK conformance: guava-sdk 0.34.0 (2026-07-21)
 """Inbound pay-by-phone demo using a Stripe Checkout link sent over SMS.
 
 What the caller experiences:
@@ -31,6 +31,7 @@ from guava.types.call_info import PSTNCallInfo
 # ------------------------------------------------------------------------------------
 
 # Stripe uses HTTP Basic auth with the secret key as the username and an empty password.
+AGENT_NUMBER = os.environ["GUAVA_AGENT_NUMBER"]
 STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
 STRIPE_AUTH = (STRIPE_SECRET_KEY, "")
 STRIPE_BASE_URL = "https://api.stripe.com"
@@ -219,7 +220,7 @@ def on_amount_collected(call: guava.Call) -> None:
     # --- Text the link to the caller ------------------------------------------------
     try:
         client.send_sms(
-            from_number=os.environ["GUAVA_AGENT_NUMBER"],
+            from_number=AGENT_NUMBER,
             to_number=number,
             message=(
                 f"Your secure Stripe payment link for ${amount_dollars}: {session['url']}\n"
@@ -311,7 +312,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.phone is not None:
-        agent.listen_phone(args.phone or os.environ["GUAVA_AGENT_NUMBER"])
+        agent.listen_phone(args.phone or AGENT_NUMBER)
     elif args.webrtc is not None:
         agent.listen_webrtc(args.webrtc or None)
     elif args.sip:
