@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.34.0 (2026-07-21)
+# SDK conformance: guava-sdk 0.35.0 (2026-07-21)
 """Plug a raw OpenAI client into Guava callbacks.
 
 This example shows how to drive your own OpenAI key (and your own model
