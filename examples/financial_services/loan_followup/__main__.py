@@ -7,145 +7,292 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
     name="Taylor",
-    organization="First National Bank",
+    organization="National Internet Bank",
     purpose=(
-        "to follow up on a pending loan application and collect "
-        "outstanding documentation required to move the application forward"
+        "follow up on a pending loan application, inform the applicant of the "
+        "current status, and collect any outstanding documentation or next steps"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a loan officer or live person",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Taylor from National Internet Bank calling for "
+            f"{call.get_variable('contact_name')}. We're reaching out regarding "
+            f"your loan application. Please call us back at 1-800-555-0180 at "
+            f"your convenience. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        call.hangup(
-            final_instructions=(
-                f"You were unable to reach {call.get_variable('contact_name')}. Leave a brief, professional "
-                f"voicemail introducing yourself as Taylor from First National Bank, mentioning "
-                f"that you are calling about their {call.get_variable('loan_type')} application and that there are "
-                f"outstanding documents needed to proceed. Ask them to call back at their earliest "
-                f"convenience and provide the bank's main customer service line."
-            )
-        )
-    elif outcome == "available":
+    contact_name = call.get_variable("contact_name")
+    loan_type = call.get_variable("loan_type")
+    loan_status = call.get_variable("loan_status")
+
+    if outcome == "available":
         call.set_task(
             "followup",
             objective=(
-                f"You are following up with {call.get_variable('contact_name')} regarding their {call.get_variable('loan_type')} "
-                f"application at First National Bank. The application is currently on hold because "
-                f"the following documentation is missing: {call.get_variable('missing_docs')}. Your goal is to "
-                f"inform the applicant of the missing items, answer any eligibility questions they "
-                f"may have, confirm how they will submit the documents, and schedule a submission "
-                f"date so the application can move forward."
+                f"Follow up with {contact_name} regarding their {loan_type} "
+                f"application at National Internet Bank. The application status is: "
+                f"{loan_status}. Deliver the status update, address any questions, "
+                f"and collect next steps based on the status."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {call.get_variable('contact_name')}, I'm calling from First National Bank regarding "
-                    f"your {call.get_variable('loan_type')} application. I want to let you know that your "
-                    f"application is progressing, but we do need a couple of additional documents "
-                    f"before we can finalize a decision."
-                ),
-                guava.Say(
-                    f"The outstanding item we need from you is: {call.get_variable('missing_docs')}. "
-                    f"I am happy to answer any questions you have about why we need this or what "
-                    f"qualifies as acceptable documentation."
+                    f"I'm calling regarding your {loan_type} application — I have "
+                    f"an update for you."
                 ),
                 guava.Field(
-                    key="missing_documents_acknowledged",
+                    key="status_understood",
                     description=(
-                        f"Confirm that the applicant understands which documents are missing "
-                        f"({call.get_variable('missing_docs')}) and acknowledges they need to submit them. "
-                        f"Record a brief summary of their acknowledgment or any clarifications provided."
+                        "Confirmation that the applicant understood the status update"
                     ),
                     field_type="text",
-                    required=True,
-                ),
-                guava.Say(
-                    "We accept documents via email, fax, or in person at any branch location. "
-                    "Which method works best for you?"
-                ),
-                guava.Field(
-                    key="document_submission_method",
-                    description="The method the applicant has chosen to submit their documents.",
-                    field_type="multiple_choice",
-                    choices=["email", "fax", "branch"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_submission_date",
-                    description=(
-                        "The date by which the applicant expects to submit the required documents. "
-                        "Confirm a specific date with the applicant."
-                    ),
-                    field_type="date",
                     required=True,
                 ),
                 guava.Field(
                     key="additional_questions",
                     description=(
-                        "Any additional questions or concerns the applicant raised during the call "
-                        "about their loan application, eligibility, interest rates, or timeline. "
-                        "Leave blank if none."
+                        "Any questions or concerns the applicant raised about their "
+                        "application, eligibility, interest rates, or timeline"
                     ),
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Applicant %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone. Note that application updates will be available "
+                "through online banking or by calling the main line, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("followup")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "loan_type": call.get_variable("loan_type"),
-        "missing_docs": call.get_variable("missing_docs"),
-        "missing_documents_acknowledged": call.get_field("missing_documents_acknowledged"),
-        "document_submission_method": call.get_field("document_submission_method"),
-        "preferred_submission_date": call.get_field("preferred_submission_date"),
-        "additional_questions": call.get_field("additional_questions"),
-    }
-    print(json.dumps(results, indent=2))
+def on_followup_done(call: guava.Call) -> None:
+    loan_status = call.get_variable("loan_status")
+    contact_name = call.get_variable("contact_name")
+
+    if loan_status == "approved":
+        call.set_task(
+            "approved_next_steps",
+            objective=(
+                f"{contact_name}'s loan has been approved. Collect their signing "
+                f"preference — in person or electronic — and confirm they have "
+                f"the required documents ready: government-issued ID, proof of "
+                f"income, and proof of address. A confirmation email will follow "
+                f"with the full document checklist and funding timeline details."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Congratulations, {contact_name}! Your loan has been approved. "
+                    f"Let me walk you through what happens next."
+                ),
+                guava.Field(
+                    key="signing_preference",
+                    description=(
+                        "Whether the applicant prefers to sign the loan agreement "
+                        "in person at a branch or via electronic signature"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["in_person", "electronic"],
+                    required=True,
+                ),
+                guava.Field(
+                    key="documents_ready",
+                    description=(
+                        "Whether the applicant has the required documents ready: "
+                        "government-issued ID, proof of income, and proof of address"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["yes", "need_time"],
+                    required=True,
+                ),
+            ],
+        )
+    elif loan_status == "pending":
+        call.set_task(
+            "pending_followup",
+            objective=(
+                f"{contact_name}'s loan is still pending review. Explain the expected "
+                f"timeline and ask if they have any missing documents to submit."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Your application is currently under review. Our team typically "
+                    f"completes the review within 3 to 5 business days."
+                ),
+                guava.Field(
+                    key="has_missing_docs",
+                    description=(
+                        "Whether the applicant has any additional documentation "
+                        "they need to submit"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "not_sure"],
+                    required=True,
+                ),
+                guava.Field(
+                    key="submission_method",
+                    description=(
+                        "If the applicant has documents to submit, their preferred "
+                        "method: email, fax, or in person at a branch"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["email", "fax", "branch"],
+                    required=False,
+                ),
+            ],
+        )
+    else:
+        call.set_task(
+            "denied_alternatives",
+            objective=(
+                f"{contact_name}'s loan application was denied. Empathetically explain "
+                f"the decision and present alternative options: applying for a different "
+                f"loan product, reapplying with a co-signer, or speaking with a loan "
+                f"officer about other paths forward."
+            ),
+            checklist=[
+                guava.Say(
+                    f"I understand this isn't the news you were hoping for. While your "
+                    f"application wasn't approved at this time, I'd like to share some "
+                    f"alternative options that may be available to you."
+                ),
+                guava.Field(
+                    key="alternative_interest",
+                    description=(
+                        "Which alternative option interests the applicant: a different "
+                        "loan product, reapplying with a co-signer, or speaking with "
+                        "a loan officer for other options"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["different_product", "cosigner", "speak_to_officer", "none"],
+                    required=True,
+                ),
+            ],
+        )
+
+
+@agent.on_task_complete("approved_next_steps")
+def on_approved_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
     call.hangup(
         final_instructions=(
-            f"Thank {call.get_variable('contact_name')} for their time and for confirming the document "
-            f"submission details. Let them know that once we receive the {call.get_variable('missing_docs')}, "
-            f"a loan officer will review the application and reach out within 2 to 3 business "
-            f"days with a decision. Wish them a great day and close the call warmly."
+            f"Thank {contact_name} and confirm the next steps based on their signing "
+            f"preference. Let them know they'll receive a confirmation email with the "
+            f"full document checklist, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("pending_followup")
+def on_pending_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} for their patience. Let them know a loan officer "
+            f"will reach out once the review is complete, typically within 3 to 5 "
+            f"business days, and wish them a great day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("denied_alternatives")
+def on_denied_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} for their time. If they expressed interest in an "
+            f"alternative, confirm that a loan officer will follow up. Remind them "
+            f"they can call 1-800-555-0180 anytime, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Applicant %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they have been removed from "
+            "the contact list and will not be called again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know a loan officer will call them back within one business "
+            "day. Ask if there's a preferred time and thank them for their patience, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "missing_documents_acknowledged": call.get_field("missing_documents_acknowledged"),
-        "document_submission_method": call.get_field("document_submission_method"),
-        "preferred_submission_date": call.get_field("preferred_submission_date"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "loan_followup",
+        "contact_name": call.get_variable("contact_name"),
+        "loan_type": call.get_variable("loan_type"),
+        "loan_status": call.get_variable("loan_status"),
+        "status_understood": call.get_field("status_understood"),
         "additional_questions": call.get_field("additional_questions"),
-    }, indent=2))
+        "signing_preference": call.get_field("signing_preference"),
+        "documents_ready": call.get_field("documents_ready"),
+        "has_missing_docs": call.get_field("has_missing_docs"),
+        "submission_method": call.get_field("submission_method"),
+        "alternative_interest": call.get_field("alternative_interest"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Loan follow-up call to collect missing documentation."
+        description="Outbound loan follow-up call for National Internet Bank"
     )
-    parser.add_argument("phone", help="The phone number to call (E.164 format, e.g. +15551234567)")
+    parser.add_argument("phone", help="Phone number to dial")
     parser.add_argument("--name", required=True, help="Full name of the loan applicant")
     parser.add_argument(
         "--loan-type",
@@ -153,9 +300,9 @@ if __name__ == "__main__":
         help="Type of loan (default: 'personal loan')",
     )
     parser.add_argument(
-        "--missing-docs",
-        default="proof of income",
-        help="Description of missing documents (default: 'proof of income')",
+        "--loan-status",
+        default="pending",
+        help="Loan status: approved, pending, or denied (default: 'pending')",
     )
     parser.add_argument(
         "--from-number",
@@ -170,6 +317,6 @@ if __name__ == "__main__":
         variables={
             "contact_name": args.name,
             "loan_type": args.loan_type,
-            "missing_docs": args.missing_docs,
+            "loan_status": args.loan_status,
         },
     )

@@ -7,74 +7,63 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Morgan",
+    name="Harper",
     organization="Hargrove & Associates Law Firm",
     purpose=(
-        "to proactively inform the client of the current status of their "
-        "legal matter, confirm they understand the update and the next steps, "
-        "and capture any questions they would like relayed to their attorney"
+        "proactively inform clients of the current status of their legal matter, "
+        "confirm they understand the update and next steps, and capture any "
+        "questions they would like relayed to their attorney"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to their attorney or a live person",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Harper from Hargrove & Associates calling for "
+            f"{call.get_variable('contact_name')} with a status update on your "
+            f"legal matter. Please call us back at your convenience. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "call_type": "outbound_client_status_update",
-            "status": "recipient_unavailable",
-            "meta": {
-                "contact_name": call.get_variable("contact_name"),
-                "matter_number": call.get_variable("matter_number"),
-                "status_update": call.get_variable("status_update"),
-                "next_step": call.get_variable("next_step"),
-            },
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Recipient unavailable for status update call.")
-        call.hangup(
-            final_instructions=(
-                "Leave a brief, professional voicemail identifying yourself as Morgan "
-                "calling from Hargrove and Associates Law Firm. State that you are "
-                f"calling with a status update on matter number {call.get_variable('matter_number')} "
-                "and ask that they return your call at their earliest convenience or "
-                "visit the client portal for the latest information. Provide the "
-                "firm's main number and say goodbye."
-            )
-        )
-    elif outcome == "available":
+    contact_name = call.get_variable("contact_name")
+    matter_number = call.get_variable("matter_number")
+    status_update = call.get_variable("status_update")
+    next_step = call.get_variable("next_step")
+
+    if outcome == "available":
         call.set_task(
             "status_update",
             objective=(
-                f"Deliver a case status update to the client for matter number "
-                f"{call.get_variable('matter_number')}. The current status is: {call.get_variable('status_update')}. "
-                f"The next step is: {call.get_variable('next_step')}. Confirm the client understands "
-                "both the update and the next step, capture any questions they have "
-                "for their attorney, and note their preferred callback time if they "
-                "would like to speak with someone directly."
+                f"Deliver a case status update to {contact_name} for matter "
+                f"{matter_number}. The current status is: {status_update}. "
+                f"The next step is: {next_step}. Confirm the client understands "
+                f"and capture any questions for their attorney."
             ),
             checklist=[
                 guava.Say(
-                    f"Good day. I am calling from Hargrove and Associates Law Firm "
-                    f"with an update regarding matter number {call.get_variable('matter_number')}. "
-                    f"Here is the current status: {call.get_variable('status_update')}. "
-                    f"Regarding next steps: {call.get_variable('next_step')}. "
-                    "I want to make sure you have all the information you need and "
-                    "give you an opportunity to pass along any questions to your attorney."
+                    f"I have an update on matter {matter_number}. Here is the "
+                    f"current status: {status_update}. Regarding next steps: "
+                    f"{next_step}."
                 ),
                 guava.Field(
                     key="update_understood",
                     description=(
                         "Confirmation that the client has heard and understood the "
-                        "status update that was just provided"
+                        "status update and next steps"
                     ),
                     field_type="text",
                     required=True,
@@ -82,87 +71,159 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="questions_for_attorney",
                     description=(
-                        "Any questions the client would like relayed to their attorney, "
-                        "noted verbatim where possible"
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="next_step_acknowledged",
-                    description=(
-                        "Confirmation that the client understands and acknowledges "
-                        "the next step described in the update"
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="preferred_callback_time",
-                    description=(
-                        "If the client would like to speak directly with their attorney "
-                        "or a staff member, their preferred day and time for a callback"
+                        "Any questions the client would like relayed to their attorney"
                     ),
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Client %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone and that case updates will be sent by mail or through "
+                "the client portal, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("status_update")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "call_type": "outbound_client_status_update",
-        "meta": {
-            "contact_name": call.get_variable("contact_name"),
-            "matter_number": call.get_variable("matter_number"),
-            "status_update": call.get_variable("status_update"),
-            "next_step": call.get_variable("next_step"),
-        },
-        "fields": {
-            "update_understood": call.get_field("update_understood"),
-            "questions_for_attorney": call.get_field("questions_for_attorney"),
-            "next_step_acknowledged": call.get_field("next_step_acknowledged"),
-            "preferred_callback_time": call.get_field("preferred_callback_time"),
-        },
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Client status update results saved.")
+def on_update_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    questions = call.get_field("questions_for_attorney")
+
+    if questions:
+        call.set_task(
+            "schedule_followup",
+            objective=(
+                f"{contact_name} has questions for their attorney. Determine if "
+                f"they would like to schedule a follow-up call, request documents "
+                f"be sent, or if they have no further needs at this time."
+            ),
+            checklist=[
+                guava.Field(
+                    key="followup_preference",
+                    description=(
+                        "What the client would like as a next step: schedule a "
+                        "callback with their attorney, receive documents by email, "
+                        "or no further action needed"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["schedule_callback", "request_documents", "no_action"],
+                    required=True,
+                ),
+                guava.Field(
+                    key="preferred_callback_time",
+                    description=(
+                        "If scheduling a callback, the client's preferred day and "
+                        "time. Leave blank if not applicable."
+                    ),
+                    field_type="text",
+                    required=False,
+                ),
+            ],
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Remind them that Hargrove "
+                f"& Associates is committed to keeping them informed and that they "
+                f"can reach the firm anytime with questions, and wish them a good day, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_task_complete("schedule_followup")
+def on_followup_scheduled(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    preference = call.get_field("followup_preference")
+
+    if preference == "schedule_callback":
+        call.hangup(
+            final_instructions=(
+                f"Confirm that {contact_name}'s preferred callback time has been "
+                f"noted and their attorney will reach out accordingly. Thank them "
+                f"and wish them a good day, and politely say goodbye."
+            )
+        )
+    elif preference == "request_documents":
+        call.hangup(
+            final_instructions=(
+                f"Confirm that the requested documents will be sent to {contact_name} "
+                f"by email, and wish them a good day, and politely say goodbye."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their time. Remind them they can contact "
+                f"the firm anytime, and wish them a good day, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Client %s requested DNC mid-call.", call.get_variable("contact_name"))
     call.hangup(
         final_instructions=(
-            "Thank the client by name for their time. If they provided questions "
-            "for their attorney, assure them those will be passed along promptly. "
-            "If they requested a callback, confirm that their preferred time has "
-            "been noted. Remind them that Hargrove and Associates is committed to "
-            "keeping them informed throughout their matter and that they are always "
-            "welcome to contact the firm with questions. Say goodbye professionally."
+            "Acknowledge their request. Let them know they have been removed from "
+            "the contact list and will not be called again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know their attorney or a staff member will call them back "
+            "within one business day. Ask if there's a preferred time and thank them, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "client_status_update",
+        "contact_name": call.get_variable("contact_name"),
+        "matter_number": call.get_variable("matter_number"),
         "update_understood": call.get_field("update_understood"),
         "questions_for_attorney": call.get_field("questions_for_attorney"),
-        "next_step_acknowledged": call.get_field("next_step_acknowledged"),
+        "followup_preference": call.get_field("followup_preference"),
         "preferred_callback_time": call.get_field("preferred_callback_time"),
-    }, indent=2))
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Outbound client status update call — Hargrove & Associates"
+        description="Outbound client status update call for Hargrove & Associates"
     )
-    parser.add_argument("phone", help="Recipient phone number to dial")
+    parser.add_argument("phone", help="Phone number to dial")
     parser.add_argument("--name", required=True, help="Full name of the client")
     parser.add_argument("--matter-number", required=True, help="Matter or case number")
     parser.add_argument(

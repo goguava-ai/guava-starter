@@ -7,21 +7,36 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Morgan",
-    organization="Pinnacle Realty Group",
+    name="Emery",
+    organization="Acme Realty Group",
     purpose=(
-        "gather post-closing feedback from buyers and sellers to help "
-        "Pinnacle Realty Group improve agent performance and invite satisfied "
-        "clients to join the referral program"
+        "gather post-closing feedback from buyers and sellers, probe on low "
+        "satisfaction scores to understand pain points, and invite satisfied "
+        "clients to the referral program"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_agent": "The caller wants to speak to their agent or someone at the office",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Emery from Acme Realty Group calling for "
+            f"{call.get_variable('contact_name')}. Congratulations on your recent "
+            f"closing at {call.get_variable('property_address')}! We'd love to "
+            f"hear about your experience — it will only take a few minutes. "
+            f"Please call us back at your convenience. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
@@ -30,59 +45,26 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     agent_name = call.get_variable("agent_name")
     property_address = call.get_variable("property_address")
 
-    if outcome == "unavailable":
-        logging.warning(
-            "Could not reach %s for post-close survey (agent: %s, property: %s).",
-            contact_name,
-            agent_name,
-            property_address,
-        )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vertical": "real_estate",
-            "use_case": "post_close_survey",
-            "contact_name": contact_name,
-            "agent_name": agent_name,
-            "property_address": property_address,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                f"Leave a brief, warm voicemail for {contact_name}. "
-                "Introduce yourself as Morgan from Pinnacle Realty Group and congratulate "
-                f"them on their recent closing at {property_address}. "
-                "Let them know you're calling to gather a few minutes of feedback about "
-                f"their experience with {agent_name} and to share information about "
-                "a client referral program. Ask them to call back when convenient. "
-                "Keep it upbeat and under 30 seconds."
-            )
-        )
-    elif outcome == "available":
+    if outcome == "available":
         call.set_task(
             "post_close_survey",
             objective=(
-                f"You are calling {contact_name} to congratulate them on the recent "
-                f"closing of {property_address} and gather their feedback about their "
-                f"experience working with {agent_name} at Pinnacle Realty Group. "
-                "Be warm, celebratory, and genuinely curious. Let them know their feedback "
-                "directly shapes how agents are recognized and how the company improves. "
-                "Keep the tone conversational — this is a celebration call, not a cold survey."
+                f"Call {contact_name} to congratulate them on the recent closing "
+                f"of {property_address} and gather feedback about their experience "
+                f"with {agent_name} at Acme Realty Group. Be warm and "
+                f"celebratory. This is a celebration call, not a cold survey."
             ),
             checklist=[
                 guava.Say(
-                    f"Congratulations again on your recent closing at {property_address}! "
-                    f"On behalf of everyone at Pinnacle Realty Group, we're so excited for you. "
-                    f"I'm Morgan, and I'm reaching out to hear about your experience with "
-                    f"{agent_name}. Your feedback means a great deal to our team and "
-                    f"only takes a few minutes."
+                    f"Congratulations on your recent closing at {property_address}! "
+                    f"I'm reaching out to hear about your experience with "
+                    f"{agent_name}. Your feedback means a great deal to our team."
                 ),
                 guava.Field(
-                    key="overall_experience_rating",
+                    key="overall_rating",
                     description=(
-                        "On a scale of 1 to 5, with 5 being excellent and 1 being poor, "
-                        "how would you rate your overall experience with Pinnacle Realty Group "
-                        "from start to close?"
+                        "Overall satisfaction rating on a scale of 1 to 5, where "
+                        "1 is very unsatisfied and 5 is very satisfied"
                     ),
                     field_type="integer",
                     required=True,
@@ -90,9 +72,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="agent_communication_rating",
                     description=(
-                        f"Still using a scale of 1 to 5, how would you rate {agent_name}'s "
-                        "communication throughout the process — things like responsiveness, "
-                        "keeping you informed, and explaining each step clearly?"
+                        f"Rating of {agent_name}'s communication on a scale of 1 to 5 "
+                        f"— responsiveness, keeping them informed, and explaining steps"
                     ),
                     field_type="integer",
                     required=True,
@@ -100,124 +81,190 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="would_recommend",
                     description=(
-                        "Would you recommend Pinnacle Realty Group to a friend, family member, "
-                        "or colleague who is buying or selling a home?"
+                        "Whether the client would recommend Acme Realty Group "
+                        "to friends, family, or colleagues"
                     ),
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "maybe"],
                     required=True,
                 ),
                 guava.Field(
                     key="most_helpful_aspect",
                     description=(
-                        "What was the most helpful or memorable part of working with "
-                        f"{agent_name} or our team during this transaction?"
+                        f"The most helpful or memorable part of working with "
+                        f"{agent_name} or the Pinnacle team"
                     ),
                     field_type="text",
                     required=False,
                 ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Client %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again. Congratulate them on their closing and wish them well, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("post_close_survey")
+def on_survey_done(call: guava.Call) -> None:
+    overall = call.get_field("overall_rating")
+    contact_name = call.get_variable("contact_name")
+
+    if overall is not None and overall <= 2:
+        call.set_task(
+            "low_satisfaction_probe",
+            objective=(
+                f"{contact_name} gave a low overall rating ({overall}/5). "
+                f"Ask what specifically went wrong during the process — was it "
+                f"communication, timeline, pricing, paperwork, or something else? "
+                f"Be empathetic and listen carefully. Let them know their feedback "
+                f"will be shared with leadership."
+            ),
+            checklist=[
                 guava.Field(
-                    key="areas_for_improvement",
+                    key="pain_points",
                     description=(
-                        "Is there anything we could have done better or differently "
-                        "to make your experience even smoother?"
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="open_to_referral_program",
-                    description=(
-                        "We have a referral program that rewards clients who connect us with "
-                        "new buyers or sellers. Would you be interested in learning more about it?"
+                        "What specifically the client was unhappy about during "
+                        "the buying or selling process"
                     ),
                     field_type="text",
                     required=True,
                 ),
+                guava.Field(
+                    key="areas_for_improvement",
+                    description=(
+                        "What Pinnacle could have done differently to improve "
+                        "the experience"
+                    ),
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="wants_followup",
+                    description=(
+                        "Whether the client would like a follow-up call from "
+                        "the office manager to discuss their concerns"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
+                    required=True,
+                ),
             ],
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} sincerely for their feedback. Let them know "
+                f"it will be shared directly with {call.get_variable('agent_name')} "
+                f"and the Pinnacle leadership team. Mention the referral program — "
+                f"Pinnacle rewards clients who connect them with new buyers or "
+                f"sellers. Congratulate them once more and wish them all the best, and politely say goodbye."
+            )
         )
 
 
-@agent.on_task_complete("post_close_survey")
-def on_done(call: guava.Call) -> None:
+@agent.on_task_complete("low_satisfaction_probe")
+def on_low_satisfaction_done(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
-    agent_name = call.get_variable("agent_name")
-    property_address = call.get_variable("property_address")
-    overall = call.get_field("overall_experience_rating")
-    communication = call.get_field("agent_communication_rating")
-    referral_interest = (call.get_field("open_to_referral_program") or "").lower()
+    wants_followup = call.get_field("wants_followup")
 
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "vertical": "real_estate",
-        "use_case": "post_close_survey",
-        "contact_name": contact_name,
-        "agent_name": agent_name,
-        "property_address": property_address,
-        "fields": {
-            "overall_experience_rating": overall,
-            "agent_communication_rating": communication,
-            "would_recommend": call.get_field("would_recommend"),
-            "most_helpful_aspect": call.get_field("most_helpful_aspect"),
-            "areas_for_improvement": call.get_field("areas_for_improvement"),
-            "open_to_referral_program": call.get_field("open_to_referral_program"),
-        },
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Post-close survey results captured: %s", results)
+    if wants_followup == "yes":
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for sharing that feedback — it genuinely "
+                f"helps Pinnacle improve. Confirm that the office manager will "
+                f"reach out within two business days to discuss their concerns "
+                f"personally, and wish them well, and politely say goodbye."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their honesty. Assure them their "
+                f"feedback will be reviewed by leadership. Wish them all the best "
+                f"in their new home or next chapter, and politely say goodbye."
+            )
+        )
 
-    referral_note = (
-        "Also mention that someone from our team will be in touch shortly with "
-        "details about the referral program and how they can earn rewards for "
-        "connecting us with new clients. "
-        if any(word in referral_interest for word in ["yes", "sure", "interested", "open"])
-        else ""
-    )
 
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Client %s requested DNC mid-call.", call.get_variable("contact_name"))
     call.hangup(
         final_instructions=(
-            f"Thank {contact_name} sincerely for taking the time to share their "
-            f"feedback — let them know it will be shared directly with {agent_name} "
-            "and the Pinnacle leadership team. "
-            + referral_note +
-            "Congratulate them once more on their closing, wish them all the best in "
-            "their new home or next chapter, and close the call warmly and genuinely."
+            "Acknowledge their request. Let them know they've been removed from "
+            "the call list and won't be contacted again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_agent")
+def handle_speak_to_agent(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Let them know that {call.get_variable('agent_name')} or someone "
+            f"from the Pinnacle office will call them back within one business "
+            f"day. Ask if there is a preferred time and thank them, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "overall_experience_rating": call.get_field("overall_experience_rating"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "agent_name": call.get_variable("agent_name"),
+        "property_address": call.get_variable("property_address"),
+        "overall_rating": call.get_field("overall_rating"),
         "agent_communication_rating": call.get_field("agent_communication_rating"),
-        "open_to_referral_program": call.get_field("open_to_referral_program"),
         "would_recommend": call.get_field("would_recommend"),
         "most_helpful_aspect": call.get_field("most_helpful_aspect"),
+        "pain_points": call.get_field("pain_points"),
         "areas_for_improvement": call.get_field("areas_for_improvement"),
-    }, indent=2))
+        "wants_followup": call.get_field("wants_followup"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Post-close satisfaction survey outbound call."
+        description="Outbound post-close survey call for Acme Realty Group"
     )
-    parser.add_argument("phone", help="The client's phone number to call.")
-    parser.add_argument("--name", required=True, help="Full name of the client to reach.")
+    parser.add_argument("phone", help="The client's phone number to call")
+    parser.add_argument("--name", required=True, help="Full name of the client to reach")
     parser.add_argument(
         "--agent-name",
         required=True,
-        help="Full name of the agent who handled the transaction.",
+        help="Full name of the agent who handled the transaction",
     )
     parser.add_argument(
         "--property-address",
         required=True,
-        help="Address of the property that was bought or sold.",
+        help="Address of the property that was bought or sold",
     )
     parser.add_argument(
         "--from-number",
@@ -225,14 +272,6 @@ if __name__ == "__main__":
         help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
     )
     args = parser.parse_args()
-
-    logging.info(
-        "Initiating post-close survey call to %s (%s) for property %s (agent: %s).",
-        args.name,
-        args.phone,
-        args.property_address,
-        args.agent_name,
-    )
 
     agent.call_phone(
         from_number=args.from_number,

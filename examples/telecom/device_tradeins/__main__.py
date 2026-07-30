@@ -7,189 +7,271 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Sam",
+    name="Wren",
     organization="Nexus Mobile",
     purpose=(
-        "to reach out to Nexus Mobile customers who are eligible for a device upgrade, "
-        "share the trade-in value of their current device, gauge their interest in "
-        "upgrading, and help them choose between visiting a store or using the "
-        "mail-in trade-in option"
+        "reach out to customers eligible for a device upgrade, assess their "
+        "current device condition, quote a trade-in value, and help them "
+        "choose a trade-in method"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a real person or sales representative",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("customer_name"),
+        voicemail_message=(
+            f"Hi, this is Wren from Nexus Mobile calling for "
+            f"{call.get_variable('customer_name')}. Great news — your device "
+            f"qualifies for our trade-in upgrade program. No action needed right "
+            f"now — call us back at your convenience to learn more. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Sam",
-            "organization": "Nexus Mobile",
-            "use_case": "device_tradeins",
-            "contact_name": call.get_variable("contact_name"),
-            "account_number": call.get_variable("account_number"),
-            "current_device": call.get_variable("current_device"),
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Recipient unavailable for device trade-in call.")
-        call.hangup(
-            final_instructions=(
-                "The contact was not available. End the call politely without leaving "
-                "account details in a voicemail."
-            )
-        )
-    elif outcome == "available":
-        contact_name = call.get_variable("contact_name")
-        account_number = call.get_variable("account_number")
-        current_device = call.get_variable("current_device")
-        trade_in_value = call.get_variable("trade_in_value")
+    customer_name = call.get_variable("customer_name")
+    current_device = call.get_variable("current_device")
+    account_number = call.get_variable("account_number")
+
+    if outcome == "available":
         call.set_task(
-            "tradein_flow",
+            "assess_device",
             objective=(
-                f"You are speaking with {contact_name}, a Nexus Mobile customer "
-                f"(account #{account_number}) who is eligible for a device upgrade. "
-                f"Their current device is a {current_device}, which has an estimated "
-                f"trade-in value of {trade_in_value}. "
-                "Your goal is to let them know about this offer, understand their interest "
-                "in trading in and upgrading, and if interested, collect their preferred "
-                "method (store visit or mail-in) and schedule accordingly. "
-                "Be enthusiastic but not pushy."
+                f"Speak with {customer_name} (account #{account_number}) about "
+                f"trading in their {current_device}. Assess the device condition."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name.split()[0]}, this is Sam calling from Nexus Mobile. "
-                    f"I have some great news for you — your {current_device} qualifies "
-                    f"for our device upgrade program and we're able to offer you an estimated "
-                    f"trade-in value of {trade_in_value} toward a brand new device. "
-                    f"I just wanted to take a moment to tell you about your options."
+                    f"I have some great news — your {current_device} qualifies "
+                    f"for our device upgrade program. I'd love to walk you "
+                    f"through your options."
                 ),
                 guava.Field(
-                    key="trade_in_interested",
+                    key="device_condition",
                     description=(
-                        f"Ask the customer if they are interested in trading in their "
-                        f"{current_device} for a new device given the estimated trade-in "
-                        f"value of {trade_in_value}. Capture their level of interest clearly."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="current_device_condition",
-                    description=(
-                        "If the customer is interested, ask them to describe the current "
-                        "condition of their device."
+                        "The condition of the customer's current device: excellent "
+                        "(like new, no scratches), good (minor wear, fully functional), "
+                        "fair (visible wear, some issues), or poor (significant damage)"
                     ),
                     field_type="multiple_choice",
                     choices=["excellent", "good", "fair", "poor"],
-                    required=False,
+                    required=True,
+                ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", customer_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request politely. Let them know they have been "
+                "removed from our outreach list and will not be contacted again, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", customer_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", customer_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("assess_device")
+def on_device_assessed(call: guava.Call) -> None:
+    condition = call.get_field("device_condition")
+    customer_name = call.get_variable("customer_name")
+    current_device = call.get_variable("current_device")
+
+    if condition in ("excellent", "good"):
+        trade_value = "$250" if condition == "excellent" else "$175"
+        call.set_task(
+            "present_trade_offer",
+            objective=(
+                f"{customer_name}'s {current_device} is in {condition} condition. "
+                f"Quote a trade-in value of {trade_value}. Explain they can apply "
+                f"this toward any new device. Ask if they're interested and which "
+                f"trade-in method they prefer."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Great news — based on the {condition} condition of your "
+                    f"{current_device}, we can offer you {trade_value} in trade-in "
+                    f"value toward a brand new device."
                 ),
                 guava.Field(
-                    key="new_device_interest",
-                    description=(
-                        "Ask the customer if they have a particular new device in mind that "
-                        "they would like to upgrade to, or if they would like recommendations. "
-                        "Capture what they express interest in."
-                    ),
-                    field_type="text",
-                    required=False,
+                    key="interested",
+                    description="Whether the customer is interested in the trade-in offer",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "thinking_about_it"],
+                    required=True,
                 ),
                 guava.Field(
-                    key="trade_in_method_preference",
+                    key="trade_method",
                     description=(
-                        "Explain the two trade-in options: visiting a Nexus Mobile store in "
-                        "person where they can walk out with a new device the same day, or "
-                        "using the mail-in program where a prepaid shipping kit is sent to "
-                        "them. Ask which method they prefer."
+                        "The customer's preferred trade-in method: visit a Nexus Mobile "
+                        "store or use the mail-in program with a prepaid shipping kit"
                     ),
                     field_type="multiple_choice",
-                    choices=["store", "mail_in"],
+                    choices=["store_visit", "mail_in"],
                     required=False,
                 ),
+            ],
+        )
+    elif condition == "fair":
+        call.set_task(
+            "present_trade_offer",
+            objective=(
+                f"{customer_name}'s {current_device} is in fair condition. Quote a "
+                f"trade-in value of $75. Explain that fair-condition devices receive "
+                f"a lower value due to wear and any functional issues, but the credit "
+                f"still applies toward a new device."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Based on the fair condition of your {current_device}, we can "
+                    f"offer $75 in trade-in value. While devices with more wear do "
+                    f"receive a lower value, this credit still applies toward any "
+                    f"new device in our lineup."
+                ),
                 guava.Field(
-                    key="preferred_store_visit_date",
-                    description=(
-                        "If the customer prefers to visit a store, ask them what date works best "
-                        "for them to come in. Capture the date they provide."
-                    ),
-                    field_type="date",
+                    key="interested",
+                    description="Whether the customer is interested in the trade-in offer",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "thinking_about_it"],
+                    required=True,
+                ),
+                guava.Field(
+                    key="trade_method",
+                    description="Preferred trade-in method: store visit or mail-in program",
+                    field_type="multiple_choice",
+                    choices=["store_visit", "mail_in"],
                     required=False,
+                ),
+            ],
+        )
+    else:
+        call.set_task(
+            "present_recycle_option",
+            objective=(
+                f"{customer_name}'s {current_device} is in poor condition. The "
+                f"trade-in value is minimal ($15), but offer the free recycling "
+                f"program as an alternative. Explain they can still get a new "
+                f"device at full price or with any current promotions."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Based on the condition of your {current_device}, the trade-in "
+                    f"value would be $15. However, we do have a free device recycling "
+                    f"program — we'll responsibly recycle your old device at no cost. "
+                    f"And you can still take advantage of any current new device promotions."
+                ),
+                guava.Field(
+                    key="interested",
+                    description=(
+                        "Whether the customer wants the minimal trade-in, free recycling, "
+                        "or neither"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["trade_in", "recycle", "not_interested"],
+                    required=True,
                 ),
             ],
         )
 
 
-@agent.on_task_complete("tradein_flow")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "agent": "Sam",
-        "organization": "Nexus Mobile",
-        "use_case": "device_tradeins",
-        "contact_name": call.get_variable("contact_name"),
-        "account_number": call.get_variable("account_number"),
-        "current_device": call.get_variable("current_device"),
-        "trade_in_value": call.get_variable("trade_in_value"),
-        "fields": {
-            "trade_in_interested": call.get_field("trade_in_interested"),
-            "current_device_condition": call.get_field("current_device_condition"),
-            "new_device_interest": call.get_field("new_device_interest"),
-            "trade_in_method_preference": call.get_field("trade_in_method_preference"),
-            "preferred_store_visit_date": call.get_field("preferred_store_visit_date"),
-        },
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Device trade-in call results saved.")
+@agent.on_task_complete("present_trade_offer")
+def on_trade_offer_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
     call.hangup(
         final_instructions=(
-            "Thank the customer enthusiastically for their time. If they are interested "
-            "in a store visit, confirm the date and let them know a Nexus Mobile specialist "
-            "will be ready to assist them. If they chose mail-in, let them know a prepaid "
-            "shipping kit will be sent within 2 to 3 business days. If they are not "
-            "interested right now, let them know the offer stands and they can call "
-            "Nexus Mobile whenever they are ready."
+            f"Thank {customer_name} for their time. If they're interested, confirm "
+            f"next steps based on their chosen method. If they chose a store visit, "
+            f"let them know any Nexus Mobile location can help. If they chose mail-in, "
+            f"a prepaid kit will arrive within 3 business days. If not interested, "
+            f"let them know the offer stands whenever they're ready, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("present_recycle_option")
+def on_recycle_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    call.hangup(
+        final_instructions=(
+            f"Thank {customer_name} for their time. If they chose recycling, let "
+            f"them know a prepaid recycling kit will be sent. If not interested, "
+            f"wish them well and let them know Nexus Mobile is here when they're ready, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("customer_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from the "
+            "contact list and won't be called again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a Nexus Mobile sales specialist will call them back "
+            "within one business day, thank them for their time, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "trade_in_interested": call.get_field("trade_in_interested"),
-        "current_device_condition": call.get_field("current_device_condition"),
-        "new_device_interest": call.get_field("new_device_interest"),
-        "trade_in_method_preference": call.get_field("trade_in_method_preference"),
-        "preferred_store_visit_date": call.get_field("preferred_store_visit_date"),
-    }, indent=2))
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": call.get_variable("customer_name"),
+        "account_number": call.get_variable("account_number"),
+        "current_device": call.get_variable("current_device"),
+        "device_condition": call.get_field("device_condition"),
+        "interested": call.get_field("interested"),
+        "trade_method": call.get_field("trade_method"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Nexus Mobile — Device Trade-In outbound call agent"
+        description="Outbound device trade-in call for Nexus Mobile"
     )
-    parser.add_argument("phone", help="Customer phone number to call (E.164 format)")
-    parser.add_argument("--name", required=True, help="Full name of the customer")
+    parser.add_argument("phone", help="Customer phone number to call")
+    parser.add_argument("--name", required=True, help="Customer full name")
     parser.add_argument("--account-number", required=True, help="Customer account number")
     parser.add_argument(
         "--current-device", required=True, help="Make and model of the customer's current device"
-    )
-    parser.add_argument(
-        "--trade-in-value",
-        required=True,
-        help="Estimated trade-in value for the current device (e.g. '$200')",
     )
     parser.add_argument(
         "--from-number",
@@ -202,9 +284,8 @@ if __name__ == "__main__":
         from_number=args.from_number,
         to_number=args.phone,
         variables={
-            "contact_name": args.name,
+            "customer_name": args.name,
             "account_number": args.account_number,
             "current_device": args.current_device,
-            "trade_in_value": args.trade_in_value,
         },
     )

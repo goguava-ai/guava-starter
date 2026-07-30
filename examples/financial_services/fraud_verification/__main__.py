@@ -7,160 +7,307 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
+
+
+# ---------------------------------------------------------------------------
+# Mock API — simulates a fraud alert backend for demo purposes
+# ---------------------------------------------------------------------------
+
+MOCK_ALERTS = {
+    "ALT-20260501": {
+        "cardholder": "Maria Santos",
+        "last_four_ssn": "4829",
+        "dob": "1985-03-14",
+        "card_last_four": "7742",
+        "transaction": "Online purchase at ElectroMart.com",
+        "amount": "$1,247.99",
+        "transaction_date": "2026-07-24",
+        "merchant_category": "electronics",
+    },
+    "ALT-20260502": {
+        "cardholder": "David Park",
+        "last_four_ssn": "7103",
+        "dob": "1992-07-22",
+        "card_last_four": "3381",
+        "transaction": "ATM withdrawal — 1420 Maple Ave, Chicago IL",
+        "amount": "$800.00",
+        "transaction_date": "2026-07-25",
+        "merchant_category": "atm",
+    },
+    "ALT-20260503": {
+        "cardholder": "Rachel Kim",
+        "last_four_ssn": "2256",
+        "dob": "1978-11-05",
+        "card_last_four": "1125",
+        "transaction": "Wire transfer to overseas account",
+        "amount": "$3,500.00",
+        "transaction_date": "2026-07-23",
+        "merchant_category": "wire_transfer",
+    },
+}
+
+FRAUD_TEAM_LINE = "+15551000500"
+
+
+def verify_cardholder(alert_id, last_four_ssn=None, dob=None):
+    alert = MOCK_ALERTS.get(alert_id)
+    if alert is None:
+        return None
+    if last_four_ssn and alert["last_four_ssn"] == last_four_ssn:
+        return alert
+    if dob and alert["dob"] == dob:
+        return alert
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 agent = guava.Agent(
     name="Alex",
-    organization="First National Bank - Fraud Prevention",
+    organization="National Internet Bank — Fraud Prevention",
     purpose=(
-        "to verify a potentially suspicious transaction on the cardholder's account "
-        "and confirm whether the activity should be authorized or blocked"
+        "verify a potentially fraudulent transaction with the cardholder, "
+        "confirm whether the activity is authorized, and take appropriate "
+        "action to protect the account"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a fraud specialist or live person",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Alex from National Internet Bank's Fraud Prevention team "
+            f"calling for {call.get_variable('contact_name')}. We have a time-sensitive "
+            f"matter regarding your account. Please call the fraud prevention line "
+            f"using the number on the back of your card as soon as possible. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        call.hangup(
-            final_instructions=(
-                f"You were unable to reach {call.get_variable('contact_name')}. Leave a brief, urgent but calm "
-                f"voicemail identifying yourself as Alex from First National Bank's Fraud Prevention "
-                f"team. State that there is a time-sensitive matter regarding their account and ask "
-                f"them to call the fraud prevention line immediately using the number on the back of "
-                f"their card or on the bank's official website. Do not disclose specific transaction "
-                f"details in the voicemail."
-            )
-        )
-    elif outcome == "available":
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "available":
         call.set_task(
-            "verification",
+            "verify_identity",
             objective=(
-                f"You are contacting {call.get_variable('contact_name')} on behalf of First National Bank's "
-                f"Fraud Prevention team. A transaction has been flagged on their account: "
-                f"{call.get_variable('transaction')} for {call.get_variable('amount')}. Your goal is to quickly and clearly "
-                f"verify whether the cardholder recognizes this transaction, determine whether "
-                f"it should be authorized or blocked, check for any additional fraud concerns, "
-                f"and ask if they would like a replacement card issued. Keep the tone calm, "
-                f"professional, and reassuring throughout the call."
+                f"Verify the identity of {contact_name} before sharing any transaction "
+                f"details. Ask for their date of birth AND the last four digits of their "
+                f"Social Security number. Both are required for fraud verification. "
+                f"Do NOT reveal the flagged transaction, amount, or any account details "
+                f"until identity is fully confirmed. Do not provide financial advice or "
+                f"make liability statements."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {call.get_variable('contact_name')}, this is Alex calling from First National Bank's "
-                    f"Fraud Prevention team. We have detected activity on your account that we "
-                    f"want to verify with you quickly to make sure your account is secure."
-                ),
-                guava.Say(
-                    f"We are seeing {call.get_variable('transaction')} for {call.get_variable('amount')}. "
-                    f"I just need to ask you a few quick questions about this charge."
+                    "We've detected activity on your account that we need to verify "
+                    "with you. For your security, I need to confirm your identity "
+                    "first."
                 ),
                 guava.Field(
-                    key="transaction_recognized",
-                    description=(
-                        f"Whether the cardholder recognizes the transaction: "
-                        f"{call.get_variable('transaction')} for {call.get_variable('amount')}."
-                    ),
-                    field_type="multiple_choice",
-                    choices=["yes", "no"],
+                    key="dob",
+                    description="The cardholder's date of birth for identity verification",
+                    field_type="text",
                     required=True,
                 ),
                 guava.Field(
-                    key="authorize_transaction",
+                    key="last_four_ssn",
                     description=(
-                        "If the cardholder recognized the transaction, whether they would like "
-                        "to authorize and allow it to process. Leave blank if the cardholder did "
-                        "not recognize the transaction and it is being treated as fraudulent."
-                    ),
-                    field_type="multiple_choice",
-                    choices=["yes", "no"],
-                    required=False,
-                ),
-                guava.Field(
-                    key="additional_fraud_concerns",
-                    description=(
-                        "Ask the cardholder if they have noticed any other suspicious transactions "
-                        "or unauthorized activity on their account. Record a summary of any concerns "
-                        "they raise. Leave blank if they report no additional concerns."
+                        "The last four digits of the cardholder's Social Security number"
                     ),
                     field_type="text",
-                    required=False,
-                ),
-                guava.Say(
-                    "For your security, I also want to ask whether you would like us to issue a "
-                    "replacement card. This would cancel your current card and send a new one to "
-                    "the address we have on file, typically arriving within 5 to 7 business days."
-                ),
-                guava.Field(
-                    key="card_replacement_requested",
-                    description="Whether the cardholder has requested a replacement card.",
-                    field_type="multiple_choice",
-                    choices=["yes", "no"],
                     required=True,
+                    sensitive=True,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Cardholder %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone. Suggest they call the fraud line using the number "
+                "on the back of their card to address the alert on their account, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
-@agent.on_task_complete("verification")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "transaction": call.get_variable("transaction"),
-        "amount": call.get_variable("amount"),
-        "transaction_recognized": call.get_field("transaction_recognized"),
-        "authorize_transaction": call.get_field("authorize_transaction"),
-        "additional_fraud_concerns": call.get_field("additional_fraud_concerns"),
-        "card_replacement_requested": call.get_field("card_replacement_requested"),
-    }
-    print(json.dumps(results, indent=2))
+@agent.on_task_complete("verify_identity")
+def on_identity_verified(call: guava.Call) -> None:
+    alert_id = call.get_variable("alert_id")
+    dob = call.get_field("dob")
+    last_four_ssn = call.get_field("last_four_ssn")
+    alert = verify_cardholder(alert_id, last_four_ssn=last_four_ssn, dob=dob)
+
+    if alert is None:
+        logging.warning("Identity verification failed for alert %s.", alert_id)
+        call.hangup(
+            final_instructions=(
+                "Let them know the information provided does not match our records. "
+                "For security, you cannot share account details. Suggest they call "
+                "the fraud prevention line using the number on the back of their card, and politely say goodbye."
+            )
+        )
+        return
+
+    contact_name = call.get_variable("contact_name")
+
+    call.add_info("flagged_transaction", {
+        "alert_id": alert_id,
+        "transaction": alert["transaction"],
+        "amount": alert["amount"],
+        "transaction_date": alert["transaction_date"],
+        "card_last_four": alert["card_last_four"],
+    })
+
+    call.set_task(
+        "verify_transaction",
+        objective=(
+            f"Identity verified. Present the flagged transaction to {contact_name}: "
+            f"{alert['transaction']} for {alert['amount']} on {alert['transaction_date']} "
+            f"on the card ending in {alert['card_last_four']}. Determine whether they "
+            f"recognize and authorize this transaction. Do NOT provide financial advice "
+            f"or make any liability statements."
+        ),
+        checklist=[
+            guava.Say(
+                f"Thank you, {contact_name}. Your identity has been verified. "
+                f"We flagged a transaction on your card ending in {alert['card_last_four']}: "
+                f"{alert['transaction']} for {alert['amount']} on {alert['transaction_date']}."
+            ),
+            guava.Field(
+                key="transaction_recognized",
+                description="Whether the cardholder recognizes this transaction",
+                field_type="multiple_choice",
+                choices=["yes", "no", "not_sure"],
+                required=True,
+            ),
+            guava.Field(
+                key="additional_concerns",
+                description=(
+                    "Any other suspicious transactions or unauthorized activity "
+                    "the cardholder has noticed. Leave blank if none."
+                ),
+                field_type="text",
+                required=False,
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("verify_transaction")
+def on_transaction_verified(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    recognized = call.get_field("transaction_recognized")
+
+    if recognized == "yes":
+        call.hangup(
+            final_instructions=(
+                f"Let {contact_name} know the alert has been cleared and the "
+                f"transaction will process normally. Reassure them that their account "
+                f"is secure. Thank them for verifying and remind them to call the "
+                f"number on the back of their card if they notice anything suspicious "
+                f"in the future, and politely say goodbye."
+            )
+        )
+    elif recognized == "not_sure":
+        call.transfer(
+            destination=FRAUD_TEAM_LINE,
+            instructions=(
+                f"Let {contact_name} know you're connecting them with a fraud "
+                f"specialist who can review the transaction in more detail and help "
+                f"determine whether it's authorized. Reassure them that their "
+                f"information has been noted."
+            ),
+        )
+    else:
+        call.transfer(
+            destination=FRAUD_TEAM_LINE,
+            instructions=(
+                f"Let {contact_name} know the transaction will be blocked and their "
+                f"card ending in the relevant digits will be frozen for protection. "
+                f"You're connecting them with the fraud team to complete the process "
+                f"and arrange a replacement card."
+            ),
+        )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Cardholder %s requested DNC mid-call.", call.get_variable("contact_name"))
     call.hangup(
         final_instructions=(
-            f"Thank {call.get_variable('contact_name')} for taking the time to verify their account activity. "
-            f"Let them know their account security is the bank's top priority. If a replacement "
-            f"card was requested, confirm it will arrive in 5 to 7 business days. If fraud was "
-            f"reported, assure them that the transaction will be blocked and a fraud specialist "
-            f"will follow up. Remind them to call the number on the back of their card if they "
-            f"have further concerns, and close the call professionally."
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone. Remind them to call the fraud line on the back of "
+            "their card to address the alert, and politely say goodbye."
         )
     )
 
 
+@agent.on_action("speak_to_someone")
+def handle_transfer(call: guava.Call) -> None:
+    call.transfer(
+        destination=FRAUD_TEAM_LINE,
+        instructions="Let them know you're connecting them with a fraud specialist now.",
+    )
+
+
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "fraud_verification",
+        "contact_name": call.get_variable("contact_name"),
+        "alert_id": call.get_variable("alert_id"),
+        "identity_verified": (
+            call.get_field("dob") is not None and call.get_field("last_four_ssn") is not None
+        ),
         "transaction_recognized": call.get_field("transaction_recognized"),
-        "authorize_transaction": call.get_field("authorize_transaction"),
-        "additional_fraud_concerns": call.get_field("additional_fraud_concerns"),
-        "card_replacement_requested": call.get_field("card_replacement_requested"),
-    }, indent=2))
+        "additional_concerns": call.get_field("additional_concerns"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Fraud verification call to confirm suspicious account activity."
+        description="Outbound fraud verification call for National Internet Bank"
     )
-    parser.add_argument("phone", help="The phone number to call (E.164 format, e.g. +15551234567)")
+    parser.add_argument("phone", help="Phone number to dial")
     parser.add_argument("--name", required=True, help="Full name of the cardholder")
     parser.add_argument(
-        "--transaction",
-        default="a recent charge on your account",
-        help="Description of the flagged transaction (default: 'a recent charge on your account')",
-    )
-    parser.add_argument(
-        "--amount",
-        default="$0.00",
-        help="Dollar amount of the flagged transaction (default: '$0.00')",
+        "--alert-id",
+        required=True,
+        help="Fraud alert ID (try ALT-20260501, ALT-20260502, or ALT-20260503)",
     )
     parser.add_argument(
         "--from-number",
@@ -174,7 +321,6 @@ if __name__ == "__main__":
         to_number=args.phone,
         variables={
             "contact_name": args.name,
-            "transaction": args.transaction,
-            "amount": args.amount,
+            "alert_id": args.alert_id,
         },
     )

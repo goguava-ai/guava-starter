@@ -7,141 +7,244 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Riley",
-    organization="City of Springfield - Permitting Office",
+    name="Pat",
+    organization="City of Springfield — Permitting Office",
     purpose=(
-        "contact permit applicants regarding missing information required "
-        "to process their application"
+        "contact permit applicants with a status update on their application "
+        "and guide them through next steps based on the current status"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a permit office representative or real person",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("applicant_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("applicant_name"),
+        voicemail_message=(
+            f"Hi, this is Pat from the City of Springfield Permitting Office "
+            f"calling for {call.get_variable('applicant_name')} regarding permit "
+            f"application {call.get_variable('permit_number')}. Please call us "
+            f"back at your convenience. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        logging.info(
-            "Applicant %s was unavailable for permit follow-up call regarding permit %s.",
-            call.get_variable("applicant_name"),
-            call.get_variable("permit_number"),
-        )
-    elif outcome == "available":
-        applicant_name = call.get_variable("applicant_name")
-        permit_number = call.get_variable("permit_number")
-        missing_items = call.get_variable("missing_items")
+    applicant_name = call.get_variable("applicant_name")
+    permit_number = call.get_variable("permit_number")
+    permit_status = call.get_variable("permit_status")
+    status_detail = call.get_variable("status_detail")
+
+    if outcome == "available":
         call.set_task(
             "followup",
             objective=(
-                f"You are calling on behalf of the City of Springfield Permitting Office "
-                f"to inform {applicant_name} that their permit or license application "
-                f"(permit number {permit_number}) cannot be processed until additional "
-                f"information is provided. The missing items are: {missing_items}. "
-                "Clearly explain what is needed, ask how they plan to submit the information, "
-                "and confirm a commitment date. Be professional, helpful, and neutral in tone."
+                f"Inform {applicant_name} about the current status of their permit "
+                f"application {permit_number}. The status is: {permit_status}. "
+                f"Details: {status_detail}. Deliver the update clearly and confirm "
+                f"the applicant understands their status and any required actions."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello, I'm calling from the City of Springfield Permitting Office "
-                    f"regarding permit application number {permit_number}. We have "
-                    f"reviewed your application and found that we are unable to proceed "
-                    f"without some additional information. The items we still need are: "
-                    f"{missing_items}. I have a few quick questions to help us get "
-                    "your application moving forward."
+                    f"I'm calling regarding your permit application number "
+                    f"{permit_number}. I have an update on the status of your "
+                    f"application."
                 ),
                 guava.Field(
-                    key="missing_info_acknowledged",
+                    key="status_acknowledged",
                     description=(
-                        "Confirm that the applicant understands which items are missing "
-                        "and ask them to acknowledge receipt of this information."
+                        "Confirm that the applicant has heard and understood the "
+                        "current status of their permit application"
                     ),
                     field_type="text",
                     required=True,
-                ),
-                guava.Field(
-                    key="info_submission_method",
-                    description="Ask how the applicant plans to submit the missing information.",
-                    field_type="multiple_choice",
-                    choices=["email", "mail", "in person", "online portal"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="submission_date_commitment",
-                    description=(
-                        "Ask the applicant for the date by which they expect to submit "
-                        "the missing information."
-                    ),
-                    field_type="date",
-                    required=True,
-                ),
-                guava.Field(
-                    key="cannot_provide_reason",
-                    description=(
-                        "If the applicant indicates they are unable to provide any of the "
-                        "missing items, ask them to explain why."
-                    ),
-                    field_type="text",
-                    required=False,
                 ),
                 guava.Field(
                     key="additional_questions",
                     description=(
-                        "Ask if the applicant has any questions about the missing requirements "
-                        "or the application process."
+                        "Ask if the applicant has any questions about the status "
+                        "or the application process"
                     ),
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Applicant %s requested no further contact.", applicant_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone, and that any permit updates will be available online "
+                "or by contacting the Permitting Office directly, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", applicant_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", applicant_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("followup")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "applicant_name": call.get_variable("applicant_name"),
-        "permit_number": call.get_variable("permit_number"),
-        "missing_items": call.get_variable("missing_items"),
-        "fields": {
-            "missing_info_acknowledged": call.get_field("missing_info_acknowledged"),
-            "info_submission_method": call.get_field("info_submission_method"),
-            "submission_date_commitment": call.get_field("submission_date_commitment"),
-            "cannot_provide_reason": call.get_field("cannot_provide_reason"),
-            "additional_questions": call.get_field("additional_questions"),
-        },
-    }
-    print(json.dumps(results, indent=2))
+def on_followup_done(call: guava.Call) -> None:
+    permit_status = call.get_variable("permit_status")
+    applicant_name = call.get_variable("applicant_name")
+
+    if permit_status == "approved":
+        call.set_task(
+            "approved_next_steps",
+            objective=(
+                f"{applicant_name}'s permit has been approved. Congratulate them "
+                f"and let them know the approved permit is ready. Ask when they "
+                f"plan to pick it up and whether they have any questions about "
+                f"inspections. The Permitting Office will send detailed pickup "
+                f"instructions, location, and any inspection scheduling "
+                f"requirements by email."
+            ),
+            checklist=[
+                guava.Field(
+                    key="pickup_preference",
+                    description="When the applicant plans to pick up the approved permit",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="inspection_questions",
+                    description="Whether the applicant has questions about required inspections",
+                    field_type="text",
+                    required=False,
+                ),
+            ],
+        )
+    elif permit_status == "needs_revision":
+        call.set_task(
+            "revision_guidance",
+            objective=(
+                f"{applicant_name}'s permit application requires revisions before "
+                f"it can be approved. Explain clearly what needs to be corrected "
+                f"or resubmitted. Collect their plan for addressing the revisions "
+                f"and a target resubmission date."
+            ),
+            checklist=[
+                guava.Field(
+                    key="revisions_understood",
+                    description="Whether the applicant understands what revisions are needed",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="resubmission_method",
+                    description="How the applicant plans to submit the revised application",
+                    field_type="multiple_choice",
+                    choices=["email", "mail", "in person", "online portal"],
+                    required=True,
+                ),
+                guava.Field(
+                    key="resubmission_date",
+                    description="When the applicant expects to resubmit the corrected application",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+    else:
+        # pending
+        call.hangup(
+            final_instructions=(
+                f"Let {applicant_name} know that their application is still being "
+                f"reviewed and provide the expected timeline. Reassure them that "
+                f"they will be notified as soon as a decision is made. Remind them "
+                f"they can check status online or call the Permitting Office. "
+                f"Wish them a good day, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_task_complete("approved_next_steps")
+def on_approved_done(call: guava.Call) -> None:
     call.hangup(
         final_instructions=(
-            "Thank the applicant for their time. Remind them of the submission method "
-            "and date they committed to. Let them know that once all required information "
-            "is received, the Permitting Office will continue processing their application. "
-            "Provide the office phone number or website if they have further questions, "
-            "and end the call courteously."
+            f"Congratulate {call.get_variable('applicant_name')} on the approval. "
+            f"Confirm the pickup details. Remind them to bring a valid photo ID. "
+            f"Let them know they can contact the Permitting Office if they have "
+            f"any additional questions, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("revision_guidance")
+def on_revision_done(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('applicant_name')} for their time. Remind "
+            f"them of the resubmission method and date they committed to. Let them "
+            f"know the Permitting Office will continue processing once the revisions "
+            f"are received, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Applicant %s requested DNC mid-call.", call.get_variable("applicant_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone regarding this permit application, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a Permitting Office representative will call them "
+            "back within one business day. Ask if there's a preferred time and "
+            "thank them for their patience, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "missing_info_acknowledged": call.get_field("missing_info_acknowledged"),
-        "info_submission_method": call.get_field("info_submission_method"),
-        "submission_date_commitment": call.get_field("submission_date_commitment"),
-        "cannot_provide_reason": call.get_field("cannot_provide_reason"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "permit_followup",
+        "applicant_name": call.get_variable("applicant_name"),
+        "permit_number": call.get_variable("permit_number"),
+        "permit_status": call.get_variable("permit_status"),
+        "status_acknowledged": call.get_field("status_acknowledged"),
         "additional_questions": call.get_field("additional_questions"),
-    }, indent=2))
+        "pickup_preference": call.get_field("pickup_preference"),
+        "revisions_understood": call.get_field("revisions_understood"),
+        "resubmission_method": call.get_field("resubmission_method"),
+        "resubmission_date": call.get_field("resubmission_date"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
@@ -153,9 +256,15 @@ if __name__ == "__main__":
     parser.add_argument("--name", required=True, help="Full name of the permit applicant.")
     parser.add_argument("--permit-number", required=True, help="Permit or license application number.")
     parser.add_argument(
-        "--missing-items",
+        "--permit-status",
         required=True,
-        help="Description of the information or documents still required to process the application.",
+        choices=["approved", "pending", "needs_revision"],
+        help="Current status of the permit application.",
+    )
+    parser.add_argument(
+        "--status-detail",
+        required=True,
+        help="Detailed explanation of the permit status and any required actions.",
     )
     parser.add_argument(
         "--from-number",
@@ -170,6 +279,7 @@ if __name__ == "__main__":
         variables={
             "applicant_name": args.name,
             "permit_number": args.permit_number,
-            "missing_items": args.missing_items,
+            "permit_status": args.permit_status,
+            "status_detail": args.status_detail,
         },
     )

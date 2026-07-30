@@ -7,102 +7,259 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
+
+
+# ---------------------------------------------------------------------------
+# Mock API — simulates a cart/order backend for demo purposes
+# ---------------------------------------------------------------------------
+
+MOCK_CARTS = {
+    "CART-10001": {
+        "customer": "Priya Sharma",
+        "items": "Wireless earbuds, Phone case, USB-C cable",
+        "total": "$87.49",
+        "abandonment_reason": "price_concern",
+    },
+    "CART-10002": {
+        "customer": "Marcus Webb",
+        "items": "Running shoes (size 11), Moisture-wicking socks (3-pack)",
+        "total": "$134.95",
+        "abandonment_reason": "shipping",
+    },
+    "CART-10003": {
+        "customer": "Elena Cortez",
+        "items": "Standing desk converter, Monitor arm",
+        "total": "$289.00",
+        "abandonment_reason": "changed_mind",
+    },
+    "CART-10004": {
+        "customer": "James Liu",
+        "items": "Bluetooth speaker, Charging pad",
+        "total": "$62.50",
+        "abandonment_reason": "technical_issue",
+    },
+}
+
+
+def lookup_cart(cart_id):
+    return MOCK_CARTS.get(cart_id)
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 agent = guava.Agent(
-    name="Riley",
+    name="Kai",
     organization="ShopNow",
     purpose=(
-        "to reach out to customers who left items in their cart, "
-        "answer any product questions, offer assistance or an incentive, "
-        "and help them complete their purchase"
+        "reach out to customers who left items in their cart, understand "
+        "their reason for not completing the purchase, address their concern, "
+        "and help them complete the order when appropriate"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_support": "The caller wants to speak to a customer support representative or real person",
+})
+
+SUPPORT_LINE = "+15559001010"
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("customer_name"),
+        voicemail_message=(
+            f"Hi, this is Kai from ShopNow calling for "
+            f"{call.get_variable('customer_name')}. We noticed you left some items "
+            f"in your cart and wanted to check if there's anything we can help with. "
+            f"No action needed — call us back anytime. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    contact_name = call.get_variable("contact_name")
-    cart_items = call.get_variable("cart_items")
-    cart_value = call.get_variable("cart_value")
+    customer_name = call.get_variable("customer_name")
+    cart_id = call.get_variable("cart_id")
 
-    if outcome == "unavailable":
-        logging.warning(
-            "Could not reach %s for cart recovery outreach.", contact_name
-        )
-    elif outcome == "available":
+    if outcome == "available":
+        cart = lookup_cart(cart_id)
+        if cart is None:
+            logging.warning("Cart %s not found.", cart_id)
+            call.hangup(
+                final_instructions=(
+                    "Apologize and let the customer know we encountered an issue "
+                    "retrieving their cart information. Suggest they visit shopnow.com "
+                    "to view their saved cart, and politely say goodbye."
+                )
+            )
+            return
+
+        call.set_variable("cart_items", cart["items"])
+        call.set_variable("cart_total", cart["total"])
+        call.set_variable("abandonment_reason", cart["abandonment_reason"])
+
+        call.add_info("cart_details", {
+            "cart_id": cart_id,
+            "items": cart["items"],
+            "total": cart["total"],
+            "abandonment_reason": cart["abandonment_reason"],
+        })
+
         call.set_task(
-            "cart_recovery",
+            "identify_concern",
             objective=(
-                f"Re-engage {contact_name}, who left a ShopNow cart worth {cart_value} "
-                f"containing: {cart_items}. "
-                "Understand why they did not complete the purchase, address any product questions, "
-                "offer a discount or incentive if appropriate, ask about their preferred payment method, "
-                "and determine whether they are ready to complete the order now. "
-                "Be helpful and low-pressure — the goal is to assist, not to push."
+                f"Reach out to {customer_name} about their abandoned ShopNow cart "
+                f"({cart_id}) containing {cart['items']} totaling {cart['total']}. "
+                f"Understand why they didn't complete their purchase. Be helpful "
+                f"and low-pressure."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name}, this is Riley calling from ShopNow. "
                     f"I noticed you had some great items saved in your cart — "
-                    f"including {cart_items} — totaling {cart_value}. "
-                    "I just wanted to check in and see if you had any questions or if there was "
-                    "anything I could help with to make your shopping experience easier."
+                    f"{cart['items']} — totaling {cart['total']}. I just wanted to "
+                    f"check in and see if there was anything I could help with."
                 ),
                 guava.Field(
-                    key="abandonment_reason",
+                    key="stated_reason",
                     description=(
-                        "The reason the customer did not complete their purchase, in their own words. "
-                        "For example: price concern, found it elsewhere, wanted to think about it, "
-                        "technical issue, etc. Leave blank if they decline to share."
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="product_questions",
-                    description=(
-                        "Any questions or concerns the customer has about the products in their cart. "
-                        "Capture their questions and any answers provided. "
-                        "Leave blank if they have no product questions."
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Say(
-                    "As a thank-you for your time today, we'd love to offer you a special discount "
-                    "to help complete your order. I can apply a discount code to your cart right now."
-                ),
-                guava.Field(
-                    key="discount_accepted",
-                    description=(
-                        "Whether the customer accepted the discount or incentive offer: "
-                        "'yes', 'no', or a description of their response"
+                        "The reason the customer gives for not completing their "
+                        "purchase, in their own words"
                     ),
                     field_type="text",
                     required=True,
                 ),
-                guava.Field(
-                    key="preferred_payment_method",
-                    description=(
-                        "The customer's preferred payment method for completing the order, "
-                        "such as credit card, PayPal, buy-now-pay-later, etc. "
-                        "Leave blank if they did not specify."
-                    ),
-                    field_type="text",
-                    required=False,
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", customer_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again and their preference has been recorded, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", customer_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", customer_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("identify_concern")
+def on_concern_identified(call: guava.Call) -> None:
+    abandonment_reason = call.get_variable("abandonment_reason")
+    stated_reason = call.get_field("stated_reason")
+    customer_name = call.get_variable("customer_name")
+    cart_total = call.get_variable("cart_total")
+
+    if stated_reason and "changed" in stated_reason.lower() and "mind" in stated_reason.lower():
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for letting you know. Let them know their "
+                f"cart will stay saved for 30 days and they can come back anytime. "
+                f"No pressure — wish them a great day, and politely say goodbye."
+            )
+        )
+        return
+
+    if abandonment_reason == "price_concern":
+        call.set_task(
+            "address_concern",
+            objective=(
+                f"{customer_name} had a price concern about their {cart_total} cart. "
+                f"Offer a 15%% discount code (SAVE15) they can apply at checkout. "
+                f"Do not push if they decline — one offer only."
+            ),
+            checklist=[
+                guava.Say(
+                    f"I completely understand. I'd love to offer you a special 15%% "
+                    f"discount code — SAVE15 — that you can apply at checkout. That "
+                    f"would bring your total down."
                 ),
                 guava.Field(
-                    key="ready_to_complete_order",
+                    key="offer_response",
+                    description="Whether the customer accepted the discount offer",
+                    field_type="multiple_choice",
+                    choices=["accepted", "declined", "thinking_about_it"],
+                    required=True,
+                ),
+            ],
+        )
+    elif abandonment_reason == "shipping":
+        call.set_task(
+            "address_concern",
+            objective=(
+                f"{customer_name} had a shipping concern. Explain ShopNow's free "
+                f"shipping threshold ($75+) and expedited shipping options. Their "
+                f"cart at {cart_total} may already qualify for free shipping."
+            ),
+            checklist=[
+                guava.Say(
+                    f"ShopNow offers free standard "
+                    f"shipping on all orders over $75, and your cart is at {cart_total}, "
+                    f"so you'd qualify. We also have expedited options if you need it sooner."
+                ),
+                guava.Field(
+                    key="offer_response",
+                    description="Whether the shipping explanation resolved the customer's concern",
+                    field_type="multiple_choice",
+                    choices=["accepted", "declined", "thinking_about_it"],
+                    required=True,
+                ),
+            ],
+        )
+    elif abandonment_reason == "changed_mind":
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for letting you know. Let them know their "
+                f"cart will stay saved for 30 days and they can come back anytime. "
+                f"No pressure — wish them a great day, and politely say goodbye."
+            )
+        )
+        return
+    elif abandonment_reason == "technical_issue":
+        call.set_task(
+            "address_concern",
+            objective=(
+                f"{customer_name} experienced a technical issue during checkout. "
+                f"Offer to help them complete the order by phone, or transfer them "
+                f"to support if they'd prefer."
+            ),
+            checklist=[
+                guava.Say(
+                    f"I'm sorry to hear you ran into a technical issue. I can help "
+                    f"you complete your order right now over the phone, or I can "
+                    f"connect you with our support team if you'd prefer."
+                ),
+                guava.Field(
+                    key="offer_response",
                     description=(
-                        "Whether the customer is ready to complete their order now, "
-                        "expressed as 'yes', 'no', or a description of their intent such as "
-                        "'will complete later today' or 'needs more time'"
+                        "Whether the customer wants to complete the order by phone, "
+                        "be transferred to support, or handle it themselves"
                     ),
+                    field_type="multiple_choice",
+                    choices=["complete_by_phone", "transfer_to_support", "will_try_again"],
+                    required=True,
+                ),
+            ],
+        )
+    else:
+        call.set_task(
+            "address_concern",
+            objective=(
+                f"Address {customer_name}'s concern about their cart. Listen to "
+                f"their reason and offer appropriate help."
+            ),
+            checklist=[
+                guava.Field(
+                    key="offer_response",
+                    description="The customer's response to assistance offered",
                     field_type="text",
                     required=True,
                 ),
@@ -110,57 +267,89 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         )
 
 
-@agent.on_task_complete("cart_recovery")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "cart_items": call.get_variable("cart_items"),
-        "cart_value": call.get_variable("cart_value"),
-        "abandonment_reason": call.get_field("abandonment_reason"),
-        "product_questions": call.get_field("product_questions"),
-        "discount_accepted": call.get_field("discount_accepted"),
-        "preferred_payment_method": call.get_field("preferred_payment_method"),
-        "ready_to_complete_order": call.get_field("ready_to_complete_order"),
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Cart recovery call completed for %s", call.get_variable("contact_name"))
+@agent.on_task_complete("address_concern")
+def on_concern_addressed(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
+    offer_response = call.get_field("offer_response")
+
+    if offer_response == "transfer_to_support":
+        call.transfer(
+            destination=SUPPORT_LINE,
+            instructions=(
+                "Let the customer know you're connecting them with ShopNow support "
+                "now. Their cart information has been saved."
+            ),
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} for their time. If they accepted an offer, "
+                f"confirm the discount code or next steps. If they need more time, "
+                f"let them know their cart is saved and the ShopNow team is available "
+                f"anytime, and wish them a great day, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("customer_name"))
     call.hangup(
         final_instructions=(
-            "Thank the customer warmly for their time. "
-            "If they are ready to complete the order, let them know they can finish checkout "
-            "on the ShopNow website or app and that any discount code discussed has been applied. "
-            "If they are not ready, let them know their cart will be saved and the ShopNow team "
-            "is available to help anytime. Wish them a great day and close the call politely."
+            "Acknowledge their request. Let them know they've been removed from the "
+            "contact list and won't be called again, and wish them well, and politely say goodbye."
         )
     )
 
 
+@agent.on_action("speak_to_support")
+def handle_transfer_request(call: guava.Call) -> None:
+    call.transfer(
+        destination=SUPPORT_LINE,
+        instructions="Let them know you're connecting them with ShopNow support now.",
+    )
+
+
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "abandonment_reason": call.get_field("abandonment_reason"),
-        "product_questions": call.get_field("product_questions"),
-        "discount_accepted": call.get_field("discount_accepted"),
-        "preferred_payment_method": call.get_field("preferred_payment_method"),
-        "ready_to_complete_order": call.get_field("ready_to_complete_order"),
-    }, indent=2))
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "cart_recovery",
+        "customer_name": call.get_variable("customer_name"),
+        "cart_id": call.get_variable("cart_id"),
+        "cart_items": call.get_variable("cart_items"),
+        "cart_total": call.get_variable("cart_total"),
+        "abandonment_reason": call.get_variable("abandonment_reason"),
+        "stated_reason": call.get_field("stated_reason"),
+        "offer_response": call.get_field("offer_response"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    parser = argparse.ArgumentParser(description="ShopNow cart recovery agent")
+    parser = argparse.ArgumentParser(
+        description="Outbound cart recovery call for ShopNow"
+    )
     parser.add_argument("phone", help="Customer phone number to call")
     parser.add_argument("--name", required=True, help="Customer full name")
     parser.add_argument(
-        "--cart-items", required=True, help="Description of items in the abandoned cart"
+        "--cart-id",
+        required=True,
+        help="Cart ID (try CART-10001, CART-10002, CART-10003, or CART-10004)",
     )
-    parser.add_argument("--cart-value", required=True, help="Total estimated value of the cart")
     parser.add_argument(
         "--from-number",
         default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
@@ -172,8 +361,7 @@ if __name__ == "__main__":
         from_number=args.from_number,
         to_number=args.phone,
         variables={
-            "contact_name": args.name,
-            "cart_items": args.cart_items,
-            "cart_value": args.cart_value,
+            "customer_name": args.name,
+            "cart_id": args.cart_id,
         },
     )

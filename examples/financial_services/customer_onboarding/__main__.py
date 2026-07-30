@@ -7,180 +7,331 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
+
+
+# ---------------------------------------------------------------------------
+# Mock API — simulates an account status backend for demo purposes
+# ---------------------------------------------------------------------------
+
+MOCK_ACCOUNTS = {
+    "ACCT-100201": {
+        "customer": "Maria Santos",
+        "dob": "1985-03-14",
+        "account_type": "checking",
+        "status": "pending_setup",
+        "branch": "Downtown",
+    },
+    "ACCT-100202": {
+        "customer": "David Park",
+        "dob": "1992-07-22",
+        "account_type": "savings",
+        "status": "pending_setup",
+        "branch": "Westside",
+    },
+    "ACCT-100203": {
+        "customer": "Rachel Kim",
+        "dob": "1978-11-05",
+        "account_type": "both",
+        "status": "pending_setup",
+        "branch": "Northgate",
+    },
+}
+
+
+def lookup_account(account_number, dob):
+    account = MOCK_ACCOUNTS.get(account_number)
+    if account and account["dob"] == dob:
+        return account
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 agent = guava.Agent(
-    name="Jamie",
-    organization="First National Bank",
+    name="Riley",
+    organization="National Internet Bank",
     purpose=(
-        "to walk a new customer through the setup of their account, "
-        "deliver required disclosures, and configure initial account preferences"
+        "welcome new customers, verify their identity, and walk them through "
+        "account setup steps including disclosures, preferences, and debit card "
+        "delivery confirmation"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a live support representative or manager",
+})
+
+SUPPORT_LINE = "+15551000400"
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Riley from National Internet Bank calling for "
+            f"{call.get_variable('contact_name')}. We're reaching out to help you "
+            f"complete your new account setup. Please call us back at 1-800-555-0160 "
+            f"at your convenience. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        call.hangup(
-            final_instructions=(
-                f"You were unable to reach {call.get_variable('contact_name')}. Leave a warm, welcoming voicemail "
-                f"identifying yourself as Jamie from First National Bank. Congratulate them on "
-                f"opening their new {call.get_variable('account_type')} and let them know you were calling to help "
-                f"complete their account setup. Ask them to call back at their convenience or visit "
-                f"the bank's website to complete the setup steps online."
-            )
-        )
-    elif outcome == "available":
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "available":
         call.set_task(
-            "intake",
+            "verify_identity",
             objective=(
-                f"You are onboarding {call.get_variable('contact_name')} as a new First National Bank customer. "
-                f"They have just opened a {call.get_variable('account_type')}. Your goal is to welcome them, "
-                f"walk them through required regulatory disclosures, collect their preferences for "
-                f"paperless statements and overdraft protection, confirm their debit card delivery "
-                f"address, and optionally set up a security question for their online banking "
-                f"profile. Be warm, clear, and patient — many customers are unfamiliar with these "
-                f"steps. Confirm each selection back to the customer before moving on."
+                f"Verify the identity of {contact_name} before proceeding with "
+                f"account setup. Ask for their date of birth. Do not discuss account "
+                f"details or proceed with setup until identity is confirmed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {call.get_variable('contact_name')}, congratulations on opening your new "
-                    f"{call.get_variable('account_type')} with First National Bank! My name is Jamie and I am "
-                    f"here to help you get everything set up today. This should only take a few "
-                    f"minutes, and I will walk you through each step."
-                ),
-                guava.Say(
-                    "Before we get started with your preferences, I am required to share a few "
-                    "important disclosures with you. Please listen carefully. By opening this "
-                    "account, you agree to the Deposit Account Agreement and the Fee Schedule, "
-                    "both of which are available on our website and will be mailed to you within "
-                    "7 business days. Your deposits are insured by the FDIC up to $250,000. "
-                    "Standard account terms, including any applicable monthly service fees and "
-                    "minimum balance requirements, apply as outlined in your account agreement."
+                    "Congratulations on opening your new account! I'm here to help "
+                    "you get everything set up. Before we begin, I just need to verify "
+                    "your identity with a quick question."
                 ),
                 guava.Field(
-                    key="disclosures_acknowledged",
-                    description=(
-                        "Confirm that the customer has heard and acknowledged the required account "
-                        "disclosures including the Deposit Account Agreement, Fee Schedule, and "
-                        "FDIC insurance information. Record a brief note of their acknowledgment."
-                    ),
+                    key="dob",
+                    description="The customer's date of birth for identity verification",
                     field_type="text",
                     required=True,
-                ),
-                guava.Say(
-                    "Next, would you like to enroll in paperless statements? With paperless "
-                    "statements, your monthly statements will be delivered securely to your email "
-                    "instead of by mail. You can switch back at any time through online banking."
-                ),
-                guava.Field(
-                    key="paperless_statements_opted_in",
-                    description="Whether the customer chose to opt in to paperless statements.",
-                    field_type="multiple_choice",
-                    choices=["yes", "no"],
-                    required=True,
-                ),
-                guava.Say(
-                    "Would you also like to add overdraft protection to your account? Overdraft "
-                    "protection allows transactions to go through even if your balance is "
-                    "temporarily low, which can help you avoid declined transactions or returned "
-                    "payments. A small fee may apply per covered transaction."
-                ),
-                guava.Field(
-                    key="overdraft_protection_opted_in",
-                    description="Whether the customer chose to opt in to overdraft protection.",
-                    field_type="multiple_choice",
-                    choices=["yes", "no"],
-                    required=True,
-                ),
-                guava.Say(
-                    "Your debit card will be mailed to the address we have on file. I want to "
-                    "quickly confirm that address is correct before we proceed."
-                ),
-                guava.Field(
-                    key="debit_card_delivery_address_confirmed",
-                    description=(
-                        "Read back the address on file to the customer and ask them to confirm it "
-                        "is correct for debit card delivery. Record 'confirmed' if they verify the "
-                        "address is correct, or record the corrected address they provide."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="security_question_set",
-                    description=(
-                        "Whether the customer set up a security question for their online banking "
-                        "profile during the call or chose to do it later through the mobile app."
-                    ),
-                    field_type="multiple_choice",
-                    choices=["set_during_call", "deferred"],
-                    required=False,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone and that they can complete account setup online or at "
+                "any branch location, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
-@agent.on_task_complete("intake")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "account_type": call.get_variable("account_type"),
-        "disclosures_acknowledged": call.get_field("disclosures_acknowledged"),
-        "paperless_statements_opted_in": call.get_field("paperless_statements_opted_in"),
-        "overdraft_protection_opted_in": call.get_field("overdraft_protection_opted_in"),
-        "debit_card_delivery_address_confirmed": call.get_field(
-            "debit_card_delivery_address_confirmed"
+@agent.on_task_complete("verify_identity")
+def on_identity_verified(call: guava.Call) -> None:
+    account_number = call.get_variable("account_number")
+    dob = call.get_field("dob")
+    account = lookup_account(account_number, dob)
+
+    if account is None:
+        logging.warning("Identity verification failed for account %s.", account_number)
+        call.hangup(
+            final_instructions=(
+                "Let them know the date of birth provided does not match our records. "
+                "For security, you cannot proceed with account setup. Suggest they "
+                "visit a branch with their ID or call 1-800-555-0160 for assistance, and politely say goodbye."
+            )
+        )
+        return
+
+    contact_name = call.get_variable("contact_name")
+    account_type = account["account_type"]
+
+    call.add_info("account_details", {
+        "account_number": account_number,
+        "account_type": account_type,
+        "branch": account["branch"],
+        "status": account["status"],
+    })
+
+    if account_type == "both":
+        setup_description = (
+            "checking and savings accounts. We'll walk through the setup for both."
+        )
+    elif account_type == "savings":
+        setup_description = (
+            "savings account. I'll walk you through a few quick setup steps."
+        )
+    else:
+        setup_description = (
+            "checking account. I'll walk you through a few quick setup steps."
+        )
+
+    checklist_items = [
+        guava.Say(
+            f"Thank you, {contact_name}. Your identity has been verified. "
+            f"Let's get your new {setup_description}"
         ),
-        "security_question_set": call.get_field("security_question_set"),
-    }
-    print(json.dumps(results, indent=2))
+        guava.Say(
+            "Before we get started with your preferences, I'm required to share a "
+            "few important disclosures. By opening this account, you agree to the "
+            "Deposit Account Agreement and the Fee Schedule, both of which are "
+            "available on our website and will be mailed to you within 7 business "
+            "days. Your deposits are insured by the FDIC up to $250,000."
+        ),
+        guava.Field(
+            key="disclosures_acknowledged",
+            description=(
+                "Confirm the customer has heard and acknowledged the required "
+                "disclosures including the Deposit Account Agreement, Fee Schedule, "
+                "and FDIC insurance information"
+            ),
+            field_type="text",
+            required=True,
+        ),
+        guava.Field(
+            key="paperless_statements",
+            description="Whether the customer wants to enroll in paperless statements",
+            field_type="multiple_choice",
+            choices=["yes", "no"],
+            required=True,
+        ),
+    ]
+
+    if account_type in ("checking", "both"):
+        checklist_items.extend([
+            guava.Field(
+                key="overdraft_protection",
+                description="Whether the customer wants overdraft protection on their checking account",
+                field_type="multiple_choice",
+                choices=["yes", "no"],
+                required=True,
+            ),
+            guava.Field(
+                key="debit_card_address_confirmed",
+                description=(
+                    "Confirm the mailing address on file is correct for debit card "
+                    "delivery. Record 'confirmed' or the corrected address."
+                ),
+                field_type="text",
+                required=True,
+            ),
+        ])
+
+    if account_type == "savings":
+        checklist_items.append(
+            guava.Field(
+                key="auto_transfer",
+                description=(
+                    "Whether the customer would like to set up automatic transfers "
+                    "from another account into their new savings account"
+                ),
+                field_type="multiple_choice",
+                choices=["yes", "no", "decide_later"],
+                required=True,
+            ),
+        )
+
+    if account_type == "both":
+        checklist_items.append(
+            guava.Field(
+                key="auto_transfer",
+                description=(
+                    "Whether the customer would like to set up automatic transfers "
+                    "between their new checking and savings accounts"
+                ),
+                field_type="multiple_choice",
+                choices=["yes", "no", "decide_later"],
+                required=True,
+            ),
+        )
+
+    call.set_task(
+        "account_setup",
+        objective=(
+            f"Walk {contact_name} through their new {account_type} account setup. "
+            f"Cover required disclosures, statement preferences, and account-specific "
+            f"options. Be warm, clear, and patient."
+        ),
+        checklist=checklist_items,
+    )
+
+
+@agent.on_task_complete("account_setup")
+def on_setup_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+
     call.hangup(
         final_instructions=(
-            f"Congratulate {call.get_variable('contact_name')} on completing their account setup. Provide a "
-            f"brief summary of their selections: disclosures acknowledged, paperless statement "
-            f"preference, overdraft protection choice, and debit card delivery address. Let "
-            f"them know their debit card will arrive within 5 to 7 business days and that they "
-            f"can begin using online and mobile banking immediately. Share the customer service "
-            f"number for any questions and close the call warmly, welcoming them to First "
-            f"National Bank."
+            f"Congratulate {contact_name} on completing their account setup. Provide "
+            f"a brief summary of their selections. Let them know their debit card "
+            f"will arrive within 5 to 7 business days if applicable, and that they "
+            f"can begin using online and mobile banking immediately. Share the "
+            f"customer service number 1-800-555-0160 for any questions and close "
+            f"the call warmly, welcoming them to National Internet Bank, and politely say goodbye."
         )
     )
 
 
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone. They can complete setup online or at any branch, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_transfer(call: guava.Call) -> None:
+    call.transfer(
+        destination=SUPPORT_LINE,
+        instructions=(
+            "Let them know you're connecting them with a support representative now. "
+            "Reassure them that any information collected so far has been saved."
+        ),
+    )
+
+
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "customer_onboarding",
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "identity_verified": call.get_field("dob") is not None,
         "disclosures_acknowledged": call.get_field("disclosures_acknowledged"),
-        "paperless_statements_opted_in": call.get_field("paperless_statements_opted_in"),
-        "overdraft_protection_opted_in": call.get_field("overdraft_protection_opted_in"),
-        "debit_card_delivery_address_confirmed": call.get_field("debit_card_delivery_address_confirmed"),
-        "security_question_set": call.get_field("security_question_set"),
-    }, indent=2))
+        "paperless_statements": call.get_field("paperless_statements"),
+        "overdraft_protection": call.get_field("overdraft_protection"),
+        "debit_card_address_confirmed": call.get_field("debit_card_address_confirmed"),
+        "auto_transfer": call.get_field("auto_transfer"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="New customer onboarding call for account setup and disclosures."
+        description="Outbound new customer onboarding call for National Internet Bank"
     )
-    parser.add_argument("phone", help="The phone number to call (E.164 format, e.g. +15551234567)")
+    parser.add_argument("phone", help="Phone number to dial")
     parser.add_argument("--name", required=True, help="Full name of the new customer")
     parser.add_argument(
-        "--account-type",
-        default="checking account",
-        help="Type of account being opened (default: 'checking account')",
+        "--account-number",
+        required=True,
+        help="Account number (try ACCT-100201, ACCT-100202, or ACCT-100203)",
     )
     parser.add_argument(
         "--from-number",
@@ -194,6 +345,6 @@ if __name__ == "__main__":
         to_number=args.phone,
         variables={
             "contact_name": args.name,
-            "account_type": args.account_type,
+            "account_number": args.account_number,
         },
     )

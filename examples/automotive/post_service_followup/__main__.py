@@ -3,10 +3,11 @@ import argparse
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
     name="Jamie",
@@ -18,10 +19,23 @@ agent = guava.Agent(
     ),
 )
 
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a real person, a manager, or the service department",
+})
+
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("customer_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("customer_name"),
+        voicemail_message=(
+            f"Hi, this is Jamie from Lakeside Auto Group calling for "
+            f"{call.get_variable('customer_name')}. We're reaching out to check in "
+            f"after your recent service visit. No action is needed — feel free to "
+            f"call us back at your convenience. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
@@ -31,36 +45,23 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     service_date = call.get_variable("service_date")
     service_performed = call.get_variable("service_performed")
 
-    if outcome == "unavailable":
-        logging.warning("Could not reach %s for post-service follow-up call.", customer_name)
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "customer_name": customer_name,
-            "vehicle": vehicle,
-            "service_date": service_date,
-            "service_performed": service_performed,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup()
-    elif outcome == "available":
+    if outcome == "available":
         call.set_task(
             "followup",
             objective=(
                 f"Follow up with {customer_name} regarding their {vehicle} "
                 f"that was serviced on {service_date} for {service_performed}. "
                 f"Confirm they are satisfied with the work, check that the vehicle is "
-                f"performing well, address any outstanding concerns, and request permission "
-                f"to send a review link."
+                f"performing well, and address any outstanding concerns."
             ),
             checklist=[
                 guava.Say(
-                    f"Thank {customer_name} for choosing Lakeside Auto Group and "
-                    f"mention their recent visit on {service_date} for "
-                    f"{service_performed} on their {vehicle}."
+                    f"Thank {customer_name} for coming in and mention their "
+                    f"recent visit on {service_date} for {service_performed} "
+                    f"on their {vehicle}."
                 ),
                 guava.Field(
-                    key="service_satisfaction_rating",
+                    key="satisfaction_rating",
                     description=(
                         "Customer's overall satisfaction rating for the service visit, "
                         "on a scale of 1 to 5 where 1 is very unsatisfied and 5 is very satisfied"
@@ -69,80 +70,139 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     required=True,
                 ),
                 guava.Field(
-                    key="issue_resolved",
-                    description="Whether the original service issue or maintenance item was fully resolved",
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
                     key="vehicle_performing_well",
                     description="Whether the vehicle has been performing well since the service visit",
-                    field_type="text",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "not sure"],
                     required=True,
                 ),
                 guava.Field(
-                    key="follow_up_service_needed",
-                    description="Any additional service or follow-up work the customer believes is needed",
+                    key="additional_concerns",
+                    description="Any additional concerns or issues the customer wants to mention",
                     field_type="text",
                     required=False,
                 ),
-                guava.Field(
-                    key="review_permission",
-                    description=(
-                        "Whether the customer gives permission to be sent a link to leave "
-                        "an online review for Lakeside Auto Group"
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", customer_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request politely. Let them know they have been "
+                "removed from our follow-up list and will not be contacted again, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", customer_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", customer_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("followup")
 def on_followup_done(call: guava.Call) -> None:
+    rating = call.get_field("satisfaction_rating")
     customer_name = call.get_variable("customer_name")
-    results = {
-        "timestamp": datetime.now().isoformat(),
-        "customer_name": customer_name,
-        "vehicle": call.get_variable("vehicle"),
-        "service_date": call.get_variable("service_date"),
-        "service_performed": call.get_variable("service_performed"),
-        "service_satisfaction_rating": call.get_field("service_satisfaction_rating"),
-        "issue_resolved": call.get_field("issue_resolved"),
-        "vehicle_performing_well": call.get_field("vehicle_performing_well"),
-        "follow_up_service_needed": call.get_field("follow_up_service_needed"),
-        "review_permission": call.get_field("review_permission"),
-    }
 
-    print(json.dumps(results, indent=2))
-    logging.info("Post-service follow-up results collected for %s", customer_name)
+    if rating is not None and rating <= 2:
+        call.set_task(
+            "low_satisfaction_followup",
+            objective=(
+                f"{customer_name} gave a low satisfaction rating ({rating}/5). "
+                f"Ask what specifically went wrong and what Lakeside Auto Group could "
+                f"have done better. Listen carefully and be empathetic. Let them know "
+                f"the service manager will personally review their feedback."
+            ),
+            checklist=[
+                guava.Field(
+                    key="dissatisfaction_reason",
+                    description="What specifically the customer was unhappy about",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="wants_manager_callback",
+                    description="Whether the customer would like a callback from the service manager",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
+                    required=True,
+                ),
+            ],
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {customer_name} sincerely for their feedback and for choosing "
+                f"Lakeside Auto Group. Let them know we'd love for them to share their "
+                f"experience with a quick online review — a link will be texted to them. "
+                f"Wish them a wonderful day, and politely say goodbye."
+            )
+        )
 
+
+@agent.on_task_complete("low_satisfaction_followup")
+def on_low_satisfaction_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
     call.hangup(
         final_instructions=(
-            f"Thank {customer_name} sincerely for their feedback and their "
-            f"continued trust in Lakeside Auto Group. If they gave permission for a "
-            f"review, let them know the link will be sent shortly. If any follow-up "
-            f"service was mentioned, assure them the service team will be in touch. "
-            f"Wish them a wonderful day."
+            f"Thank {customer_name} for sharing that feedback — it genuinely helps. "
+            f"Assure them that their concerns will be reviewed by the service manager. "
+            f"If they requested a callback, confirm that the manager will reach out "
+            f"within one business day, and wish them a good day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("customer_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from the "
+            "contact list and won't be called again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that someone from the Lakeside Auto Group service team "
+            "will call them back within one business day. Ask if there's a preferred "
+            "time and thank them for their patience, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "service_satisfaction_rating": call.get_field("service_satisfaction_rating"),
-        "issue_resolved": call.get_field("issue_resolved"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": call.get_variable("customer_name"),
+        "vehicle": call.get_variable("vehicle"),
+        "service_date": call.get_variable("service_date"),
+        "service_performed": call.get_variable("service_performed"),
+        "satisfaction_rating": call.get_field("satisfaction_rating"),
         "vehicle_performing_well": call.get_field("vehicle_performing_well"),
-        "follow_up_service_needed": call.get_field("follow_up_service_needed"),
-        "review_permission": call.get_field("review_permission"),
-    }, indent=2))
+        "additional_concerns": call.get_field("additional_concerns"),
+        "dissatisfaction_reason": call.get_field("dissatisfaction_reason"),
+        "wants_manager_callback": call.get_field("wants_manager_callback"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
