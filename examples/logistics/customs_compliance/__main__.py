@@ -7,20 +7,36 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Riley",
+    name="Skyler",
     organization="SwiftShip Logistics - Customs & Compliance",
     purpose=(
-        "contact the shipper or broker to gather missing documentation details "
-        "required for customs clearance"
+        "contact shippers or brokers to verify customs documentation status, "
+        "collect missing information required for clearance, and address common "
+        "customs questions"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_compliance": "The caller wants to speak to a compliance specialist or live person",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Skyler from SwiftShip Logistics Customs and Compliance "
+            f"calling for {call.get_variable('contact_name')} regarding shipment "
+            f"number {call.get_variable('shipment_number')}. This shipment is "
+            f"currently on hold pending documentation. Please call us back at your "
+            f"earliest convenience to avoid further clearance delays. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
@@ -29,130 +45,225 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     shipment_number = call.get_variable("shipment_number")
     missing_docs = call.get_variable("missing_docs")
 
-    if outcome == "unavailable":
-        logging.warning(
-            f"Could not reach {contact_name} for customs compliance check on shipment {shipment_number}."
-        )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "shipment_number": shipment_number,
-            "contact_name": contact_name,
-            "missing_docs": missing_docs,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                f"Leave a voicemail for {contact_name} explaining that SwiftShip Logistics "
-                f"Customs and Compliance is calling about shipment number {shipment_number}, "
-                f"which is currently on hold pending the following: {missing_docs}. "
-                "Ask them to call back or email the compliance team as soon as possible to avoid "
-                "further delays in clearance."
-            )
-        )
-    elif outcome == "available":
+    if outcome == "available":
         call.set_task(
-            "customs_compliance_check",
+            "check_doc_status",
             objective=(
-                f"Connect with {contact_name} regarding shipment number {shipment_number}. "
-                f"The following documentation is currently missing or incomplete: {missing_docs}. "
-                "Confirm commercial invoice status, collect country of origin, HS tariff code if available, "
-                "total declared value, whether dangerous goods are present, and whether any additional "
-                "supporting documents can be provided to complete customs clearance."
+                f"Connect with {contact_name} regarding shipment number "
+                f"{shipment_number}. The following documentation is currently "
+                f"missing or incomplete: {missing_docs}. Determine the overall "
+                f"document status before proceeding."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name}, I'm calling from SwiftShip Logistics Customs and Compliance. "
-                    f"We're contacting you regarding shipment number {shipment_number}. "
-                    f"We have a hold on this shipment pending the following documentation: {missing_docs}. "
-                    "I'd like to go through a few quick questions to help get this cleared."
+                    f"I'm calling about shipment number {shipment_number}. We have "
+                    f"a hold on this shipment pending the following documentation: "
+                    f"{missing_docs}."
                 ),
                 guava.Field(
-                    key="commercial_invoice_confirmed",
-                    description="Whether the shipper or broker confirms a commercial invoice has been or can be provided for this shipment",
+                    key="document_status",
+                    description=(
+                        "The overall status of the required customs documents for this shipment"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["complete", "missing_items", "questions"],
+                    required=True,
+                ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Contact %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone and that any future compliance notices will be sent by "
+                "email, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("check_doc_status")
+def on_doc_status_done(call: guava.Call) -> None:
+    status = call.get_field("document_status")
+    contact_name = call.get_variable("contact_name")
+    shipment_number = call.get_variable("shipment_number")
+
+    if status == "complete":
+        call.hangup(
+            final_instructions=(
+                f"Confirm with {contact_name} that all required customs documents "
+                f"for shipment {shipment_number} are in order. Let them know the "
+                f"compliance team will process clearance and they can expect the "
+                f"shipment to move forward within 1 to 2 business days. Thank them "
+                f"for their prompt attention, and politely say goodbye."
+            )
+        )
+    elif status == "missing_items":
+        call.set_task(
+            "collect_missing_docs",
+            objective=(
+                f"{contact_name} indicates documents are still missing for shipment "
+                f"{shipment_number}. Collect details on which specific documents can "
+                f"be provided, when they will be submitted, and note any items they "
+                f"need help locating."
+            ),
+            checklist=[
+                guava.Field(
+                    key="documents_to_provide",
+                    description=(
+                        "Which of the missing documents the contact can provide "
+                        "(commercial invoice, certificate of origin, packing list, etc.)"
+                    ),
                     field_type="text",
                     required=True,
                 ),
                 guava.Field(
-                    key="country_of_origin",
-                    description="The country where the goods being shipped were manufactured or produced",
+                    key="submission_deadline",
+                    description="When the contact expects to submit the missing documents",
                     field_type="text",
                     required=True,
                 ),
                 guava.Field(
-                    key="hs_tariff_code",
-                    description="The Harmonized System tariff classification code for the goods in this shipment",
-                    field_type="text",
-                    required=False,
+                    key="needs_assistance",
+                    description=(
+                        "Whether the contact needs help locating or preparing any of "
+                        "the required documents"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
+                    required=True,
                 ),
+            ],
+        )
+    else:
+        call.set_task(
+            "address_customs_questions",
+            objective=(
+                f"{contact_name} has questions about customs requirements for shipment "
+                f"{shipment_number}. Collect their specific questions — they may be "
+                f"about tariff codes, country of origin, declared values, dangerous "
+                f"goods, or something else. Your job is to document the questions "
+                f"clearly so a compliance specialist can follow up with accurate "
+                f"answers. Do not attempt to answer customs questions yourself."
+            ),
+            checklist=[
                 guava.Field(
-                    key="total_declared_value",
-                    description="The total declared customs value of the shipment, including currency",
+                    key="customs_questions",
+                    description="The specific customs questions the contact has",
                     field_type="text",
                     required=True,
                 ),
                 guava.Field(
-                    key="dangerous_goods_present",
-                    description="Whether the shipment contains any dangerous goods, hazardous materials, or restricted items",
-                    field_type="text",
+                    key="needs_specialist_followup",
+                    description=(
+                        "Whether the contact's questions require follow-up from a "
+                        "compliance specialist"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
                     required=True,
-                ),
-                guava.Field(
-                    key="additional_documents_available",
-                    description="Any additional supporting documents the shipper or broker can provide to assist with customs clearance, such as certificates of origin or packing lists",
-                    field_type="text",
-                    required=False,
                 ),
             ],
         )
 
 
-@agent.on_task_complete("customs_compliance_check")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "shipment_number": call.get_variable("shipment_number"),
-        "contact_name": call.get_variable("contact_name"),
-        "missing_docs": call.get_variable("missing_docs"),
-        "commercial_invoice_confirmed": call.get_field("commercial_invoice_confirmed"),
-        "country_of_origin": call.get_field("country_of_origin"),
-        "hs_tariff_code": call.get_field("hs_tariff_code"),
-        "total_declared_value": call.get_field("total_declared_value"),
-        "dangerous_goods_present": call.get_field("dangerous_goods_present"),
-        "additional_documents_available": call.get_field("additional_documents_available"),
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Customs compliance results saved.")
+@agent.on_task_complete("collect_missing_docs")
+def on_missing_docs_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
     call.hangup(
         final_instructions=(
-            "Thank the contact for their time and for providing the documentation details. "
-            "Let them know that the SwiftShip Customs and Compliance team will review the "
-            "information and follow up if anything further is needed to complete clearance. "
-            "Provide an estimated clearance timeline if possible and wish them a good day."
+            f"Thank {contact_name} for confirming the documentation plan. Remind "
+            f"them that clearance cannot proceed until all required documents are "
+            f"submitted. If they need assistance, let them know the compliance team "
+            f"will reach out, and wish them a good day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("address_customs_questions")
+def on_questions_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    needs_followup = call.get_field("needs_specialist_followup")
+
+    if needs_followup == "yes":
+        call.hangup(
+            final_instructions=(
+                f"Let {contact_name} know that a compliance specialist will follow up "
+                f"within one business day to address their remaining questions. Thank "
+                f"them for their patience, and politely say goodbye."
+            )
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} for their questions. Remind them to submit any "
+                f"outstanding documents as soon as possible to avoid further delays. "
+                f"Wish them a good day, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Contact %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from the "
+            "call list and future compliance notices will be sent by email, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_compliance")
+def handle_speak_to_compliance(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a compliance specialist will call them back within "
+            "one business day. Ask if there is a preferred time and thank them, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "commercial_invoice_confirmed": call.get_field("commercial_invoice_confirmed"),
-        "country_of_origin": call.get_field("country_of_origin"),
-        "hs_tariff_code": call.get_field("hs_tariff_code"),
-        "total_declared_value": call.get_field("total_declared_value"),
-        "dangerous_goods_present": call.get_field("dangerous_goods_present"),
-        "additional_documents_available": call.get_field("additional_documents_available"),
-    }, indent=2))
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "shipment_number": call.get_variable("shipment_number"),
+        "missing_docs": call.get_variable("missing_docs"),
+        "document_status": call.get_field("document_status"),
+        "documents_to_provide": call.get_field("documents_to_provide"),
+        "submission_deadline": call.get_field("submission_deadline"),
+        "needs_assistance": call.get_field("needs_assistance"),
+        "customs_questions": call.get_field("customs_questions"),
+        "needs_specialist_followup": call.get_field("needs_specialist_followup"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    parser = argparse.ArgumentParser(description="SwiftShip Logistics - Customs Compliance Agent")
+    parser = argparse.ArgumentParser(
+        description="Outbound customs compliance call for SwiftShip Logistics"
+    )
     parser.add_argument("phone", help="Shipper or broker phone number to call")
     parser.add_argument("--name", required=True, help="Full name of the shipper or broker contact")
     parser.add_argument("--shipment-number", required=True, help="Shipment or freight number")

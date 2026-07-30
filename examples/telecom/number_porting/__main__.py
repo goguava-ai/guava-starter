@@ -7,202 +7,252 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Morgan",
-    organization="Nexus Mobile - Porting Team",
+    name="Blair",
+    organization="Nexus Mobile — Porting Team",
     purpose=(
-        "to coordinate with customers who are in the process of porting their phone "
-        "number to Nexus Mobile, confirm the accuracy of their porting details, "
-        "collect any missing account information from their previous carrier, "
-        "and set clear expectations about the port completion timeline"
+        "provide customers with a proactive update on their number port status, "
+        "confirm completion, explain timelines for in-progress ports, or collect "
+        "additional information needed to resolve port issues"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a real person or porting specialist",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("customer_name"),
+        voicemail_message=(
+            f"Hi, this is Blair from the Nexus Mobile Porting Team calling for "
+            f"{call.get_variable('customer_name')} with an update on your number "
+            f"port. No action needed right now — please call us back at your "
+            f"convenience. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent": "Morgan",
-            "organization": "Nexus Mobile - Porting Team",
-            "use_case": "number_porting",
-            "contact_name": call.get_variable("contact_name"),
-            "new_account_number": call.get_variable("new_account_number"),
-            "number_being_ported": call.get_variable("number_being_ported"),
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        logging.info("Recipient unavailable for number porting coordination call.")
+    customer_name = call.get_variable("customer_name")
+    number_being_ported = call.get_variable("number_being_ported")
+    port_status = call.get_variable("port_status")
+
+    if outcome == "available":
+        if port_status == "complete":
+            call.set_task(
+                "deliver_complete_update",
+                objective=(
+                    f"Notify {customer_name} that the port of {number_being_ported} "
+                    f"to Nexus Mobile is complete. Confirm the number is active on "
+                    f"their new account and welcome them."
+                ),
+                checklist=[
+                    guava.Say(
+                        f"Great news — the port of your number ending in "
+                        f"{number_being_ported[-4:]} is complete! Your number is "
+                        f"now active on your Nexus Mobile account. Welcome aboard!"
+                    ),
+                    guava.Field(
+                        key="service_confirmed",
+                        description="Whether the customer confirms their number is working on Nexus Mobile",
+                        field_type="multiple_choice",
+                        choices=["yes", "no", "not_checked_yet"],
+                        required=True,
+                    ),
+                    guava.Field(
+                        key="questions",
+                        description="Any questions the customer has about their new service",
+                        field_type="text",
+                        required=False,
+                    ),
+                ],
+            )
+        elif port_status == "in_progress":
+            expected_date = call.get_variable("expected_date")
+            call.set_task(
+                "deliver_progress_update",
+                objective=(
+                    f"Update {customer_name} that the port of {number_being_ported} "
+                    f"is in progress. The expected completion date is {expected_date}. "
+                    f"Explain what to expect during the transition."
+                ),
+                checklist=[
+                    guava.Say(
+                        f"I have an update on your number port. Your number "
+                        f"ending in {number_being_ported[-4:]} is currently being "
+                        f"transferred and is expected to complete by "
+                        f"{expected_date}. During the brief switchover, you may "
+                        f"experience a short service interruption — this is normal."
+                    ),
+                    guava.Field(
+                        key="update_acknowledged",
+                        description="Whether the customer understands the timeline and what to expect",
+                        field_type="text",
+                        required=True,
+                    ),
+                    guava.Field(
+                        key="questions",
+                        description="Any questions about the porting timeline or process",
+                        field_type="text",
+                        required=False,
+                    ),
+                ],
+            )
+        else:
+            issue_detail = call.get_variable("issue_detail")
+            call.set_task(
+                "deliver_issue_update",
+                objective=(
+                    f"Notify {customer_name} that there is an issue with the port of "
+                    f"{number_being_ported}: {issue_detail}. Explain the problem and "
+                    f"collect any additional information needed to resolve it."
+                ),
+                checklist=[
+                    guava.Say(
+                        f"I'm calling about your number port for the number "
+                        f"ending in {number_being_ported[-4:]}. Unfortunately, "
+                        f"we've encountered an issue: {issue_detail}. I need to "
+                        f"collect some additional information to get this resolved."
+                    ),
+                    guava.Field(
+                        key="issue_acknowledged",
+                        description="Whether the customer understands the issue",
+                        field_type="text",
+                        required=True,
+                    ),
+                    guava.Field(
+                        key="additional_info",
+                        description=(
+                            "Additional information collected from the customer to resolve "
+                            "the port issue (account PIN, authorized name, carrier details)"
+                        ),
+                        field_type="text",
+                        required=True,
+                    ),
+                ],
+            )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", customer_name)
         call.hangup(
             final_instructions=(
-                "The contact was not available. End the call politely. Do not leave "
-                "sensitive porting details such as account numbers or PINs in a voicemail."
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone. Note that port status updates will be sent by email, and politely say goodbye."
             )
         )
-    elif outcome == "available":
-        contact_name = call.get_variable("contact_name")
-        new_account_number = call.get_variable("new_account_number")
-        number_being_ported = call.get_variable("number_being_ported")
-        expected_port_date = call.get_variable("expected_port_date")
-        call.set_task(
-            "porting_flow",
-            objective=(
-                f"You are speaking with {contact_name}, who is in the process of porting "
-                f"their number {number_being_ported} to Nexus Mobile "
-                f"(new account #{new_account_number}). "
-                f"The expected port completion date is {expected_port_date}. "
-                "Your goal is to verify the porting details are correct, collect the previous "
-                "carrier account number and PIN which are required to complete the port, "
-                "confirm the authorized contact name on the old account, and ensure the "
-                "customer understands what to expect. Be efficient, clear, and reassuring."
-            ),
-            checklist=[
-                guava.Say(
-                    f"Hi {contact_name.split()[0]}, this is Morgan calling from the Nexus Mobile "
-                    f"Porting Team. I'm calling regarding the transfer of your phone number "
-                    f"ending in {number_being_ported[-4:]} to your new Nexus Mobile account. "
-                    f"I have just a few quick items to go over to make sure everything goes "
-                    f"smoothly on your port date."
-                ),
-                guava.Field(
-                    key="porting_details_confirmed",
-                    description=(
-                        f"Confirm with the customer that the number being ported is "
-                        f"{number_being_ported} and that their new Nexus Mobile account number "
-                        f"is {new_account_number}. Ask if these details are correct. "
-                        "Capture their confirmation or any corrections they provide."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="previous_carrier_account_number",
-                    description=(
-                        "Explain that to complete the port, Nexus Mobile needs the account number "
-                        "from the customer's previous carrier. Ask them to provide that account number. "
-                        "Capture it exactly as they state it."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="previous_carrier_pin",
-                    description=(
-                        "Ask the customer for the account PIN or transfer PIN associated with "
-                        "their previous carrier account. Explain this is required by the previous "
-                        "carrier to authorize the port. Capture the PIN they provide."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="authorized_contact_name",
-                    description=(
-                        "Ask the customer for the name of the authorized account holder on the "
-                        "previous carrier account — this must match the name on file with the "
-                        "previous carrier. Capture the full name they provide."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="port_completion_date_acknowledged",
-                    description=(
-                        f"Inform the customer that their number is expected to port on "
-                        f"{expected_port_date}. Explain that during the brief porting window "
-                        "their service will transfer automatically and they may experience a short "
-                        "interruption. Ask if they acknowledge and understand the expected date. "
-                        "Capture their response."
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="questions_about_porting",
-                    description=(
-                        "Ask if the customer has any questions about the porting process, "
-                        "the timeline, or what to expect on port day. Capture any questions "
-                        "they ask and the answers provided."
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-            ],
-        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", customer_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", customer_name, outcome)
+        call.hangup()
 
 
-@agent.on_task_complete("porting_flow")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "agent": "Morgan",
-        "organization": "Nexus Mobile - Porting Team",
-        "use_case": "number_porting",
-        "contact_name": call.get_variable("contact_name"),
-        "new_account_number": call.get_variable("new_account_number"),
-        "number_being_ported": call.get_variable("number_being_ported"),
-        "expected_port_date": call.get_variable("expected_port_date"),
-        "fields": {
-            "porting_details_confirmed": call.get_field("porting_details_confirmed"),
-            "previous_carrier_account_number": call.get_field("previous_carrier_account_number"),
-            "previous_carrier_pin": call.get_field("previous_carrier_pin"),
-            "authorized_contact_name": call.get_field("authorized_contact_name"),
-            "port_completion_date_acknowledged": call.get_field("port_completion_date_acknowledged"),
-            "questions_about_porting": call.get_field("questions_about_porting"),
-        },
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Number porting coordination call results saved.")
+@agent.on_task_complete("deliver_complete_update")
+def on_complete_done(call: guava.Call) -> None:
     call.hangup(
         final_instructions=(
-            "Thank the customer for providing their information. Reassure them that their "
-            "porting request is on track and that the Nexus Mobile Porting Team will handle "
-            "the rest. Remind them of the expected port date and let them know they can call "
-            "Nexus Mobile if they have any concerns before then. Wish them well."
+            f"Welcome {call.get_variable('customer_name')} to Nexus Mobile. "
+            f"Let them know they can reach customer support anytime, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("deliver_progress_update")
+def on_progress_done(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('customer_name')} for their patience. Remind "
+            f"them to keep their old phone powered on until the port completes. "
+            f"Wish them a great day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("deliver_issue_update")
+def on_issue_done(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('customer_name')} for providing the additional "
+            f"information. Let them know the porting team will retry the port within "
+            f"one business day and send a status update, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("customer_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from the "
+            "contact list and won't be called again, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a Nexus Mobile porting specialist will call them back "
+            "within one business day, thank them for their time, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "porting_details_confirmed": call.get_field("porting_details_confirmed"),
-        "previous_carrier_account_number": call.get_field("previous_carrier_account_number"),
-        "previous_carrier_pin": call.get_field("previous_carrier_pin"),
-        "authorized_contact_name": call.get_field("authorized_contact_name"),
-        "port_completion_date_acknowledged": call.get_field("port_completion_date_acknowledged"),
-        "questions_about_porting": call.get_field("questions_about_porting"),
-    }, indent=2))
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": call.get_variable("customer_name"),
+        "number_being_ported": call.get_variable("number_being_ported"),
+        "port_status": call.get_variable("port_status"),
+        "service_confirmed": call.get_field("service_confirmed"),
+        "update_acknowledged": call.get_field("update_acknowledged"),
+        "issue_acknowledged": call.get_field("issue_acknowledged"),
+        "additional_info": call.get_field("additional_info"),
+        "questions": call.get_field("questions"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Nexus Mobile — Number Porting coordination outbound call agent"
+        description="Outbound number porting status call for Nexus Mobile"
     )
-    parser.add_argument("phone", help="Customer phone number to call (E.164 format)")
-    parser.add_argument("--name", required=True, help="Full name of the customer")
+    parser.add_argument("phone", help="Customer phone number to call")
+    parser.add_argument("--name", required=True, help="Customer full name")
     parser.add_argument(
-        "--new-account-number", required=True, help="Customer's new Nexus Mobile account number"
-    )
-    parser.add_argument(
-        "--number-being-ported", required=True, help="The phone number being ported to Nexus Mobile"
+        "--number-being-ported", required=True, help="The phone number being ported"
     )
     parser.add_argument(
-        "--expected-port-date", required=True, help="Expected date for port completion (e.g. March 1, 2026)"
+        "--port-status",
+        required=True,
+        choices=["complete", "in_progress", "issue"],
+        help="Current port status",
     )
+    parser.add_argument("--expected-date", default="", help="Expected completion date (for in_progress)")
+    parser.add_argument("--issue-detail", default="", help="Issue details (for issue status)")
     parser.add_argument(
         "--from-number",
         default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
@@ -214,9 +264,10 @@ if __name__ == "__main__":
         from_number=args.from_number,
         to_number=args.phone,
         variables={
-            "contact_name": args.name,
-            "new_account_number": args.new_account_number,
+            "customer_name": args.name,
             "number_being_ported": args.number_being_ported,
-            "expected_port_date": args.expected_port_date,
+            "port_status": args.port_status,
+            "expected_date": args.expected_date,
+            "issue_detail": args.issue_detail,
         },
     )

@@ -7,145 +7,325 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
+
+
+# ---------------------------------------------------------------------------
+# Mock API — simulates a claims backend for demo purposes
+# ---------------------------------------------------------------------------
+
+MOCK_CLAIMS = {
+    "CLM-20261201": {
+        "policyholder": "Maria Santos",
+        "dob": "1985-03-14",
+        "policy_number": "KPC-449821",
+        "loss_type": "auto",
+        "status": "approved",
+        "status_detail": (
+            "The claim has been approved. A settlement check for $4,200 will be "
+            "mailed to the address on file within 5 to 7 business days."
+        ),
+        "adjuster": "Claims Adjuster Line",
+        "adjuster_number": "+15551000200",
+    },
+    "CLM-20261415": {
+        "policyholder": "David Park",
+        "dob": "1992-07-22",
+        "policy_number": "KPC-338710",
+        "loss_type": "property",
+        "status": "pending",
+        "status_detail": (
+            "The claim is currently under review. We are waiting on the inspection "
+            "report from the field adjuster, which is expected within 3 business days."
+        ),
+        "adjuster": "Property Claims Team",
+        "adjuster_number": "+15551000201",
+    },
+    "CLM-20260987": {
+        "policyholder": "Rachel Kim",
+        "dob": "1978-11-05",
+        "policy_number": "KPC-112504",
+        "loss_type": "auto",
+        "status": "denied",
+        "status_detail": (
+            "The claim was denied because the incident occurred outside the policy "
+            "coverage period. The policyholder has the right to file an appeal within "
+            "60 days of the denial notice."
+        ),
+        "adjuster": "Appeals Department",
+        "adjuster_number": "+15551000202",
+    },
+}
+
+
+def verify_identity(claim_number, dob):
+    claim = MOCK_CLAIMS.get(claim_number)
+    if claim and claim["dob"] == dob:
+        return claim
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 agent = guava.Agent(
     name="Morgan",
-    organization="Keystone Property & Casualty - Claims",
+    organization="Keystone Property & Casualty — Claims",
     purpose=(
-        "to provide claimants with a proactive status update on their open claim "
-        "and gather any outstanding information needed to keep the claim moving forward"
+        "provide claimants with a proactive status update on their open claim, "
+        "answer questions about next steps, and connect them with an adjuster "
+        "when needed"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_adjuster": "The caller wants to speak to a claims adjuster or live person about their claim",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Morgan from Keystone Property & Casualty calling for "
+            f"{call.get_variable('contact_name')} regarding an open claim. "
+            f"Please call us back at 1-800-555-0100 at your convenience. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        logging.warning(
-            "Could not reach %s for claims status update on claim %s.",
-            call.get_variable("contact_name"),
-            call.get_variable("claim_number"),
-        )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "use_case": "claims_status_update",
-            "contact_name": call.get_variable("contact_name"),
-            "claim_number": call.get_variable("claim_number"),
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                "We were unable to reach the claimant. "
-                "Please attempt re-contact or send a written status update via email."
-            )
-        )
-    elif outcome == "available":
+    contact_name = call.get_variable("contact_name")
+
+    if outcome == "available":
         call.set_task(
-            "claims_status",
+            "verify_identity",
             objective=(
-                f"You are calling {call.get_variable('contact_name')} with a status update on claim number "
-                f"{call.get_variable('claim_number')}. The current status is: {call.get_variable('status')}. "
-                "Clearly communicate this status and explain what the next steps are. "
-                "Ask whether the claimant has a preferred repair vendor, whether they have "
-                "any additional documentation to submit, and whether they need a follow-up "
-                "from an adjuster. Be empathetic, clear, and professional. Avoid making any "
-                "promises about settlement amounts or timelines outside of what is stated."
+                f"Verify the identity of {contact_name} before sharing any claim "
+                f"details. Ask for their date of birth. Do not share any claim status "
+                f"or policy information until identity is confirmed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {call.get_variable('contact_name')}, this is Morgan calling from the Claims "
-                    f"department at Keystone Property & Casualty. I'm calling with an update "
-                    f"on your claim number {call.get_variable('claim_number')}. I have a few quick questions "
-                    "for you as well to help us keep things moving."
+                    f"I have an update on your claim. Before I share any details, "
+                    f"I need to verify your identity with a quick question."
                 ),
                 guava.Field(
-                    key="update_understood",
-                    description=(
-                        "Confirmation that the claimant understood the status update provided, "
-                        "and any immediate questions or concerns they raised"
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="repair_vendor_preference",
-                    description=(
-                        "Whether the claimant has a preferred repair contractor or vendor "
-                        "they would like to use, and the vendor name if provided"
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="additional_documentation_available",
-                    description=(
-                        "Whether the claimant has additional documentation, photos, receipts, "
-                        "or estimates available to submit to support the claim"
-                    ),
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="follow_up_needed",
-                    description=(
-                        "Whether the claimant is requesting a follow-up call from a licensed "
-                        "adjuster, and the reason or urgency if applicable"
-                    ),
+                    key="dob",
+                    description="The claimant's date of birth for identity verification",
                     field_type="text",
                     required=True,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Claimant %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone, and that any future updates will be sent by mail, "
+                "and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
-@agent.on_task_complete("claims_status")
-def on_done(call: guava.Call) -> None:
+@agent.on_task_complete("verify_identity")
+def on_identity_verified(call: guava.Call) -> None:
+    claim_number = call.get_variable("claim_number")
+    dob = call.get_field("dob")
+    claim = verify_identity(claim_number, dob)
+
+    if claim is None:
+        logging.warning("Identity verification failed for claim %s.", claim_number)
+        call.hangup(
+            final_instructions=(
+                "Let them know the date of birth provided does not match our records "
+                "for this claim. For security, you cannot share claim details. "
+                "Suggest they call the main claims line at 1-800-555-0100 with their "
+                "policy documents handy, and politely say goodbye."
+            )
+        )
+        return
+
+    call.set_variable("claim_status", claim["status"])
+    call.set_variable("adjuster_number", claim["adjuster_number"])
+
+    call.add_info("claim_details", {
+        "claim_number": claim_number,
+        "status": claim["status"],
+        "status_detail": claim["status_detail"],
+        "adjuster": claim["adjuster"],
+    })
+
+    if claim["status"] == "denied":
+        call.set_task(
+            "deliver_status",
+            objective=(
+                f"Deliver the claim status update to {call.get_variable('contact_name')}. "
+                f"The claim has been denied. Explain the reason clearly and empathetically. "
+                f"Let them know they have the right to appeal within 60 days. "
+                f"Offer to transfer them to the Appeals Department if they would like "
+                f"to discuss their options. "
+                f"Do NOT speculate about the outcome of an appeal or whether the denial "
+                f"might be overturned. Only share what is in the claim details provided."
+            ),
+            checklist=[
+                guava.Field(
+                    key="status_understood",
+                    description="Whether the claimant understood the status and reason for denial",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="wants_to_appeal",
+                    description="Whether the claimant wants to file an appeal or speak with the Appeals Department",
+                    field_type="multiple_choice",
+                    choices=["yes", "no", "needs time to decide"],
+                    required=True,
+                ),
+            ],
+        )
+    elif claim["status"] == "pending":
+        call.set_task(
+            "deliver_status",
+            objective=(
+                f"Deliver the claim status update to {call.get_variable('contact_name')}. "
+                f"The claim is pending. Explain what is being waited on and the expected "
+                f"timeline. Ask if they have any additional documentation to submit. "
+                f"Do NOT predict when the claim will be resolved or estimate a payout amount."
+            ),
+            checklist=[
+                guava.Field(
+                    key="status_understood",
+                    description="Whether the claimant understood the current status and next steps",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="has_additional_docs",
+                    description="Whether the claimant has additional documentation, photos, or estimates to submit",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
+                    required=True,
+                ),
+            ],
+        )
+    else:
+        call.set_task(
+            "deliver_status",
+            objective=(
+                f"Deliver the claim status update to {call.get_variable('contact_name')}. "
+                f"The claim has been approved. Share the settlement details and timeline. "
+                f"Ask if they have a preferred repair vendor. "
+                f"Do NOT modify the settlement amount or make promises beyond what is stated."
+            ),
+            checklist=[
+                guava.Field(
+                    key="status_understood",
+                    description="Whether the claimant understood the settlement details and timeline",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="repair_vendor_preference",
+                    description="Whether the claimant has a preferred repair contractor or vendor",
+                    field_type="text",
+                    required=False,
+                ),
+            ],
+        )
+
+
+@agent.on_task_complete("deliver_status")
+def on_status_delivered(call: guava.Call) -> None:
+    claim_status = call.get_variable("claim_status")
+
+    if claim_status == "denied" and call.get_field("wants_to_appeal") == "yes":
+        adjuster_number = call.get_variable("adjuster_number")
+        call.transfer(
+            destination=adjuster_number,
+            instructions=(
+                "Let the claimant know you're transferring them to the Appeals "
+                "Department now, and wish them the best with their appeal."
+            ),
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {call.get_variable('contact_name')} for their time. "
+                f"Remind them they can call the main claims line at 1-800-555-0100 "
+                f"if they have any additional questions, and wish them well, and politely say goodbye."
+            )
+        )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Claimant %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone and that future claim updates will be sent by mail, "
+            "and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_adjuster")
+def handle_transfer_request(call: guava.Call) -> None:
+    adjuster_number = call.get_variable("adjuster_number")
+    if adjuster_number:
+        call.transfer(
+            destination=adjuster_number,
+            instructions="Let them know you're connecting them with a claims representative now.",
+        )
+    else:
+        call.hangup(
+            final_instructions=(
+                "Let them know a claims adjuster will call them back within one "
+                "business day. Ask if there is a preferred time and thank them, "
+                "and politely say goodbye."
+            )
+        )
+
+
+@agent.on_outbound_failed
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
+    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
+
+
+@agent.on_session_end
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "claims_status_update",
         "contact_name": call.get_variable("contact_name"),
         "claim_number": call.get_variable("claim_number"),
-        "status_communicated": call.get_variable("status"),
-        "update_understood": call.get_field("update_understood"),
+        "claim_status": call.get_variable("claim_status"),
+        "dob_verified": call.get_field("dob") is not None,
+        "status_understood": call.get_field("status_understood"),
+        "wants_to_appeal": call.get_field("wants_to_appeal"),
+        "has_additional_docs": call.get_field("has_additional_docs"),
         "repair_vendor_preference": call.get_field("repair_vendor_preference"),
-        "additional_documentation_available": call.get_field(
-            "additional_documentation_available"
-        ),
-        "follow_up_needed": call.get_field("follow_up_needed"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
     }
     print(json.dumps(results, indent=2))
-    logging.info("Claims status results saved: %s", results)
-    call.hangup(
-        final_instructions=(
-            "Thank you for your time today. We have noted your responses and will make "
-            "sure your claim file is updated accordingly. If you submitted or plan to "
-            "submit additional documentation, please send it to the email or portal link "
-            "in your original claim confirmation. If you requested adjuster follow-up, "
-            "someone will be in touch within one business day. We appreciate your patience "
-            "and are committed to resolving your claim as quickly as possible. Take care."
-        )
-    )
-
-
-@agent.on_outbound_failed
-def on_outbound_failed(event):
-    logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
-
-
-@agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "update_understood": call.get_field("update_understood"),
-        "repair_vendor_preference": call.get_field("repair_vendor_preference"),
-        "additional_documentation_available": call.get_field("additional_documentation_available"),
-        "follow_up_needed": call.get_field("follow_up_needed"),
-    }, indent=2))
 
 
 if __name__ == "__main__":
@@ -155,11 +335,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("phone", help="Phone number to dial")
     parser.add_argument("--name", required=True, help="Full name of the claimant")
-    parser.add_argument("--claim-number", required=True, help="Claim number")
     parser.add_argument(
-        "--status",
-        default="under review",
-        help="Current claim status description (default: 'under review')",
+        "--claim-number",
+        required=True,
+        help="Claim number (try CLM-20261201, CLM-20261415, or CLM-20260987)",
     )
     parser.add_argument(
         "--from-number",
@@ -174,6 +353,5 @@ if __name__ == "__main__":
         variables={
             "contact_name": args.name,
             "claim_number": args.claim_number,
-            "status": args.status,
         },
     )

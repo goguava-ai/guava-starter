@@ -7,21 +7,36 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Casey",
+    name="Sage",
     organization="Pinnacle Property Management",
     purpose=(
-        "reach out to tenants ahead of their lease expiration to gauge "
-        "renewal interest and collect updated contact and income information "
-        "so the leasing team can prepare renewal agreements efficiently"
+        "reach out to tenants ahead of their lease expiration to determine "
+        "their renewal intent, collect relevant details based on their decision, "
+        "and facilitate next steps for renewal, negotiation, or move-out"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_manager": "The caller wants to speak to a property manager or leasing office",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Sage from Pinnacle Property Management calling for "
+            f"{call.get_variable('contact_name')} regarding your upcoming lease "
+            f"renewal at {call.get_variable('unit_address')}. Your lease expires "
+            f"{call.get_variable('expiration_date')}. Please call us back at your "
+            f"earliest convenience. Thank you!"
+        ),
+    )
 
 
 @agent.on_reach_person
@@ -30,102 +45,125 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
     unit_address = call.get_variable("unit_address")
     expiration_date = call.get_variable("expiration_date")
 
-    if outcome == "unavailable":
-        logging.warning(
-            "Could not reach %s at %s for lease renewal outreach.",
-            contact_name,
-            unit_address,
-        )
-        results = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vertical": "real_estate",
-            "use_case": "lease_renewal",
-            "contact_name": contact_name,
-            "unit_address": unit_address,
-            "lease_expiration": expiration_date,
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                f"Leave a brief, professional voicemail for {contact_name}. "
-                "Introduce yourself as Casey from Pinnacle Property Management and mention "
-                f"that you are calling about their upcoming lease renewal at {unit_address} "
-                f"expiring {expiration_date}. Ask them to call back at their earliest "
-                "convenience or watch for an email from the leasing team. Keep the message "
-                "friendly and under 30 seconds."
-            )
-        )
-    elif outcome == "available":
+    if outcome == "available":
         call.set_task(
-            "lease_renewal_survey",
+            "renewal_decision",
             objective=(
-                f"You are calling {contact_name}, a current tenant at "
-                f"{unit_address}, whose lease expires {expiration_date}. "
-                "Be warm, professional, and low-pressure. Let them know this is a "
-                "courtesy call to understand their intentions and make the renewal "
-                "process as smooth as possible if they choose to stay. "
-                "Reassure them that there is no obligation and their feedback is appreciated."
+                f"Call {contact_name}, a current tenant at {unit_address}, whose "
+                f"lease expires {expiration_date}. Determine whether they plan to "
+                f"renew, want to negotiate terms, or plan to vacate."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name}, this is Casey calling from Pinnacle Property "
-                    f"Management regarding your lease at {unit_address}, which is coming "
-                    f"up for renewal {expiration_date}. I just have a few quick questions "
-                    f"to help us plan ahead — this should only take a couple of minutes."
+                    f"I'm calling about your lease at {unit_address}, which is "
+                    f"coming up for renewal {expiration_date}. I just have a couple "
+                    f"of quick questions."
                 ),
                 guava.Field(
-                    key="renewal_intent",
-                    description=(
-                        "Are you planning to renew your lease, or are you considering moving?"
-                    ),
+                    key="renewal_decision",
+                    description="The tenant's decision about their lease renewal",
                     field_type="multiple_choice",
-                    choices=["Yes", "No", "Undecided"],
+                    choices=["renew", "negotiate", "vacate"],
                     required=True,
                 ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Tenant %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be contacted "
+                "again by phone. Remind them that lease renewal notices will still be "
+                "sent by mail as required, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("renewal_decision")
+def on_renewal_decision_done(call: guava.Call) -> None:
+    decision = call.get_field("renewal_decision")
+    contact_name = call.get_variable("contact_name")
+    unit_address = call.get_variable("unit_address")
+
+    if decision == "renew":
+        call.set_task(
+            "confirm_renewal",
+            objective=(
+                f"{contact_name} wants to renew their lease at {unit_address}. "
+                f"Confirm their preferred lease term and let them know renewal "
+                f"documents will be sent for signature."
+            ),
+            checklist=[
                 guava.Field(
                     key="preferred_lease_term",
                     description=(
-                        "If you do plan to renew, do you have a preference for the lease term? "
-                        "For example, a 6-month, 12-month, or month-to-month arrangement?"
+                        "The tenant's preferred lease term for renewal "
+                        "(6 months, 12 months, month-to-month, etc.)"
+                    ),
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="updated_contact_info",
+                    description=(
+                        "Any updated email or phone number for sending renewal documents"
                     ),
                     field_type="text",
                     required=False,
                 ),
+            ],
+        )
+    elif decision == "negotiate":
+        call.set_task(
+            "collect_negotiation_concerns",
+            objective=(
+                f"{contact_name} wants to discuss lease terms before renewing at "
+                f"{unit_address}. Collect their concerns and schedule a callback "
+                f"from the property manager."
+            ),
+            checklist=[
                 guava.Field(
-                    key="income_change_since_last_lease",
+                    key="negotiation_concerns",
                     description=(
-                        "Has your household income changed significantly since you signed "
-                        "your last lease? We may need updated income verification as part "
-                        "of the renewal process."
+                        "What the tenant wants to discuss or negotiate "
+                        "(rent amount, lease length, maintenance issues, amenities, etc.)"
                     ),
                     field_type="text",
-                    required=False,
+                    required=True,
                 ),
                 guava.Field(
-                    key="updated_phone",
-                    description=(
-                        "Is the phone number we have on file still the best one to reach you? "
-                        "If not, what is your current phone number?"
-                    ),
+                    key="preferred_callback_time",
+                    description="When the tenant prefers to receive a callback from the manager",
                     field_type="text",
-                    required=False,
+                    required=True,
                 ),
+            ],
+        )
+    else:
+        call.set_task(
+            "collect_moveout_details",
+            objective=(
+                f"{contact_name} plans to vacate {unit_address}. Collect their "
+                f"planned move-out date and ask if they'd like to share their "
+                f"reason for leaving. The property management team will email "
+                f"them a move-out checklist and inspection scheduling details."
+            ),
+            checklist=[
                 guava.Field(
-                    key="updated_email",
-                    description=(
-                        "Do you have an updated email address you'd like us to use "
-                        "for lease documents and communications?"
-                    ),
+                    key="planned_moveout_date",
+                    description="The date the tenant plans to move out",
                     field_type="text",
-                    required=False,
+                    required=True,
                 ),
                 guava.Field(
-                    key="maintenance_concerns_before_renewal",
-                    description=(
-                        "Before you commit to renewing, are there any outstanding maintenance "
-                        "issues or concerns about the unit you'd like addressed?"
-                    ),
+                    key="reason_for_leaving",
+                    description="The tenant's reason for not renewing (optional feedback)",
                     field_type="text",
                     required=False,
                 ),
@@ -133,66 +171,106 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
         )
 
 
-@agent.on_task_complete("lease_renewal_survey")
-def on_done(call: guava.Call) -> None:
+@agent.on_task_complete("confirm_renewal")
+def on_renewal_confirmed(call: guava.Call) -> None:
     contact_name = call.get_variable("contact_name")
-    unit_address = call.get_variable("unit_address")
-    expiration_date = call.get_variable("expiration_date")
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "vertical": "real_estate",
-        "use_case": "lease_renewal",
-        "contact_name": contact_name,
-        "unit_address": unit_address,
-        "lease_expiration": expiration_date,
-        "fields": {
-            "renewal_intent": call.get_field("renewal_intent"),
-            "preferred_lease_term": call.get_field("preferred_lease_term"),
-            "income_change_since_last_lease": call.get_field("income_change_since_last_lease"),
-            "updated_phone": call.get_field("updated_phone"),
-            "updated_email": call.get_field("updated_email"),
-            "maintenance_concerns_before_renewal": call.get_field(
-                "maintenance_concerns_before_renewal"
-            ),
-        },
-    }
-    print(json.dumps(results, indent=2))
-    logging.info("Lease renewal survey results captured: %s", results)
     call.hangup(
         final_instructions=(
-            f"Thank {contact_name} for their time and for being a valued tenant "
-            f"at Pinnacle Property Management. Let them know that their leasing "
-            "specialist will follow up with them by email within 3 to 5 business days "
-            "with renewal options and next steps. If they indicated maintenance concerns, "
-            "acknowledge those specifically and assure them the team will look into it. "
-            "Wish them a great day and close warmly."
+            f"Thank {contact_name} for choosing to stay at Pinnacle Property "
+            f"Management. Let them know renewal documents will be sent within "
+            f"5 business days for their signature. If they provided updated "
+            f"contact information, confirm it was noted, and wish them a great day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("collect_negotiation_concerns")
+def on_negotiation_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} for sharing their concerns. Let them know "
+            f"the property manager will call them back at their preferred time "
+            f"to discuss options. Assure them Pinnacle values their tenancy and "
+            f"wants to find a solution that works, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("collect_moveout_details")
+def on_moveout_done(call: guava.Call) -> None:
+    contact_name = call.get_variable("contact_name")
+    call.hangup(
+        final_instructions=(
+            f"Thank {contact_name} for letting Pinnacle know. Explain that a "
+            f"move-out checklist and inspection scheduling details will be emailed "
+            f"to them. Remind them to submit a written notice to the leasing office "
+            f"at least 30 days before their move-out date. Wish them the best in "
+            f"their next chapter, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Tenant %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from "
+            "the call list. Remind them that lease renewal notices will still be "
+            "sent by mail as required, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_manager")
+def handle_speak_to_manager(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that the property manager will call them back within "
+            "one business day. Ask if there is a preferred time and thank them, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "renewal_intent": call.get_field("renewal_intent"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "contact_name": call.get_variable("contact_name"),
+        "unit_address": call.get_variable("unit_address"),
+        "expiration_date": call.get_variable("expiration_date"),
+        "renewal_decision": call.get_field("renewal_decision"),
         "preferred_lease_term": call.get_field("preferred_lease_term"),
-        "income_change_since_last_lease": call.get_field("income_change_since_last_lease"),
-        "updated_phone": call.get_field("updated_phone"),
-        "updated_email": call.get_field("updated_email"),
-        "maintenance_concerns_before_renewal": call.get_field("maintenance_concerns_before_renewal"),
-    }, indent=2))
+        "updated_contact_info": call.get_field("updated_contact_info"),
+        "negotiation_concerns": call.get_field("negotiation_concerns"),
+        "preferred_callback_time": call.get_field("preferred_callback_time"),
+        "planned_moveout_date": call.get_field("planned_moveout_date"),
+        "reason_for_leaving": call.get_field("reason_for_leaving"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    parser = argparse.ArgumentParser(description="Lease renewal outbound call to a tenant.")
-    parser.add_argument("phone", help="The tenant's phone number to call.")
-    parser.add_argument("--name", required=True, help="Full name of the tenant to reach.")
-    parser.add_argument("--unit", required=True, help="Unit address of the tenant's rental.")
+    parser = argparse.ArgumentParser(
+        description="Outbound lease renewal call for Pinnacle Property Management"
+    )
+    parser.add_argument("phone", help="The tenant's phone number to call")
+    parser.add_argument("--name", required=True, help="Full name of the tenant to reach")
+    parser.add_argument("--unit", required=True, help="Unit address of the tenant's rental")
     parser.add_argument(
         "--expiration-date",
         default="in 60 days",
@@ -204,14 +282,6 @@ if __name__ == "__main__":
         help="Caller ID / from number (defaults to GUAVA_AGENT_NUMBER env var).",
     )
     args = parser.parse_args()
-
-    logging.info(
-        "Initiating lease renewal call to %s (%s) for unit %s, expiring %s.",
-        args.name,
-        args.phone,
-        args.unit,
-        args.expiration_date,
-    )
 
     agent.call_phone(
         from_number=args.from_number,

@@ -7,83 +7,113 @@ from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Casey",
-    organization="ShopNow - Customer Safety Team",
+    name="Tatum",
+    organization="ShopNow — Customer Safety Team",
     purpose=(
-        "to notify affected customers of an urgent product recall, "
-        "provide safety instructions, and arrange a return, replacement, or store credit"
+        "urgently notify customers affected by a product recall, provide "
+        "safety instructions specific to the product category, and arrange "
+        "a return or replacement"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a safety specialist or customer service representative",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    product_name = call.get_variable("product_name")
+    customer_name = call.get_variable("customer_name")
+    call.reach_person(
+        contact_full_name=customer_name,
+        voicemail_message=(
+            f"Hi, this is Tatum from the ShopNow Customer Safety Team with an "
+            f"urgent message for {customer_name}. We have issued a recall for "
+            f"'{product_name}'. Please stop using this product immediately and "
+            f"call us back at 1-800-555-0199 as soon as possible for important "
+            f"safety information. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    contact_name = call.get_variable("contact_name")
+    customer_name = call.get_variable("customer_name")
     product_name = call.get_variable("product_name")
+    product_category = call.get_variable("product_category")
     recall_reason = call.get_variable("recall_reason")
     order_number = call.get_variable("order_number")
 
-    if outcome == "unavailable":
-        logging.warning(
-            "Could not reach %s for recall notification on order %s, product '%s'.",
-            contact_name,
-            order_number,
-            product_name,
-        )
-    elif outcome == "available":
+    if outcome == "available":
+        if product_category == "electronics":
+            safety_instructions = (
+                "Unplug the product immediately and do not attempt to use or charge it. "
+                "Keep it away from flammable materials. Package it carefully for return."
+            )
+            disposal_note = (
+                "Do not dispose of electronics in regular trash. We will provide a "
+                "prepaid return label for safe recycling."
+            )
+        elif product_category == "food":
+            safety_instructions = (
+                "Do not consume any remaining product. Check your refrigerator and "
+                "pantry for additional units. Dispose of the product in a sealed bag "
+                "in your household trash."
+            )
+            disposal_note = (
+                "No return is needed for food items. Your refund will be processed "
+                "automatically."
+            )
+        elif product_category == "children":
+            safety_instructions = (
+                "Remove the product from any area accessible to children immediately. "
+                "Do not allow children to use or play with the product under any "
+                "circumstances. Store it out of reach until returned."
+            )
+            disposal_note = (
+                "We will send a prepaid return label. Please do not donate or give "
+                "away the product."
+            )
+        else:
+            safety_instructions = (
+                "Stop using the product immediately as a precaution. Store it "
+                "safely until you receive return instructions."
+            )
+            disposal_note = (
+                "We will provide return instructions and a prepaid shipping label."
+            )
+
         call.set_task(
             "recall_notification",
             objective=(
-                f"Urgently notify {contact_name} that their ShopNow order #{order_number} "
-                f"containing '{product_name}' is subject to a product recall due to: {recall_reason}. "
-                "Clearly communicate the safety concern, instruct them to stop using the product immediately, "
-                "confirm they have understood the recall, determine whether they still have the product in use, "
-                "collect their chosen resolution (return for refund, replacement, or store credit), "
-                "and confirm how they would like to receive their prepaid return label. "
-                "Allow the customer to ask any questions about the recall. "
-                "Maintain a calm, professional, and safety-first tone throughout."
+                f"Urgently notify {customer_name} that '{product_name}' from order "
+                f"#{order_number} is subject to recall due to: {recall_reason}. "
+                f"Provide category-specific safety instructions: {safety_instructions} "
+                f"{disposal_note} Confirm they understand and arrange resolution."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {contact_name}, this is Casey calling from the ShopNow Customer Safety Team. "
-                    "I'm reaching out regarding an important safety notice that affects a product "
-                    f"from your recent order #{order_number}. "
-                    f"We have issued an official recall for '{product_name}' "
-                    f"due to the following safety concern: {recall_reason}. "
-                    "Please stop using this product immediately as a precautionary measure. "
-                    "We sincerely apologize for any concern this may cause and want to assure you "
-                    "that your safety is our absolute top priority."
+                    f"I'm reaching out with an important safety notice about "
+                    f"'{product_name}' from your order #{order_number}. We have "
+                    f"issued a recall due to: {recall_reason}. {safety_instructions}"
                 ),
                 guava.Field(
                     key="recall_acknowledged",
-                    description=(
-                        "Confirmation that the customer has heard and understood the recall notice "
-                        "for the affected product"
-                    ),
+                    description="Whether the customer has understood the recall and safety instructions",
                     field_type="text",
                     required=True,
                 ),
                 guava.Field(
-                    key="product_still_in_use",
-                    description=(
-                        "Whether the customer still has the recalled product and has been using it: "
-                        "'yes', 'no', or details about the current status of the product"
-                    ),
-                    field_type="text",
+                    key="product_status",
+                    description="Whether the customer still has the product and its current state",
+                    field_type="multiple_choice",
+                    choices=["in_use", "stored", "discarded", "given_away"],
                     required=True,
-                ),
-                guava.Say(
-                    "We want to make this as easy as possible for you. "
-                    "We can arrange one of three resolutions at no cost to you: "
-                    "you can return the product for a full refund, receive a free replacement once "
-                    "the corrected product is available, or receive store credit to use on any future purchase."
                 ),
                 guava.Field(
                     key="resolution_choice",
@@ -92,86 +122,105 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                     choices=["return_refund", "replacement", "store_credit"],
                     required=True,
                 ),
-                guava.Field(
-                    key="return_label_delivery_preference",
-                    description="How the customer would like to receive their prepaid return shipping label",
-                    field_type="multiple_choice",
-                    choices=["email", "mail"],
-                    required=True,
-                ),
-                guava.Field(
-                    key="questions_about_recall",
-                    description=(
-                        "Any questions or concerns the customer raised about the recall, the safety issue, "
-                        "the return process, or the resolution options. "
-                        "Leave blank if they had no further questions."
-                    ),
-                    field_type="text",
-                    required=False,
-                ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", customer_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Note that this was a safety-related call. "
+                "Let them know they will not be contacted again but can call "
+                "1-800-555-0199 for recall information, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", customer_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", customer_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("recall_notification")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "product_name": call.get_variable("product_name"),
-        "recall_reason": call.get_variable("recall_reason"),
-        "order_number": call.get_variable("order_number"),
-        "recall_acknowledged": call.get_field("recall_acknowledged"),
-        "product_still_in_use": call.get_field("product_still_in_use"),
-        "resolution_choice": call.get_field("resolution_choice"),
-        "return_label_delivery_preference": call.get_field("return_label_delivery_preference"),
-        "questions_about_recall": call.get_field("questions_about_recall"),
-    }
-    print(json.dumps(results, indent=2))
-    logging.info(
-        "Recall notification call completed for %s, order %s, product '%s'",
-        call.get_variable("contact_name"),
-        call.get_variable("order_number"),
-        call.get_variable("product_name"),
-    )
+def on_recall_done(call: guava.Call) -> None:
+    customer_name = call.get_variable("customer_name")
     call.hangup(
         final_instructions=(
-            "Thank the customer for their time and for taking this matter seriously. "
-            "Confirm that their chosen resolution and return label delivery preference have been recorded "
-            "and that they will be contacted within 24 to 48 hours with next steps. "
-            "Provide the ShopNow Customer Safety Team phone number or support email if they have "
-            "further questions. Emphasize that their safety is ShopNow's highest priority, "
-            "and close the call with care and professionalism."
+            f"Thank {customer_name} for taking this matter seriously. Confirm their "
+            f"chosen resolution has been recorded. Let them know they will receive "
+            f"next steps within 24 hours. Provide the safety hotline number "
+            f"1-800-555-0199 for any further questions. Emphasize that their safety "
+            f"is ShopNow's highest priority, and politely say goodbye."
         )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("customer_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they've been removed from the "
+            "contact list. Mention the safety hotline 1-800-555-0199 is available "
+            "if they need recall information in the future, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.transfer(
+        destination="+18005550199",
+        instructions="Let them know you're connecting them with a safety specialist now.",
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "customer_name": call.get_variable("customer_name"),
+        "product_name": call.get_variable("product_name"),
+        "product_category": call.get_variable("product_category"),
+        "recall_reason": call.get_variable("recall_reason"),
+        "order_number": call.get_variable("order_number"),
         "recall_acknowledged": call.get_field("recall_acknowledged"),
-        "product_still_in_use": call.get_field("product_still_in_use"),
+        "product_status": call.get_field("product_status"),
         "resolution_choice": call.get_field("resolution_choice"),
-        "return_label_delivery_preference": call.get_field("return_label_delivery_preference"),
-        "questions_about_recall": call.get_field("questions_about_recall"),
-    }, indent=2))
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
-    parser = argparse.ArgumentParser(description="ShopNow product recall notification agent")
+    parser = argparse.ArgumentParser(
+        description="Outbound product recall notification call for ShopNow"
+    )
     parser.add_argument("phone", help="Customer phone number to call")
     parser.add_argument("--name", required=True, help="Customer full name")
     parser.add_argument("--product-name", required=True, help="Name of the recalled product")
     parser.add_argument(
-        "--recall-reason", required=True, help="Reason or description of the safety issue triggering the recall"
+        "--product-category",
+        required=True,
+        choices=["electronics", "food", "children", "other"],
+        help="Product category (determines safety instructions)",
     )
-    parser.add_argument("--order-number", required=True, help="Customer's order number containing the product")
+    parser.add_argument(
+        "--recall-reason", required=True, help="Reason for the recall"
+    )
+    parser.add_argument("--order-number", required=True, help="Customer's order number")
     parser.add_argument(
         "--from-number",
         default=os.environ.get("GUAVA_AGENT_NUMBER", ""),
@@ -183,8 +232,9 @@ if __name__ == "__main__":
         from_number=args.from_number,
         to_number=args.phone,
         variables={
-            "contact_name": args.name,
+            "customer_name": args.name,
             "product_name": args.product_name,
+            "product_category": args.product_category,
             "recall_reason": args.recall_reason,
             "order_number": args.order_number,
         },

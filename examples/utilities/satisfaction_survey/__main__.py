@@ -3,74 +3,70 @@ import argparse
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Morgan",
+    name="Quinn",
     organization="Metro Power & Light",
     purpose=(
-        "conduct a brief post-interaction satisfaction survey to understand the customer's "
-        "experience, collect Net Promoter Score data, and identify areas where Metro Power "
-        "& Light can improve its service"
+        "conduct a brief post-interaction satisfaction survey, collect NPS "
+        "data, and follow up on low satisfaction scores to understand areas "
+        "for improvement"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a manager, supervisor, or customer service representative",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Quinn from Metro Power & Light calling for "
+            f"{call.get_variable('contact_name')}. We're following up on your "
+            f"recent experience with us and would love your feedback. Please "
+            f"call us back at your convenience. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": call.get_variable("contact_name"),
-            "account_number": call.get_variable("account_number"),
-            "interaction_type": call.get_variable("interaction_type"),
-            "interaction_date": call.get_variable("interaction_date"),
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                "Leave a brief voicemail letting the customer know that Metro Power & Light called "
-                "to gather feedback about their recent experience. Let them know their opinion matters "
-                "and invite them to complete a short survey online at metropowerandlight.com/feedback "
-                "at their convenience. Thank them for being a customer."
-            )
-        )
-    elif outcome == "available":
-        contact_name = call.get_variable("contact_name")
-        account_number = call.get_variable("account_number")
-        interaction_type = call.get_variable("interaction_type")
-        interaction_date = call.get_variable("interaction_date")
+    contact_name = call.get_variable("contact_name")
+    account_number = call.get_variable("account_number")
+    interaction_type = call.get_variable("interaction_type")
+    interaction_date = call.get_variable("interaction_date")
+
+    if outcome == "available":
         call.set_task(
             "satisfaction_survey",
             objective=(
-                f"Conduct a post-interaction satisfaction survey with {contact_name} "
-                f"(account {account_number}) regarding {interaction_type} on "
-                f"{interaction_date}. Collect an NPS score, satisfaction and helpfulness "
-                "ratings, confirm whether their issue was resolved, assess wait time acceptability, "
-                "and invite any suggestions for improvement. Keep the survey conversational, "
-                "brief, and thank the customer for their feedback."
+                f"Conduct a post-interaction satisfaction survey with "
+                f"{contact_name} (account {account_number}) regarding "
+                f"{interaction_type} on {interaction_date}. Collect NPS score, "
+                f"satisfaction rating, resolution status, and any improvement "
+                f"suggestions. Keep the survey conversational and brief."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name.split()[0]}, this is Morgan calling from Metro Power & Light. "
-                    f"I'm following up on {interaction_type} on {interaction_date}. "
-                    f"We'd love to get your feedback — this survey takes about two minutes and your "
-                    f"responses help us improve our service. Do you have a moment?"
+                    f"I'm following up on {interaction_type} on "
+                    f"{interaction_date}. We'd love to get your feedback — this "
+                    f"survey takes about two minutes. Do you have a moment?"
                 ),
                 guava.Field(
                     key="nps_score",
                     description=(
-                        "Ask: On a scale of 0 to 10, where 0 is not at all likely and 10 is extremely likely, "
-                        "how likely are you to recommend Metro Power & Light to a friend or family member?"
+                        "On a scale of 0 to 10, where 0 is not at all likely and "
+                        "10 is extremely likely, how likely are you to recommend "
+                        "Metro Power & Light to a friend or family member?"
                     ),
                     field_type="integer",
                     required=True,
@@ -78,8 +74,9 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="interaction_satisfaction_rating",
                     description=(
-                        "Ask: On a scale of 1 to 5, where 1 is very dissatisfied and 5 is very satisfied, "
-                        "how satisfied were you with your overall experience during this interaction?"
+                        "On a scale of 1 to 5, where 1 is very dissatisfied and "
+                        "5 is very satisfied, how satisfied were you with your "
+                        "overall experience during this interaction?"
                     ),
                     field_type="integer",
                     required=True,
@@ -87,8 +84,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="issue_resolved",
                     description=(
-                        "Ask whether the customer's issue or request was fully resolved during "
-                        "their interaction with Metro Power & Light"
+                        "Whether the customer's issue or request was fully resolved "
+                        "during their interaction"
                     ),
                     field_type="text",
                     required=True,
@@ -96,8 +93,8 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="wait_time_acceptable",
                     description=(
-                        "Ask whether the customer found the wait time to reach a representative "
-                        "acceptable during their interaction"
+                        "Whether the customer found the wait time to reach a "
+                        "representative acceptable"
                     ),
                     field_type="text",
                     required=True,
@@ -105,69 +102,137 @@ def on_reach_person(call: guava.Call, outcome: str) -> None:
                 guava.Field(
                     key="agent_helpfulness_rating",
                     description=(
-                        "Ask: On a scale of 1 to 5, where 1 is not helpful at all and 5 is extremely helpful, "
-                        "how would you rate the helpfulness of the representative you spoke with?"
+                        "On a scale of 1 to 5, where 1 is not helpful at all and "
+                        "5 is extremely helpful, how would you rate the helpfulness "
+                        "of the representative you spoke with?"
                     ),
                     field_type="integer",
+                    required=True,
+                ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be "
+                "contacted again by phone for surveys. Thank them, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("satisfaction_survey")
+def on_survey_done(call: guava.Call) -> None:
+    satisfaction = call.get_field("interaction_satisfaction_rating")
+    contact_name = call.get_variable("contact_name")
+
+    if satisfaction is not None and satisfaction <= 2:
+        call.set_task(
+            "low_satisfaction_followup",
+            objective=(
+                f"{contact_name} gave a low satisfaction rating ({satisfaction}/5). "
+                f"Ask what specifically went wrong and what Metro Power & Light "
+                f"could have done better. Listen carefully and be empathetic. "
+                f"Let them know their feedback will be escalated for review."
+            ),
+            checklist=[
+                guava.Field(
+                    key="dissatisfaction_reason",
+                    description="What specifically the customer was unhappy about",
+                    field_type="text",
                     required=True,
                 ),
                 guava.Field(
                     key="improvement_suggestions",
                     description=(
-                        "Ask whether the customer has any suggestions for how Metro Power & Light "
-                        "could improve its service or the experience they had"
+                        "Any suggestions for how Metro Power & Light could "
+                        "improve its service"
                     ),
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    else:
+        call.hangup(
+            final_instructions=(
+                f"Thank {contact_name} sincerely for taking the time to complete "
+                f"the survey. Let them know their feedback is reviewed by the Metro "
+                f"Power & Light team, and wish them a good day, and politely say goodbye."
+            )
+        )
 
 
-@agent.on_task_complete("satisfaction_survey")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now().isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "account_number": call.get_variable("account_number"),
-        "interaction_type": call.get_variable("interaction_type"),
-        "interaction_date": call.get_variable("interaction_date"),
-        "fields": {
-            "nps_score": call.get_field("nps_score"),
-            "interaction_satisfaction_rating": call.get_field("interaction_satisfaction_rating"),
-            "issue_resolved": call.get_field("issue_resolved"),
-            "wait_time_acceptable": call.get_field("wait_time_acceptable"),
-            "agent_helpfulness_rating": call.get_field("agent_helpfulness_rating"),
-            "improvement_suggestions": call.get_field("improvement_suggestions"),
-        },
-    }
-    print(json.dumps(results, indent=2))
+@agent.on_task_complete("low_satisfaction_followup")
+def on_low_satisfaction_done(call: guava.Call) -> None:
     call.hangup(
         final_instructions=(
-            "Thank the customer sincerely for taking the time to complete the survey. Let them know "
-            "their feedback is reviewed by the Metro Power & Light team and used to improve customer "
-            "service. If their satisfaction or NPS score was low (3 or below), acknowledge their "
-            "experience, apologize for falling short, and let them know their feedback will be "
-            "escalated. Wish them a good day."
+            f"Thank {call.get_variable('contact_name')} for sharing their "
+            f"feedback — it genuinely helps. Apologize for their experience "
+            f"falling short of expectations. Let them know their feedback will "
+            f"be escalated and reviewed, and wish them a good day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a Metro Power & Light manager will review their "
+            "feedback and call them back within one business day. Ask if there's "
+            "a preferred time and thank them, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "satisfaction_survey",
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "interaction_type": call.get_variable("interaction_type"),
+        "interaction_date": call.get_variable("interaction_date"),
         "nps_score": call.get_field("nps_score"),
         "interaction_satisfaction_rating": call.get_field("interaction_satisfaction_rating"),
         "issue_resolved": call.get_field("issue_resolved"),
         "wait_time_acceptable": call.get_field("wait_time_acceptable"),
         "agent_helpfulness_rating": call.get_field("agent_helpfulness_rating"),
+        "dissatisfaction_reason": call.get_field("dissatisfaction_reason"),
         "improvement_suggestions": call.get_field("improvement_suggestions"),
-    }, indent=2))
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":

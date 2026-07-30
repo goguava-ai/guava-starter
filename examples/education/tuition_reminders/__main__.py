@@ -3,152 +3,387 @@ import argparse
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
+
+
+# ---------------------------------------------------------------------------
+# Mock API — simulates a student accounts backend for demo purposes
+# ---------------------------------------------------------------------------
+
+FINANCIAL_AID_LINE = "+15551000500"
+BILLING_LINE = "+15551000501"
+
+MOCK_ACCOUNTS = {
+    "STU-200301": {
+        "student_name": "Elena Vasquez",
+        "dob": "2002-04-12",
+        "term": "Fall 2026",
+        "balance": "$4,850.00",
+        "due_date": "August 15, 2026",
+        "payment_status": "unpaid",
+        "financial_aid_pending": False,
+    },
+    "STU-200302": {
+        "student_name": "Tyler Washington",
+        "dob": "2001-11-28",
+        "term": "Fall 2026",
+        "balance": "$2,100.00",
+        "due_date": "August 15, 2026",
+        "payment_status": "partial",
+        "financial_aid_pending": True,
+    },
+    "STU-200303": {
+        "student_name": "Mia Nakamura",
+        "dob": "2003-08-07",
+        "term": "Fall 2026",
+        "balance": "$0.00",
+        "due_date": "August 15, 2026",
+        "payment_status": "paid",
+        "financial_aid_pending": False,
+    },
+}
+
+
+def lookup_account(student_id, dob):
+    account = MOCK_ACCOUNTS.get(student_id)
+    if account and account["dob"] == dob:
+        return account
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
 
 agent = guava.Agent(
-    name="Riley",
-    organization="Westfield University - Student Accounts",
+    name="Pat",
+    organization="Westfield University — Student Accounts",
     purpose=(
-        "proactively remind students and guardians of upcoming tuition payment "
-        "deadlines and assist with arranging payment plans if needed"
+        "proactively remind students of upcoming tuition payment deadlines, "
+        "verify their account balance, and assist with payment options or "
+        "escalation to financial aid"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_billing": "The caller wants to speak to a billing representative or live person about their account",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("name"),
+        voicemail_message=(
+            f"Hi, this is Pat from Westfield University Student Accounts "
+            f"calling for {call.get_variable('name')} regarding your student "
+            f"account. Please call us back at 1-800-555-0190 at your convenience. "
+            f"Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        logging.info(
-            "Could not reach %s for tuition reminder (student ID: %s).",
-            call.get_variable("name"),
-            call.get_variable("student_id"),
-        )
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "student_name": call.get_variable("name"),
-            "student_id": call.get_variable("student_id"),
-            "amount_due": call.get_variable("amount_due"),
-            "due_date": call.get_variable("due_date"),
-            "outcome": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                "The recipient could not be reached. End the call politely."
-            )
-        )
-    elif outcome == "available":
+    student_name = call.get_variable("name")
+
+    if outcome == "available":
         call.set_task(
-            "reminder",
+            "verify_identity",
             objective=(
-                f"You are calling {call.get_variable('name')} (student ID: {call.get_variable('student_id')}) to remind them "
-                f"that a tuition balance of {call.get_variable('amount_due')} is due by {call.get_variable('due_date')}. "
-                "Find out how they intend to handle the payment — whether they plan to pay in full, "
-                "set up a payment plan, are waiting on financial aid, or wish to dispute the balance. "
-                "If they want a payment plan, confirm the arrangement. "
-                "If they have a payment date commitment, capture it. "
-                "Address any financial aid questions they may have."
+                f"Verify the identity of {student_name} before sharing any "
+                f"account details. Ask for their date of birth. Do not disclose "
+                f"any balance or payment information until identity is confirmed."
             ),
             checklist=[
                 guava.Say(
-                    f"Hello {call.get_variable('name')}, this is Riley calling from Westfield University Student Accounts. "
-                    f"I'm reaching out because your student account has a balance of {call.get_variable('amount_due')} "
-                    f"that is due by {call.get_variable('due_date')}. I wanted to connect with you to make sure you have "
-                    "everything you need and discuss any payment options that might be helpful."
+                    f"I'm calling regarding your student account. Before I "
+                    f"share any details, I need to verify your identity with "
+                    f"a quick question."
                 ),
                 guava.Field(
-                    key="payment_intention",
-                    description="How the student or guardian intends to handle the balance.",
+                    key="dob",
+                    description="The student's date of birth for identity verification",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+    elif outcome == "do_not_contact":
+        logging.info("Student %s requested no further contact.", student_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be "
+                "contacted again by phone and that future account notifications "
+                "will be sent by email and mail, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number for %s.", student_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", student_name, outcome)
+        call.hangup()
+
+
+@agent.on_task_complete("verify_identity")
+def on_identity_verified(call: guava.Call) -> None:
+    student_id = call.get_variable("student_id")
+    dob = call.get_field("dob")
+    account = lookup_account(student_id, dob)
+
+    if account is None:
+        logging.warning("Identity verification failed for student %s.", student_id)
+        call.hangup(
+            final_instructions=(
+                "Let them know the date of birth provided does not match our "
+                "records. For security, you cannot share account details. "
+                "Suggest they contact Student Accounts directly at "
+                "1-800-555-0190 with their student ID handy, and politely say goodbye."
+            )
+        )
+        return
+
+    call.set_variable("payment_status", account["payment_status"])
+    call.set_variable("balance", account["balance"])
+
+    call.add_info("account_details", {
+        "student_id": student_id,
+        "term": account["term"],
+        "balance": account["balance"],
+        "due_date": account["due_date"],
+        "payment_status": account["payment_status"],
+        "financial_aid_pending": account["financial_aid_pending"],
+    })
+
+    if account["payment_status"] == "paid":
+        call.set_task(
+            "confirm_paid",
+            objective=(
+                f"Good news — {call.get_variable('name')}'s account shows a $0.00 "
+                f"balance for {account['term']}. Confirm that their tuition has been "
+                f"paid in full and ask if they have any questions."
+            ),
+            checklist=[
+                guava.Field(
+                    key="payment_confirmed",
+                    description="Whether the student acknowledges their balance is paid in full",
                     field_type="multiple_choice",
-                    choices=["pay_now", "payment_plan", "financial_aid_pending", "dispute"],
+                    choices=["yes", "has questions"],
                     required=True,
                 ),
                 guava.Field(
-                    key="payment_plan_confirmed",
-                    description="Details of any payment plan arrangement discussed and confirmed with the student",
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="payment_date_commitment",
-                    description="The specific date by which the student commits to making a payment or first installment",
-                    field_type="date",
-                    required=False,
-                ),
-                guava.Field(
-                    key="financial_aid_questions",
-                    description="Any questions or concerns the student raised about financial aid",
+                    key="student_questions",
+                    description="Any questions the student has about their account",
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    else:
+        call.set_task(
+            "present_balance",
+            objective=(
+                f"Present the account balance to {call.get_variable('name')}. "
+                f"Their current balance is {account['balance']} due by "
+                f"{account['due_date']}. Ask how they intend to handle the payment. "
+                f"Do NOT offer to waive fees, adjust the balance, or make promises "
+                f"about financial aid outcomes."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Let {call.get_variable('name')} know that their student "
+                    f"account has a balance of {account['balance']} due by "
+                    f"{account['due_date']}."
+                ),
+                guava.Field(
+                    key="payment_path",
+                    description="How the student intends to handle the balance",
+                    field_type="multiple_choice",
+                    choices=["already_paid", "will_pay", "hardship", "dispute"],
+                    required=True,
+                ),
+            ],
+        )
 
 
-@agent.on_task_complete("reminder")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now().isoformat(),
-        "student_name": call.get_variable("name"),
-        "student_id": call.get_variable("student_id"),
-        "amount_due": call.get_variable("amount_due"),
-        "due_date": call.get_variable("due_date"),
-        "fields": {
-            "payment_intention": call.get_field("payment_intention"),
-            "payment_plan_confirmed": call.get_field("payment_plan_confirmed"),
-            "payment_date_commitment": call.get_field("payment_date_commitment"),
-            "financial_aid_questions": call.get_field("financial_aid_questions"),
-        },
-    }
-    print(json.dumps(results, indent=2))
+@agent.on_task_complete("confirm_paid")
+def on_paid_confirmed(call: guava.Call) -> None:
     call.hangup(
         final_instructions=(
-            f"Thank {call.get_variable('name')} for their time. Let them know that Student Accounts is available "
-            "if they have further questions and provide a warm, encouraging close to the conversation."
+            f"Thank {call.get_variable('name')} for their time. Let them know "
+            f"their account is in good standing. If they had questions, let them "
+            f"know Student Accounts will follow up by email, and wish them a great term, and politely say goodbye."
         )
     )
 
 
+@agent.on_task_complete("present_balance")
+def on_balance_presented(call: guava.Call) -> None:
+    payment_path = call.get_field("payment_path")
+    student_name = call.get_variable("name")
+
+    if payment_path == "already_paid":
+        call.set_task(
+            "verify_payment",
+            objective=(
+                f"{student_name} says they have already paid. Collect details so "
+                f"Student Accounts can locate the payment and update the record."
+            ),
+            checklist=[
+                guava.Field(
+                    key="payment_date",
+                    description="The approximate date the student made the payment",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="payment_method",
+                    description="How the payment was made (e.g. online portal, check, wire transfer)",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+    elif payment_path == "will_pay":
+        call.set_task(
+            "collect_payment_plan",
+            objective=(
+                f"{student_name} intends to pay. Provide the online payment portal "
+                f"URL (payments.westfield.edu) and collect a payment date commitment."
+            ),
+            checklist=[
+                guava.Say(
+                    f"Let {student_name} know they can make a payment online at "
+                    f"payments.westfield.edu using their student ID and password."
+                ),
+                guava.Field(
+                    key="payment_date_commitment",
+                    description="The date by which the student commits to making the payment",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="payment_plan_requested",
+                    description="Whether the student would like to set up a payment plan instead of paying in full",
+                    field_type="multiple_choice",
+                    choices=["yes", "no"],
+                    required=True,
+                ),
+            ],
+        )
+    elif payment_path == "hardship":
+        call.transfer(
+            destination=FINANCIAL_AID_LINE,
+            instructions=(
+                f"The student ({student_name}) is experiencing financial hardship. "
+                f"Let them know you're connecting them with the financial aid office "
+                f"to discuss assistance options. Reassure them that their account "
+                f"information has been saved."
+            ),
+        )
+    else:
+        call.transfer(
+            destination=BILLING_LINE,
+            instructions=(
+                f"The student ({student_name}) is disputing their balance. Let them "
+                f"know you're connecting them with a billing specialist who can review "
+                f"the charges in detail."
+            ),
+        )
+
+
+@agent.on_task_complete("verify_payment")
+def on_payment_verified(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} for providing the payment details. "
+            f"Let them know Student Accounts will locate the payment and update "
+            f"their record. If there are any issues, someone will reach out. "
+            f"Wish them a great day, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("collect_payment_plan")
+def on_payment_plan_collected(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Thank {call.get_variable('name')} for their time. Confirm their "
+            f"payment date commitment has been noted. Remind them the payment "
+            f"portal is payments.westfield.edu, and wish them a great term, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Student %s requested DNC mid-call.", call.get_variable("name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone and that future account updates will be sent by email, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_billing")
+def handle_transfer_request(call: guava.Call) -> None:
+    call.transfer(
+        destination=BILLING_LINE,
+        instructions="Let them know you're connecting them with a billing representative now.",
+    )
+
+
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "payment_intention": call.get_field("payment_intention"),
-        "payment_plan_confirmed": call.get_field("payment_plan_confirmed"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "tuition_reminder",
+        "student_name": call.get_variable("name"),
+        "student_id": call.get_variable("student_id"),
+        "payment_status": call.get_variable("payment_status"),
+        "balance": call.get_variable("balance"),
+        "dob_verified": call.get_field("dob") is not None,
+        "payment_path": call.get_field("payment_path"),
+        "payment_confirmed": call.get_field("payment_confirmed"),
         "payment_date_commitment": call.get_field("payment_date_commitment"),
-        "financial_aid_questions": call.get_field("financial_aid_questions"),
-    }, indent=2))
+        "payment_plan_requested": call.get_field("payment_plan_requested"),
+        "payment_date": call.get_field("payment_date"),
+        "payment_method": call.get_field("payment_method"),
+        "student_questions": call.get_field("student_questions"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
     logging_utils.configure_logging()
     parser = argparse.ArgumentParser(
-        description="Tuition reminder call for students approaching payment deadlines"
+        description="Outbound tuition reminder call for Westfield University Student Accounts"
     )
-    parser.add_argument("phone", help="Phone number to call (e.g. +15551234567)")
-    parser.add_argument("--name", required=True, help="Full name of the student or guardian")
-    parser.add_argument("--student-id", required=True, help="Student ID number")
+    parser.add_argument("phone", help="Phone number to dial")
+    parser.add_argument("--name", required=True, help="Full name of the student")
     parser.add_argument(
-        "--amount-due",
+        "--student-id",
         required=True,
-        help="Amount of tuition balance due (e.g. '$3,200.00')",
-    )
-    parser.add_argument(
-        "--due-date",
-        required=True,
-        help="Payment due date (e.g. 'March 15, 2026')",
+        help="Student ID (try STU-200301, STU-200302, or STU-200303)",
     )
     parser.add_argument(
         "--from-number",
@@ -163,7 +398,5 @@ if __name__ == "__main__":
         variables={
             "name": args.name,
             "student_id": args.student_id,
-            "amount_due": args.amount_due,
-            "due_date": args.due_date,
         },
     )

@@ -3,148 +3,276 @@ import argparse
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import guava
 from guava import logging_utils
+from guava.helpers.llm import IntentRecognizer
 
 agent = guava.Agent(
-    name="Riley",
+    name="Blake",
     organization="Metro Power & Light",
     purpose=(
-        "alert customers whose energy usage is significantly above their normal patterns, "
-        "understand whether the increase is expected, and offer energy efficiency resources "
-        "and billing programs that may help manage their costs"
+        "alert customers whose energy usage is significantly above their "
+        "normal patterns, understand whether the increase is expected, and "
+        "offer energy efficiency resources and billing programs"
     ),
 )
+
+_mid_call_intent = IntentRecognizer({
+    "do_not_contact": "The caller wants to stop receiving calls or be removed from the contact list",
+    "speak_to_someone": "The caller wants to speak to a billing representative or customer service agent",
+})
 
 
 @agent.on_call_start
 def on_call_start(call: guava.Call) -> None:
-    call.reach_person(contact_full_name=call.get_variable("contact_name"))
+    call.reach_person(
+        contact_full_name=call.get_variable("contact_name"),
+        voicemail_message=(
+            f"Hi, this is Blake from Metro Power & Light calling for "
+            f"{call.get_variable('contact_name')}. We noticed your energy usage "
+            f"is higher than usual this month. Please call us back at your "
+            f"convenience to learn about programs that can help. Thank you."
+        ),
+    )
 
 
 @agent.on_reach_person
 def on_reach_person(call: guava.Call, outcome: str) -> None:
-    if outcome == "unavailable":
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "contact_name": call.get_variable("contact_name"),
-            "account_number": call.get_variable("account_number"),
-            "usage_percent_above": call.get_variable("usage_percent_above"),
-            "estimated_bill": call.get_variable("estimated_bill"),
-            "status": "recipient_unavailable",
-        }
-        print(json.dumps(results, indent=2))
-        call.hangup(
-            final_instructions=(
-                "Leave a brief voicemail letting the customer know that Metro Power & Light called "
-                "because their energy usage is higher than normal this month and their estimated bill "
-                "may be higher than expected. Encourage them to log in to their account at "
-                "metropowerandlight.com to view usage details or call back to learn about programs "
-                "that can help manage energy costs. Keep the message concise."
-            )
-        )
-    elif outcome == "available":
-        contact_name = call.get_variable("contact_name")
-        account_number = call.get_variable("account_number")
-        usage_percent_above = call.get_variable("usage_percent_above")
-        estimated_bill = call.get_variable("estimated_bill")
+    contact_name = call.get_variable("contact_name")
+    account_number = call.get_variable("account_number")
+    usage_percent_above = call.get_variable("usage_percent_above")
+    estimated_bill = call.get_variable("estimated_bill")
+
+    if outcome == "available":
         call.set_task(
             "high_usage_alert",
             objective=(
-                f"Speak with {contact_name} (account {account_number}) about an unusually "
-                f"high energy usage pattern detected on their account. Their usage is currently "
-                f"{usage_percent_above}% above their normal level for this time of year, and "
-                f"their estimated bill this month is {estimated_bill}. Determine whether the "
-                "customer is aware of a reason for the increase, and offer relevant programs: "
-                "a free home energy audit, paperless billing, and budget billing (which averages "
-                "usage costs across 12 months to avoid high seasonal bills)."
+                f"Speak with {contact_name} (account {account_number}) about an "
+                f"unusually high energy usage pattern. Their usage is currently "
+                f"{usage_percent_above}% above their normal level for this time "
+                f"of year, and their estimated bill this month is {estimated_bill}. "
+                f"Determine whether the customer is aware of a reason for the "
+                f"increase and collect their response."
             ),
             checklist=[
                 guava.Say(
-                    f"Hi {contact_name.split()[0]}, this is Riley calling from Metro Power & Light "
-                    f"with an important update about your account. We've noticed that your energy usage "
-                    f"this billing period is about {usage_percent_above}% higher than your typical "
-                    f"usage for this time of year. Based on current usage, your estimated bill this month "
-                    f"is approximately {estimated_bill}. We wanted to reach out so this doesn't come "
-                    f"as a surprise and to see if there's anything we can help with."
+                    f"I have an important update about your account. We've "
+                    f"noticed that your energy usage this billing period is about "
+                    f"{usage_percent_above}% higher than your typical usage for "
+                    f"this time of year. Based on current usage, your estimated "
+                    f"bill this month is approximately {estimated_bill}. We "
+                    f"wanted to reach out so this doesn't come as a surprise."
                 ),
                 guava.Field(
-                    key="usage_increase_acknowledged",
-                    description="Ask the customer whether they are aware that their energy usage has been higher than normal this billing period",
-                    field_type="text",
+                    key="customer_response",
+                    description=(
+                        "Ask whether the customer was aware of the higher usage "
+                        "and how they would like to proceed"
+                    ),
+                    field_type="multiple_choice",
+                    choices=["acknowledge", "dispute_reading", "request_audit"],
                     required=True,
                 ),
                 guava.Field(
                     key="known_reason_for_increase",
-                    description="Ask whether the customer knows what may have caused the increase, such as new appliances, houseguests, extreme weather, a new electric vehicle, or changes to their home",
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="interested_in_energy_audit",
-                    description="Ask if the customer would be interested in a free home energy audit, where a Metro Power & Light specialist identifies ways to reduce energy consumption and lower bills",
-                    field_type="text",
-                    required=True,
-                ),
-                guava.Field(
-                    key="paperless_billing_interest",
-                    description="Ask if the customer would like to sign up for paperless billing to receive instant usage alerts and bill notifications by email",
-                    field_type="text",
-                    required=False,
-                ),
-                guava.Field(
-                    key="budget_billing_interest",
-                    description="Ask if the customer is interested in the budget billing program, which averages their energy costs over 12 months so they pay a predictable amount each month instead of seeing high seasonal bills",
+                    description=(
+                        "Ask whether the customer knows what may have caused the "
+                        "increase, such as new appliances, houseguests, extreme "
+                        "weather, a new electric vehicle, or changes to their home"
+                    ),
                     field_type="text",
                     required=False,
                 ),
             ],
         )
+    elif outcome == "do_not_contact":
+        logging.info("Customer %s requested no further contact.", contact_name)
+        call.hangup(
+            final_instructions=(
+                "Acknowledge their request. Let them know they will not be "
+                "contacted again by phone. Suggest they check their account "
+                "online for usage details, and politely say goodbye."
+            )
+        )
+    elif outcome == "wrong_number":
+        logging.info("Wrong number reached for %s.", contact_name)
+        call.hangup(final_instructions="Apologize for the mistake and wish them well, and politely say goodbye.")
+    else:
+        logging.info("Could not reach %s (outcome: %s).", contact_name, outcome)
+        call.hangup()
 
 
 @agent.on_task_complete("high_usage_alert")
-def on_done(call: guava.Call) -> None:
-    results = {
-        "timestamp": datetime.now().isoformat(),
-        "contact_name": call.get_variable("contact_name"),
-        "account_number": call.get_variable("account_number"),
-        "usage_percent_above": call.get_variable("usage_percent_above"),
-        "estimated_bill": call.get_variable("estimated_bill"),
-        "fields": {
-            "usage_increase_acknowledged": call.get_field("usage_increase_acknowledged"),
-            "known_reason_for_increase": call.get_field("known_reason_for_increase"),
-            "interested_in_energy_audit": call.get_field("interested_in_energy_audit"),
-            "paperless_billing_interest": call.get_field("paperless_billing_interest"),
-            "budget_billing_interest": call.get_field("budget_billing_interest"),
-        },
-    }
-    print(json.dumps(results, indent=2))
+def on_alert_done(call: guava.Call) -> None:
+    response = call.get_field("customer_response")
+    contact_name = call.get_variable("contact_name")
+
+    if response == "acknowledge":
+        call.set_task(
+            "energy_saving_tips",
+            objective=(
+                f"{contact_name} acknowledged the high usage. Mention available "
+                f"programs: a free home energy audit, paperless billing with "
+                f"usage alerts, and budget billing that averages costs over "
+                f"12 months."
+            ),
+            checklist=[
+                guava.Field(
+                    key="interested_in_energy_audit",
+                    description=(
+                        "Whether the customer would like a free home energy audit "
+                        "where a specialist identifies ways to reduce consumption"
+                    ),
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="budget_billing_interest",
+                    description=(
+                        "Whether the customer is interested in budget billing, "
+                        "which averages energy costs over 12 months for predictable "
+                        "monthly payments"
+                    ),
+                    field_type="text",
+                    required=False,
+                ),
+            ],
+        )
+    elif response == "dispute_reading":
+        call.set_task(
+            "dispute_info",
+            objective=(
+                f"{contact_name} wants to dispute their meter reading. Explain "
+                f"how to request a formal meter accuracy review. The customer can "
+                f"submit a request online, by phone, or in writing. A technician "
+                f"will test the meter within 10 business days and provide results."
+            ),
+            checklist=[
+                guava.Field(
+                    key="dispute_details",
+                    description="Why the customer believes the reading may be inaccurate",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+    else:
+        # request_audit
+        call.set_task(
+            "schedule_audit",
+            objective=(
+                f"{contact_name} would like to request a meter audit. Collect "
+                f"their scheduling preferences for the audit appointment. A "
+                f"technician will visit to test the meter at no charge."
+            ),
+            checklist=[
+                guava.Field(
+                    key="audit_date_preference",
+                    description="When the customer would like the meter audit scheduled",
+                    field_type="text",
+                    required=True,
+                ),
+                guava.Field(
+                    key="audit_time_preference",
+                    description="Preferred time window for the meter audit",
+                    field_type="multiple_choice",
+                    choices=["Morning (8 AM to 12 PM)", "Afternoon (12 PM to 5 PM)", "Any time"],
+                    required=True,
+                ),
+            ],
+        )
+
+
+@agent.on_task_complete("energy_saving_tips")
+def on_tips_done(call: guava.Call) -> None:
     call.hangup(
         final_instructions=(
-            "Summarize any programs the customer expressed interest in and let them know a "
-            "follow-up confirmation will be sent. Remind them they can monitor usage anytime "
-            "through their online account or the Metro Power & Light app. Thank them for being "
-            "a customer and for taking the time to speak with you today."
+            f"Summarize any programs {call.get_variable('contact_name')} expressed "
+            f"interest in and let them know a follow-up confirmation will be sent. "
+            f"Remind them they can monitor usage through their online account or "
+            f"the Metro Power & Light app, and thank them for their time, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("dispute_info")
+def on_dispute_done(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Let {call.get_variable('contact_name')} know their dispute has been "
+            f"noted and a meter accuracy review will be scheduled. Results are "
+            f"typically available within 10 business days. Let them know they can "
+            f"call Metro Power & Light if they have follow-up questions, and "
+            f"thank them, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_task_complete("schedule_audit")
+def on_audit_done(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            f"Confirm the audit appointment details with "
+            f"{call.get_variable('contact_name')}. Let them know a technician "
+            f"will visit at no charge and someone 18 or older should be present. "
+            f"A confirmation will be sent, and thank them for their time, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action_request
+def on_action_request(call: guava.Call, intent_summary: str):
+    return _mid_call_intent.classify(intent_summary)
+
+
+@agent.on_action("do_not_contact")
+def handle_dnc(call: guava.Call) -> None:
+    logging.info("Customer %s requested DNC mid-call.", call.get_variable("contact_name"))
+    call.hangup(
+        final_instructions=(
+            "Acknowledge their request. Let them know they will not be contacted "
+            "again by phone, and wish them well, and politely say goodbye."
+        )
+    )
+
+
+@agent.on_action("speak_to_someone")
+def handle_speak_to_someone(call: guava.Call) -> None:
+    call.hangup(
+        final_instructions=(
+            "Let them know that a Metro Power & Light representative will call "
+            "them back within one business day. Ask if there's a preferred time "
+            "and thank them for their patience, and politely say goodbye."
         )
     )
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event):
+def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call) -> None:
-    logging.info("Session ended — collected fields: %s", json.dumps({
-        "usage_increase_acknowledged": call.get_field("usage_increase_acknowledged"),
+def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "use_case": "high_usage_alert",
+        "contact_name": call.get_variable("contact_name"),
+        "account_number": call.get_variable("account_number"),
+        "usage_percent_above": call.get_variable("usage_percent_above"),
+        "estimated_bill": call.get_variable("estimated_bill"),
+        "customer_response": call.get_field("customer_response"),
         "known_reason_for_increase": call.get_field("known_reason_for_increase"),
         "interested_in_energy_audit": call.get_field("interested_in_energy_audit"),
-        "paperless_billing_interest": call.get_field("paperless_billing_interest"),
         "budget_billing_interest": call.get_field("budget_billing_interest"),
-    }, indent=2))
+        "dispute_details": call.get_field("dispute_details"),
+        "audit_date_preference": call.get_field("audit_date_preference"),
+        "termination_reason": event.termination_reason,
+        "dnc": event.dnc,
+    }
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
