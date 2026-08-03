@@ -51,14 +51,17 @@ MOCK_AVAILABLE_SLOTS = [
 ]
 
 
+def _slot_to_iso(slot: dict) -> str:
+    return datetime.strptime(f"{slot['date']} {slot['time']}", "%Y-%m-%d %I:%M %p").isoformat()
+
+
+_SLOTS_BY_ISO = {_slot_to_iso(slot): slot for slot in MOCK_AVAILABLE_SLOTS}
+
+datetime_filter = DatetimeFilter(source_list=list(_SLOTS_BY_ISO.keys()))
+
+
 def lookup_appointment(appointment_id):
     return MOCK_APPOINTMENTS.get(appointment_id)
-
-
-def search_available_slots(preferred_time_filter):
-    """Return mock available slots. In production this would query a scheduling system."""
-    logging.info("[MOCK API] GET /available-slots — filter: %s", preferred_time_filter)
-    return MOCK_AVAILABLE_SLOTS
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +211,7 @@ def on_confirm_done(call: guava.Call) -> None:
                     ),
                     field_type="text",
                     required=True,
+                    searchable=True,
                 ),
             ],
         )
@@ -222,12 +226,14 @@ def on_confirm_done(call: guava.Call) -> None:
 
 
 @agent.on_search_query("preferred_time")
-def on_search_preferred_time(call: guava.Call, filter: DatetimeFilter):
-    slots = search_available_slots(filter)
-    return [
-        f"{slot['date']} at {slot['time']} with {slot['provider']}"
-        for slot in slots
-    ]
+def on_search_preferred_time(call: guava.Call, query: str):
+    matching, fallback = datetime_filter.filter(query, max_results=3)
+
+    def describe(iso: str) -> str:
+        slot = _SLOTS_BY_ISO[iso]
+        return f"{slot['date']} at {slot['time']} with {slot['provider']}"
+
+    return [describe(iso) for iso in matching], [describe(iso) for iso in fallback]
 
 
 @agent.on_task_complete("reschedule")

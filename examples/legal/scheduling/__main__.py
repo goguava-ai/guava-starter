@@ -49,24 +49,20 @@ MOCK_AVAILABILITY = [
 ]
 
 
+def _slot_to_iso(slot: dict) -> str:
+    return datetime.strptime(f"{slot['date']} {slot['time']}", "%Y-%m-%d %I:%M %p").isoformat()
+
+
+_SLOTS_BY_ISO = {_slot_to_iso(slot): slot for slot in MOCK_AVAILABILITY}
+
+datetime_filter = DatetimeFilter(source_list=list(_SLOTS_BY_ISO.keys()))
+
+
 def verify_client(client_id, dob):
     client = MOCK_CLIENTS.get(client_id)
     if client and client["dob"] == dob:
         return client
     return None
-
-
-def search_availability(attorney=None, start_date=None, end_date=None):
-    results = []
-    for slot in MOCK_AVAILABILITY:
-        if attorney and slot["attorney"] != attorney:
-            continue
-        if start_date and slot["date"] < start_date:
-            continue
-        if end_date and slot["date"] > end_date:
-            continue
-        results.append(slot)
-    return results
 
 
 def book_appointment(attorney, date, time_slot):
@@ -200,6 +196,7 @@ def on_client_verified(call: guava.Call) -> None:
                 ),
                 field_type="text",
                 required=True,
+                searchable=True,
             ),
             guava.Field(
                 key="selected_slot",
@@ -223,21 +220,13 @@ def on_client_verified(call: guava.Call) -> None:
 
 @agent.on_search_query("preferred_date_range")
 def on_search_date_range(call: guava.Call, query: str):
-    attorney = call.get_variable("attorney")
-    dt_filter = DatetimeFilter(query)
+    matching, fallback = datetime_filter.filter(query, max_results=3)
 
-    start_date = dt_filter.start.strftime("%Y-%m-%d") if dt_filter.start else None
-    end_date = dt_filter.end.strftime("%Y-%m-%d") if dt_filter.end else None
+    def describe(iso: str) -> str:
+        slot = _SLOTS_BY_ISO[iso]
+        return f"{slot['date']} at {slot['time']} with {slot['attorney']} ({slot['duration']})"
 
-    slots = search_availability(attorney=attorney, start_date=start_date, end_date=end_date)
-
-    if not slots:
-        return "No available times found for that date range. Ask the client for alternative dates."
-
-    lines = [f"Available times for {attorney}:"]
-    for slot in slots:
-        lines.append(f"  - {slot['date']} at {slot['time']} ({slot['duration']})")
-    return "\n".join(lines)
+    return [describe(iso) for iso in matching], [describe(iso) for iso in fallback]
 
 
 @agent.on_task_complete("select_time")

@@ -15,36 +15,24 @@ from guava.events import BotSessionEnded, OutboundCallFailed
 # Mock API — simulates a showing calendar backend for demo purposes
 # ---------------------------------------------------------------------------
 
-MOCK_SHOWING_SLOTS = {
+MOCK_SHOWING_SLOTS: dict[str, list[str]] = {
     "450 Main St, Unit 12": [
-        {"date": "2026-07-28", "time": "10:00 AM", "available": True},
-        {"date": "2026-07-28", "time": "2:00 PM", "available": True},
-        {"date": "2026-07-29", "time": "11:00 AM", "available": False},
-        {"date": "2026-07-29", "time": "3:00 PM", "available": True},
-        {"date": "2026-07-30", "time": "10:00 AM", "available": True},
+        "2026-07-28T10:00:00",
+        "2026-07-28T14:00:00",
+        "2026-07-29T15:00:00",
+        "2026-07-30T10:00:00",
     ],
     "2201 Sunset Blvd": [
-        {"date": "2026-07-28", "time": "9:00 AM", "available": True},
-        {"date": "2026-07-28", "time": "1:00 PM", "available": False},
-        {"date": "2026-07-29", "time": "10:00 AM", "available": True},
-        {"date": "2026-07-30", "time": "2:00 PM", "available": True},
+        "2026-07-28T09:00:00",
+        "2026-07-29T10:00:00",
+        "2026-07-30T14:00:00",
     ],
     "310 Ridgeview Dr": [
-        {"date": "2026-07-29", "time": "11:00 AM", "available": True},
-        {"date": "2026-07-30", "time": "9:00 AM", "available": True},
-        {"date": "2026-07-31", "time": "3:00 PM", "available": True},
+        "2026-07-29T11:00:00",
+        "2026-07-30T09:00:00",
+        "2026-07-31T15:00:00",
     ],
 }
-
-
-def search_showing_slots(property_address, preferred_date=None):
-    slots = MOCK_SHOWING_SLOTS.get(property_address, [])
-    available = [s for s in slots if s["available"]]
-    if preferred_date:
-        matching = [s for s in available if s["date"] == preferred_date]
-        if matching:
-            return matching
-    return available
 
 
 def book_showing(property_address, date, time_slot):
@@ -172,29 +160,11 @@ def on_interest_confirmed(call: guava.Call) -> None:
 
 
 @agent.on_search_query("preferred_time")
-def search_preferred_time(call: guava.Call, query: str) -> list[dict]:
+def search_preferred_time(call: guava.Call, query: str):
     property_address = call.get_variable("property_address")
-    preferred = DatetimeFilter.from_query(query)
-    preferred_date = preferred.date if preferred else None
-    slots = search_showing_slots(property_address, preferred_date)
-
-    if not slots:
-        all_slots = search_showing_slots(property_address)
-        return [
-            {
-                "value": f"{s['date']} {s['time']}",
-                "label": f"{s['date']} at {s['time']}",
-            }
-            for s in all_slots
-        ]
-
-    return [
-        {
-            "value": f"{s['date']} {s['time']}",
-            "label": f"{s['date']} at {s['time']}",
-        }
-        for s in slots
-    ]
+    slots = MOCK_SHOWING_SLOTS.get(property_address, [])
+    datetime_filter = DatetimeFilter(source_list=slots)
+    return datetime_filter.filter(query, max_results=3)
 
 
 @agent.on_task_complete("select_time")
