@@ -359,7 +359,7 @@ wheels = [
 
 [[package]]
 name = "guava-sdk"
-version = "0.32.0"
+version = "0.36.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -367,9 +367,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/d2/1bde995a3d8466869db35980eb8ed22a0454c65ef8bebc8f20ffb2931c28/guava_sdk-0.32.0.tar.gz", hash = "sha256:a7a07e3ffb9df1639242ca2e8b16941ce77243dba46ce62fca1f6ea2fa54336b", size = 94492, upload-time = "2026-07-01T00:16:18.568Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/60/038e54f0f7f00b157bf0a3212e808b328d6a853096dd0123aa75a09d7648/guava_sdk-0.36.0.tar.gz", hash = "sha256:c60c047e54b03848a086af688d923eaab132fc7fdaaae02a08123e606c90b69a", size = 658662, upload-time = "2026-07-29T01:08:55.171Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/4a/9d42e8051150f50d04e3dea52b2c4bc6d20b76e6ad2a566c10e2266ffe86/guava_sdk-0.32.0-py3-none-any.whl", hash = "sha256:0d95040ec1de611dd3dbeb01a2de0eca5b60919690decdaf00db7ca8e7d28247", size = 121049, upload-time = "2026-07-01T00:16:17.447Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/80/786702155d362811fda27fedb9406e1a97912a9c2d39bcce009f8c738e50/guava_sdk-0.36.0-py3-none-any.whl", hash = "sha256:79aa4b929fe8cb06d4233c98e95828f54959653390d75a77bd1056bcf0f5d553", size = 684331, upload-time = "2026-07-29T01:08:53.884Z" },
 ]
 
 [[package]]
@@ -391,7 +391,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=2.10.0" },
-    { name = "guava-sdk", specifier = ">=0.32.0" },
+    { name = "guava-sdk", specifier = ">=0.36.0" },
     { name = "openai", specifier = ">=2.44.0" },
 ]
 
