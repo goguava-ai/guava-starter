@@ -251,7 +251,7 @@ def on_identity_verified(call: guava.Call) -> None:
             f"Cover required disclosures, statement preferences, and account-specific "
             f"options. Be warm, clear, and patient."
         ),
-        checklist=checklist_items,
+        checklist=checklist_items, # type: ignore
     )
 
 
@@ -304,7 +304,7 @@ def on_outbound_failed(event: OutboundCallFailed) -> None:
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call, event: BotSessionEnded) -> None:
+def on_session_end(call: guava.Call, event: BotSessionEndedd -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "customer_onboarding",
