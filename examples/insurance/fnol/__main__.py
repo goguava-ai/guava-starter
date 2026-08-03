@@ -7,6 +7,7 @@ from datetime import datetime, time, timezone
 import guava
 from guava import logging_utils
 from guava.helpers.llm import IntentRecognizer
+from guava.events import BotSessionEnded, OutboundCallFailed
 
 BUSINESS_HOURS_START = time(8, 0)
 BUSINESS_HOURS_END = time(18, 0)
@@ -421,7 +422,7 @@ def handle_withdraw(call: guava.Call) -> None:
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+def on_session_end(call: guava.Call, event: BotSessionEnded) -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "first_notice_of_loss",

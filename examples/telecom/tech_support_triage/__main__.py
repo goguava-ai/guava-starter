@@ -7,6 +7,7 @@ from datetime import datetime, time, timezone
 import guava
 from guava import logging_utils
 from guava.helpers.llm import IntentRecognizer
+from guava.events import BotSessionEnded, OutboundCallFailed
 
 BUSINESS_HOURS_START = time(8, 0)
 BUSINESS_HOURS_END = time(20, 0)
@@ -580,7 +581,7 @@ def on_question(call: guava.Call, question: str) -> str:
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+def on_session_end(call: guava.Call, event: BotSessionEnded) -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "tech_support_triage",

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import guava
 from guava import logging_utils
 from guava.helpers.llm import IntentRecognizer
+from guava.events import BotSessionEnded, OutboundCallFailed
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +343,12 @@ def handle_transfer_request(call: guava.Call) -> None:
 
 
 @agent.on_outbound_failed
-def on_outbound_failed(event: guava.OutboundCallFailed) -> None:
+def on_outbound_failed(event: OutboundCallFailed) -> None:
     logging.error("Outbound call failed: %s (code %d)", event.error_reason, event.error_code)
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call, event: guava.BotSessionEnded) -> None:
+def on_session_end(call: guava.Call, event: BotSessionEnded) -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "service_connection",
