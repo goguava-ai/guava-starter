@@ -304,7 +304,7 @@ def on_outbound_failed(event: OutboundCallFailed) -> None:
 
 
 @agent.on_session_end
-def on_session_end(call: guava.Call, event: BotSessionEndedd -> None:
+def on_session_end(call: guava.Call, event: BotSessionEnded) -> None:
     results = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "use_case": "customer_onboarding",
