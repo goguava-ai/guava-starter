@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.35.0 (2026-07-21)
+# SDK conformance: guava-sdk 0.38.0 (2026-08-11)
 """
 PostgreSQL pgvector RAG: durable vector storage in your existing Postgres.
 
