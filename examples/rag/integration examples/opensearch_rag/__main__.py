@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.38.0 (2026-08-11)
+# SDK conformance: guava-sdk 0.39.0 (2026-08-26)
 """
 Amazon OpenSearch RAG: managed neural hybrid search with Gemini answers.
 
