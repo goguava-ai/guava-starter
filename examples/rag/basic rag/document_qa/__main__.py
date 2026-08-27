@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.38.0 (2026-08-11)
+# SDK conformance: guava-sdk 0.39.0 (2026-08-26)
 """
 Documents are uploaded to Guava at startup. Incoming caller questions are
 answered by querying those documents via the server.

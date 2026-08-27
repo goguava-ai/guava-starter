@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.38.0 (2026-08-11)
+# SDK conformance: guava-sdk 0.39.0 (2026-08-26)
 """
 Local Vector DB RAG: ChromaDB as a VectorStore, Gemini for answers.
 
