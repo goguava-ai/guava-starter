@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.39.0 (2026-08-26)
+# SDK conformance: guava-sdk 0.40.0 (2026-08-26)
 """
 Cloud Vector DB RAG: Pinecone as a VectorStore with Pinecone Inference embeddings.
 
