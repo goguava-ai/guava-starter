@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.40.0 (2026-08-26)
+# SDK conformance: guava-sdk 0.42.0 (2026-09-08)
 """
 Agentic RAG: routes questions to product-specific knowledge bases.
 
