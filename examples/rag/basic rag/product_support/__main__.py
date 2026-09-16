@@ -1,4 +1,4 @@
-# SDK conformance: guava-sdk 0.43.0 (2026-09-15)
+# SDK conformance: guava-sdk 0.44.0 (2026-09-15)
 """
 Customers call in with questions about their Apex BrewMaster Pro coffee maker.
 Product documents are uploaded to Guava at startup and queries are answered via
